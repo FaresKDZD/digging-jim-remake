@@ -29,7 +29,9 @@ bool Cave::Map::handleEntityFalling(const int& index, const int& below) {
 	if (hasTrait(Cave::Entity::Trait::Empty, below)) {
 		if (moveEntity(index, Cave::Entity::Direction::DOWN)) {
 			if (!getEntityFalling(below)) {
-				(hasTrait(Cave::Entity::Trait::Collectable, below)) ?
+				const bool gem = hasTrait(Cave::Entity::Trait::Collectable, below)
+					|| getEntityType(below) == Cave::Entity::Type::HollowDiamond;
+				gem ?
 					m_game->soundManager.play(Sound::Effect::DiamondDrop) :
 					m_game->soundManager.play(Sound::Effect::Drop);
 			}
@@ -61,8 +63,8 @@ bool Cave::Map::handleEntityLanding(const int& index, const int& below) {
 		return true;
 	}
 
-	// If the entity below is crushable, create an explosion
-	if (hasTrait(Cave::Entity::Trait::Crushable, below)) {
+	// Time bombs only explode when their fuse ends, never from landing.
+	if (hasTrait(Cave::Entity::Trait::Crushable, below) && type != Cave::Entity::Type::TimeBomb) {
 		createExplosion(below);
 		return true;
 	}
@@ -96,7 +98,8 @@ bool Cave::Map::handleEntityLanding(const int& index, const int& below) {
 	}
 
 	if (!landedOnFragileDiamond) {
-		hasTrait(Cave::Entity::Trait::Collectable, index) ?
+		hasTrait(Cave::Entity::Trait::Collectable, index)
+			|| type == Cave::Entity::Type::HollowDiamond ?
 			m_game->soundManager.play(Sound::Effect::DiamondLand) :
 			m_game->soundManager.play(Sound::Effect::Land);
 	}

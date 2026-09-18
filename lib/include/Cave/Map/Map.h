@@ -839,6 +839,91 @@ namespace Cave {
         void updateTetrapus(const int& index);
 
         /**
+         * @brief Updates the Binocule enemy's behavior.
+         *
+         * Pathfinds through empty space and dirt to the nearest reachable diamond and
+         * stays locked on that gem until it is collected. Plays the dig sound in dirt
+         * and the collect sound on a diamond. Wanders randomly if no diamond is reachable.
+         *
+         * @param index The entity index of the Binocule.
+         */
+        void updateBinocule(const int& index);
+
+        /**
+         * @brief Updates the Creep enemy's behavior.
+         *
+         * Pathfinds to Jim through empty space, but only takes a step when Jim moved
+         * this tick. If the empty route is blocked, it still hunts like an Aggressor.
+         *
+         * @param index The entity index of the Creep.
+         */
+        void updateCreep(const int& index);
+
+        /**
+         * @brief Updates the Sludg enemy's behavior.
+         *
+         * If plasma is reachable through empty space, locks onto the nearest tile and
+         * pathfinds to eat it. Eating plasma turns it into a Saturated Sludg.
+         * If no plasma route exists, it wanders like a Cave Gull (turning right).
+         *
+         * @param index The entity index of the Sludg.
+         */
+        void updateSludg(const int& index);
+
+        /**
+         * @brief Updates the Saturated Sludg enemy's behavior.
+         *
+         * Moves like a Cave Gull (clockwise / turning right) with a doubled animation rate.
+         *
+         * @param index The entity index of the Saturated Sludg.
+         */
+        void updateSaturatedSludg(const int& index);
+
+        /**
+         * @brief Updates the Glutton enemy's behavior.
+         *
+         * Pathfinds to the nearest reachable diamond source (diamond, fragile diamond,
+         * granite ore, amoeba, or Cave Gull) and eats it. Immune to amoeba. If none
+         * are reachable, wanders like a Protozo (turning left).
+         *
+         * @param index The entity index of the Glutton.
+         */
+        void updateGlutton(const int& index);
+
+        /// @brief True if this tile is a diamond source the Glutton will hunt.
+        bool isGluttonFood(const int& index) const;
+
+        /// @brief Nearest Glutton food reachable through empty space, or OUT_OF_BOUNDS_INDEX.
+        int findNearestReachableGluttonFood(const int& index) const;
+
+        /// @brief First empty step toward locked Glutton food.
+        Cave::Entity::Direction findPathToGluttonFood(const int& index, const int& target) const;
+
+        /// @brief Step onto empty space, or eat Glutton food.
+        bool tryMoveGlutton(const int& index, const Cave::Entity::Direction& direction);
+
+        /// @brief Nearest plasma reachable through empty space, or OUT_OF_BOUNDS_INDEX.
+        int findNearestReachablePlasma(const int& index) const;
+
+        /// @brief First empty step toward a locked plasma tile.
+        Cave::Entity::Direction findPathToPlasma(const int& index, const int& target) const;
+
+        /// @brief Step onto empty space, or onto plasma (eating it and saturating).
+        bool tryMoveSludg(const int& index, const Cave::Entity::Direction& direction);
+
+        /// @brief True for Diamond or Fragile Diamond tiles.
+        bool isDiamond(const int& index) const;
+
+        /// @brief Nearest diamond reachable through empty space or dirt, or OUT_OF_BOUNDS_INDEX.
+        int findNearestReachableDiamond(const int& index) const;
+
+        /// @brief First step toward a locked diamond through empty space or dirt.
+        Cave::Entity::Direction findPathToDiamond(const int& index, const int& target) const;
+
+        /// @brief Step onto empty space, dirt, or (if allowed) a diamond.
+        bool tryMoveBinocule(const int& index, const Cave::Entity::Direction& direction, bool allowDiamond);
+
+        /**
          * @brief First empty step along a real route to Jim, or NO_DIRECTION if none.
          */
         Cave::Entity::Direction findPathToJim(const int& index);
@@ -904,6 +989,12 @@ namespace Cave {
          * @param index The entity index of the amoeba.
          */
         void updateAmoeba(const int& index);
+
+        /**
+         * @brief Updates a Time Bomb. Armed (player-placed) bombs animate at double speed
+         * and explode after two seconds. Editor-placed bombs never explode on their own.
+         */
+        void updateTimeBomb(const int& index);
         
         /**
          * @brief Determines if an amoeba is trapped.
@@ -1215,8 +1306,17 @@ namespace Cave {
         /// @brief Whether the intro delay has occurred or not.
         bool m_introDelayOccurred = false;
 
-        /// @brief Whether Jim is currently traversing through dirt.
-        bool m_jimTraversingDirt = false;
+        /// @brief Whether Jim or a digging monster is currently traversing through dirt.
+        bool m_traversingDirt = false;
+
+        /// @brief True if Jim changed tiles during the current tick.
+        bool m_jimMovedThisTick = false;
+
+        /// @brief Hollow diamonds currently carried by Jim.
+        int m_hollowCarried = 0;
+
+        /// @brief Time bombs currently carried by Jim.
+        int m_timeBombsCarried = 0;
 
         /// @brief Whether the magic wall has been activated.
         bool m_magicWallStarted = false;

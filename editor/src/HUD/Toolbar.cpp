@@ -234,6 +234,12 @@ void HUD::Editor::Toolbar::drawToolItems(HUD::Editor::Panel* editorPanel)
     tool("Spinner",                  "",  0, 10, Cave::Entity::Type::Spinner);
     tool("Boulder Eater",            "",  1, 10, Cave::Entity::Type::BoulderEater);
     tool("Tetrapus",                 "",  2, 10, Cave::Entity::Type::Tetrapus);
+    tool("Binocule",                 "",  0, 11, Cave::Entity::Type::Binocule);
+    tool("Creep",                    "",  1, 11, Cave::Entity::Type::Creep);
+    tool("Sludg",                    "",  2, 11, Cave::Entity::Type::Sludg);
+    tool("Glutton",                  "",  0, 12, Cave::Entity::Type::Glutton);
+    tool("Hollow Diamond",           "",  1, 12, Cave::Entity::Type::HollowDiamond);
+    tool("Time Bomb",                "",  2, 12, Cave::Entity::Type::TimeBomb);
 }
 
 void HUD::Editor::Toolbar::drawToolsMenu(HUD::Editor::Panel* editorPanel)

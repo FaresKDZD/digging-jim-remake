@@ -71,6 +71,8 @@ bool Cave::Map::handleJimTraverse(const int& index, const int& inFront, const bo
 	setJimMoveAmination(index);
 
 	bool collectable = hasTrait(Cave::Entity::Trait::Collectable, inFront);
+	bool hollow = getEntityType(inFront) == Cave::Entity::Type::HollowDiamond;
+	bool timeBomb = getEntityType(inFront) == Cave::Entity::Type::TimeBomb;
 	bool digging = getEntityType(inFront) == Cave::Entity::Type::Dirt;
 	if (collectMode) {
 		if (!getEntityTransitioning(inFront)) {
@@ -78,8 +80,29 @@ bool Cave::Map::handleJimTraverse(const int& index, const int& inFront, const bo
 				m_game->soundManager.play(Sound::Effect::Collect);
 				m_game->sendSignal(GameSignal::CollectDiamond);
 			}
+			else if (hollow) {
+				m_hollowCarried++;
+				m_game->soundManager.play(Sound::Effect::Collect);
+			}
+			else if (timeBomb) {
+				m_timeBombsCarried++;
+				m_game->soundManager.play(Sound::Effect::Drop);
+			}
 			else if (digging) {
-				m_jimTraversingDirt = true;
+				m_traversingDirt = true;
+			}
+			else if (m_timeBombsCarried > 0 && hasTrait(Cave::Entity::Trait::Empty, inFront)) {
+				m_timeBombsCarried--;
+				setEntity(inFront, Cave::Entity::TimeBomb());
+				caveEntities[inFront].targetIndex = Cave::Entity::TimeBomb::FUSE_TICKS;
+				m_game->soundManager.play(Sound::Effect::Drop);
+				return true;
+			}
+			else if (m_hollowCarried > 0 && hasTrait(Cave::Entity::Trait::Empty, inFront)) {
+				m_hollowCarried--;
+				setEntity(inFront, Cave::Entity::HollowDiamond());
+				m_game->soundManager.play(Sound::Effect::DiamondDrop);
+				return true;
 			}
 			setEntity(inFront, Cave::Entity::Space());
 		}
@@ -87,12 +110,21 @@ bool Cave::Map::handleJimTraverse(const int& index, const int& inFront, const bo
 	}
 	if (moveEntity(index, direction)) {
 		m_jimIndex = inFront;
+		m_jimMovedThisTick = true;
 		if (collectable) {
 			m_game->soundManager.play(Sound::Effect::Collect);
 			m_game->sendSignal(GameSignal::CollectDiamond);
 		}
+		else if (hollow) {
+			m_hollowCarried++;
+			m_game->soundManager.play(Sound::Effect::Collect);
+		}
+		else if (timeBomb) {
+			m_timeBombsCarried++;
+			m_game->soundManager.play(Sound::Effect::Drop);
+		}
 		else if (digging) {
-			m_jimTraversingDirt = true;
+			m_traversingDirt = true;
 		}
 		return true;
 	}
@@ -113,6 +145,7 @@ bool Cave::Map::handleJimPush(const int& index, const int& inFront, const bool& 
 	m_game->inputSystem.increasePushTimer();
 	if (m_game->inputSystem.registerPush() && pushEntity(index, direction)) {
 		m_jimIndex = inFront;
+		m_jimMovedThisTick = true;
 		m_game->soundManager.play(Sound::Effect::Drop);
 		return true;
 	}
@@ -151,6 +184,7 @@ bool Cave::Map::handleJimTubeWarp(const int& index, const int& inFront, const bo
 	if (warpEntity(index, direction)) {
 		m_cameraSpeed = 8;
 		m_jimIndex = getIndex(inFront, direction);
+		m_jimMovedThisTick = true;
 		m_game->soundManager.play(Sound::Effect::Tube);
 		return true;
 	}

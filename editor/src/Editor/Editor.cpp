@@ -165,6 +165,13 @@ static char entityTypeToTile(Cave::Entity::Type type)
     case Cave::Entity::Type::Spinner:             return 34;
     case Cave::Entity::Type::BoulderEater:        return 35;
     case Cave::Entity::Type::Tetrapus:            return 36;
+    case Cave::Entity::Type::Binocule:            return 37;
+    case Cave::Entity::Type::Creep:               return 38;
+    case Cave::Entity::Type::Sludg:               return 39;
+    case Cave::Entity::Type::SaturatedSludg:      return 40;
+    case Cave::Entity::Type::Glutton:             return 41;
+    case Cave::Entity::Type::HollowDiamond:       return 42;
+    case Cave::Entity::Type::TimeBomb:            return 43;
     default:                                      return 0;
     }
 }

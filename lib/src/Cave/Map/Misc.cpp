@@ -7,7 +7,8 @@ void Cave::Map::handleBoulderRoll(const int& index, const Cave::Entity::Directio
 }
 
 void Cave::Map::createExplosion(const int& index) {
-	bool caveGullExplosion = getEntityType(index) == Cave::Entity::Type::CaveGull;
+	bool caveGullExplosion = getEntityType(index) == Cave::Entity::Type::CaveGull
+		|| getEntityType(index) == Cave::Entity::Type::SaturatedSludg;
 	createExplosion(index, caveGullExplosion);
 }
 

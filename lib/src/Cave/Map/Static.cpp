@@ -26,6 +26,36 @@ void Cave::Map::updateAmoeba(const int& index) {
 	}
 }
 
+void Cave::Map::updateTimeBomb(const int& index) {
+	const bool fused = caveEntities[index].targetIndex >= 0;
+	if (fused) {
+		caveEntities[index].targetIndex--;
+		if (caveEntities[index].targetIndex <= 0) {
+			createExplosion(index);
+			return;
+		}
+	}
+
+	updateFallableEntity(index);
+
+	if (!fused) return;
+
+	int bombIndex = index;
+	if (getEntityType(bombIndex) != Cave::Entity::Type::TimeBomb) {
+		for (auto direction : { Cave::Entity::Direction::DOWN, Cave::Entity::Direction::LEFT, Cave::Entity::Direction::RIGHT }) {
+			const int next = getIndex(index, direction);
+			if (getEntityType(next) == Cave::Entity::Type::TimeBomb) {
+				bombIndex = next;
+				break;
+			}
+		}
+	}
+	if (getEntityType(bombIndex) != Cave::Entity::Type::TimeBomb) return;
+
+	updateEntityAnimation(bombIndex);
+	updateEntityAnimation(bombIndex);
+}
+
 bool Cave::Map::handleTrappedAmoeba(const int& index) {
 	m_amoebaChecked = true;
 	return !isAdjacentTo(index, Cave::Entity::Trait::Free);

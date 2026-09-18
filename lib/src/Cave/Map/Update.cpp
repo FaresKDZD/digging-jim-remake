@@ -11,7 +11,8 @@ std::vector<int> Cave::Map::preUpdateCaveEntities() {
 		setEntityUpdated(index, false);
 	}
 
-	m_jimTraversingDirt = false;
+	m_traversingDirt = false;
+	m_jimMovedThisTick = false;
 
 	if (m_amoebaChecked && m_amobeaIsTrapped) m_amoebaIsCompletelyTrapped = true;
 	if (m_amoebaGrowthCount >= m_amoebaGrowthMax) m_amoebaSurpassedMaxGrowth = true;
@@ -46,10 +47,10 @@ void Cave::Map::updateCaveEntities(const std::vector<int> indicies) {
 
 	// Handle audio when Jim is traversing through dirt.
 	// The sound plays on loop so long as Jim continues to traverse through dirt.
-	if (m_jimTraversingDirt && !m_game->soundManager.isPlaying(Sound::Effect::Dig)) {
+	if (m_traversingDirt && !m_game->soundManager.isPlaying(Sound::Effect::Dig)) {
 		m_game->soundManager.loop(Sound::Effect::Dig);
 	}
-	else if (!m_jimTraversingDirt && m_game->soundManager.isPlaying(Sound::Effect::Dig)) {
+	else if (!m_traversingDirt && m_game->soundManager.isPlaying(Sound::Effect::Dig)) {
 		m_game->soundManager.stop(Sound::Effect::Dig);
 	}
 
@@ -87,6 +88,16 @@ void Cave::Map::updateCaveEntities(const std::vector<int> indicies) {
 }
 
 void Cave::Map::updateActiveEntity(const std::vector<int> indicies) {
+	if (m_jimIndex != OUT_OF_BOUNDS_INDEX &&
+		getEntityType(m_jimIndex) == Cave::Entity::Type::Jim &&
+		!getEntityUpdated(m_jimIndex)) {
+		setEntityUpdated(m_jimIndex, true);
+		auto jimUpdate = m_entityUpdateMap.find(Cave::Entity::Type::Jim);
+		if (jimUpdate != m_entityUpdateMap.end()) {
+			jimUpdate->second(m_jimIndex);
+		}
+	}
+
 	for (int index : indicies) {
 		if (getEntityUpdated(index)) continue;
 
@@ -149,6 +160,7 @@ void Cave::Map::initEntityUpdateMaps() {
 
 	m_entityUpdateMap[Cave::Entity::Type::ExitDoor] = [this](int i) { updateExitDoor(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Amoeba] = [this](int i) { updateAmoeba(i); };
+	m_entityUpdateMap[Cave::Entity::Type::TimeBomb] = [this](int i) { updateTimeBomb(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Plasma] = [this](int i) { updatePlasma(i); };
 	m_entityUpdateMap[Cave::Entity::Type::HorizontalWall] = [this](int i) { updateHorizontalWall(i); };
 	m_entityUpdateMap[Cave::Entity::Type::VerticalWall] = [this](int i) { updateVerticalWall(i); };
@@ -165,6 +177,11 @@ void Cave::Map::initEntityUpdateMaps() {
 	m_entityUpdateMap[Cave::Entity::Type::BoulderEater] = [this](int i) { updateBoulderEater(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Aggressor] = [this](int i) { updateAggressor(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Tetrapus] = [this](int i) { updateTetrapus(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Binocule] = [this](int i) { updateBinocule(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Creep] = [this](int i) { updateCreep(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Sludg] = [this](int i) { updateSludg(i); };
+	m_entityUpdateMap[Cave::Entity::Type::SaturatedSludg] = [this](int i) { updateSaturatedSludg(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Glutton] = [this](int i) { updateGlutton(i); };
 
 	m_entityUpdateMap[Cave::Entity::Type::Explosion] = [this](int i) { updateTransientEntity(i, Cave::Entity::Space()); };
 	m_entityUpdateMap[Cave::Entity::Type::OreTransformation] = [this](int i) { updateTransientEntity(i, Cave::Entity::Diamond()); };
@@ -176,6 +193,7 @@ void Cave::Map::initEntityUpdateMaps() {
 
 	m_entityUpdateMap[Cave::Entity::Type::Diamond] = [this](int i) { updateFallableEntity(i); };
 	m_entityUpdateMap[Cave::Entity::Type::FragileDiamond] = [this](int i) { updateFallableEntity(i); };
+	m_entityUpdateMap[Cave::Entity::Type::HollowDiamond] = [this](int i) { updateFallableEntity(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Ore] = [this](int i) { updateFallableEntity(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Boulder] = [this](int i) { updateFallableEntity(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Bomb] = [this](int i) { updateFallableEntity(i); };

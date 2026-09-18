@@ -58,7 +58,10 @@ void Cave::Map::generateMap(const Cave::Properties* properties, const std::vecto
 	// Reset Jim variables
 	m_jimIndex = m_startDoorIndex;
 	m_introDelayOccurred = false;
-	m_jimTraversingDirt = false;
+	m_traversingDirt = false;
+	m_jimMovedThisTick = false;
+	m_hollowCarried = 0;
+	m_timeBombsCarried = 0;
 
 	// Reset magic wall variables
 	m_magicWallStarted = false;

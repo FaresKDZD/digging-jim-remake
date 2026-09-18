@@ -295,6 +295,9 @@ namespace Cave::Entity {
         /// @brief Last movement direction.
         Cave::Entity::Direction direction = Cave::Entity::Direction::NO_DIRECTION;
 
+        /// @brief Locked pathfinding target cell, or -1 if none.
+        int targetIndex = -1;
+
     protected:
 
         /// @brief Entity type identifier.

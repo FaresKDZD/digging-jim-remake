@@ -35,6 +35,13 @@ Cave::Entity::Base Cave::Data::getTileEntity(const char& tile) {
 	case 34: return Cave::Entity::Spinner();
 	case 35: return Cave::Entity::BoulderEater();
 	case 36: return Cave::Entity::Tetrapus();
+	case 37: return Cave::Entity::Binocule();
+	case 38: return Cave::Entity::Creep();
+	case 39: return Cave::Entity::Sludg();
+	case 40: return Cave::Entity::SaturatedSludg();
+	case 41: return Cave::Entity::Glutton();
+	case 42: return Cave::Entity::HollowDiamond();
+	case 43: return Cave::Entity::TimeBomb();
 	default:
 		return Cave::Entity::Space();
 	}

@@ -50,7 +50,7 @@ namespace HUD::Editor {
         /**
          * @brief Select the entity at grid position (x, y) in the entity palette.
          * @param x Column index (0–2).
-         * @param y Row index (0–10).
+         * @param y Row index (0–12).
          */
         void selectType(const int& x, const int& y);
 
@@ -61,7 +61,7 @@ namespace HUD::Editor {
         Cave::Entity::Type getSelectedType() const;
 
         /// @brief Map a palette grid position to the corresponding entity type.
-        /// @param x Column (0–2). @param y Row (0–10).
+        /// @param x Column (0–2). @param y Row (0–12).
         Cave::Entity::Type getType(const int& x, const int& y);
 
         /// @brief Construct a fresh entity instance for the given type.
@@ -185,7 +185,7 @@ namespace HUD::Editor {
 
         /// @brief Current scroll row offset for the entity palette.
         int                       m_scrollRow    = 0;
-        static constexpr int      TOTAL_PALETTE_ROWS   = 11;
+        static constexpr int      TOTAL_PALETTE_ROWS   = 13;
         static constexpr int      VISIBLE_PALETTE_ROWS = 10;
         static constexpr int      MAX_SCROLL_ROW       = TOTAL_PALETTE_ROWS - VISIBLE_PALETTE_ROWS;
 

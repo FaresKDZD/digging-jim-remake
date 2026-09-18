@@ -118,6 +118,13 @@ int HUD::Editor::Panel::miniTileIndex(Cave::Entity::Type type)
     case T::Spinner:         return 30;
     case T::BoulderEater:    return 31;
     case T::Tetrapus:        return 32;
+    case T::Binocule:        return 33;
+    case T::Creep:           return 34;
+    case T::Sludg:           return 35;
+    case T::SaturatedSludg:  return 35;
+    case T::Glutton:         return 36;
+    case T::HollowDiamond:   return 37;
+    case T::TimeBomb:        return 38;
     default:                 return 0;
     }
 }
@@ -510,6 +517,12 @@ Cave::Entity::Type HUD::Editor::Panel::getType(const int& x, const int& y) {
     case 30: return Cave::Entity::Type::Spinner;
     case 31: return Cave::Entity::Type::BoulderEater;
     case 32: return Cave::Entity::Type::Tetrapus;
+    case 33: return Cave::Entity::Type::Binocule;
+    case 34: return Cave::Entity::Type::Creep;
+    case 35: return Cave::Entity::Type::Sludg;
+    case 36: return Cave::Entity::Type::Glutton;
+    case 37: return Cave::Entity::Type::HollowDiamond;
+    case 38: return Cave::Entity::Type::TimeBomb;
     default: return Cave::Entity::Type::NoType;
     }
 }
@@ -549,6 +562,13 @@ Cave::Entity::Base HUD::Editor::Panel::getNewEntity(Cave::Entity::Type type) {
     case Cave::Entity::Type::Spinner:         return Cave::Entity::Spinner();
     case Cave::Entity::Type::BoulderEater:    return Cave::Entity::BoulderEater();
     case Cave::Entity::Type::Tetrapus:        return Cave::Entity::Tetrapus();
+    case Cave::Entity::Type::Binocule:        return Cave::Entity::Binocule();
+    case Cave::Entity::Type::Creep:           return Cave::Entity::Creep();
+    case Cave::Entity::Type::Sludg:           return Cave::Entity::Sludg();
+    case Cave::Entity::Type::SaturatedSludg:  return Cave::Entity::SaturatedSludg();
+    case Cave::Entity::Type::Glutton:         return Cave::Entity::Glutton();
+    case Cave::Entity::Type::HollowDiamond:   return Cave::Entity::HollowDiamond();
+    case Cave::Entity::Type::TimeBomb:        return Cave::Entity::TimeBomb();
     default:                                  return Cave::Entity::Base();
     }
 }
