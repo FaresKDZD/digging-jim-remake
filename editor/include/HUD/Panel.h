@@ -134,8 +134,17 @@ namespace HUD::Editor {
         // Getters
         // ----------------------------------------------------------------------------------
 
-        /// @brief Return the active fill mode index (0 = single, 1 = row, 2 = rect).
+        /// @brief Return the active fill mode index (0 = single, 1 = row, 2 = rect, 3 = select).
         int getFillSelected() const { return m_fillSelected; }
+
+        /// @brief True when the copy/paste selection tool is active.
+        bool isSelectTool() const { return m_fillSelected == 3; }
+
+        /// @brief Tile column last reported under the cave cursor.
+        int getMouseTileX() const { return m_mouseTileX; }
+
+        /// @brief Tile row last reported under the cave cursor.
+        int getMouseTileY() const { return m_mouseTileY; }
 
     private:
 
@@ -262,7 +271,10 @@ namespace HUD::Editor {
         /// @brief Sprites for the three fill mode buttons (single / row / rect).
         std::optional<sf::Sprite> m_fillBtnL, m_fillBtnC, m_fillBtnR;
 
-        /// @brief Active fill mode: 0 = single tile, 1 = row, 2 = rectangle.
+        /// @brief Selection tool button under the fill modes.
+        std::optional<sf::Sprite> m_selectBtn;
+
+        /// @brief Active fill mode: 0 = single tile, 1 = row, 2 = rectangle, 3 = select.
         int  m_fillSelected = 0;
 
         /// @brief True while the test button is held down (shows pressed frame).

@@ -90,6 +90,12 @@ public:
     /// @brief Paste clipboard tile data into the current cave.
     void actionPasteLevel();
 
+    /// @brief Copy the current tile selection.
+    void actionCopySelection();
+
+    /// @brief Paste the tile selection at the cursor.
+    void actionPasteSelection();
+
     /// @brief Randomly distribute the selected entity across the cave interior.
     void actionRandomDist();
 
@@ -163,6 +169,12 @@ public:
     /// @brief Paste the clipboard tile data into the current map.
     /// @param map The cave map to paste into.
     void pasteLevel(Cave::Map& map);
+
+    /// @brief Copy the highlighted tile rectangle into the selection clipboard.
+    void copySelection(const Cave::Map& map);
+
+    /// @brief Paste the selection clipboard with its top-left at (destX, destY).
+    void pasteSelection(Cave::Map& map, int destX, int destY);
 
     /**
      * @brief Write the live map state back into the loadedFile cave entry.
@@ -263,6 +275,12 @@ private:
     /// @brief Set by actionPasteLevel(); handled each frame in run().
     bool m_doPasteLevel    = false;
 
+    /// @brief Set by actionCopySelection(); handled each frame in run().
+    bool m_doCopySelection = false;
+
+    /// @brief Set by actionPasteSelection(); handled each frame in run().
+    bool m_doPasteSelection = false;
+
     /// @brief Set by actionRandomDist(); handled each frame in run().
     bool m_doRandomDist    = false;
 
@@ -306,6 +324,11 @@ private:
 
     /// @brief Tile data copied by copyLevel(), pasted by pasteLevel().
     std::vector<char> m_clipboardTileData;
+
+    bool m_hasSelection = false;
+    int  m_selX0 = 0, m_selY0 = 0, m_selX1 = 0, m_selY1 = 0;
+    int  m_clipW = 0, m_clipH = 0;
+    std::vector<char> m_selectionClipboard;
 
     // ----------------------------------------------------------------------------------
     // Internal helpers

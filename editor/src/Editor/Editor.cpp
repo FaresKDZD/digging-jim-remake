@@ -209,6 +209,46 @@ void Editor::pasteLevel(Cave::Map& map)
     map.setEditorMode();
 }
 
+void Editor::copySelection(const Cave::Map& map)
+{
+    if (!m_hasSelection) return;
+    const int x0 = m_selX0, y0 = m_selY0, x1 = m_selX1, y1 = m_selY1;
+    m_clipW = x1 - x0 + 1;
+    m_clipH = y1 - y0 + 1;
+    m_selectionClipboard.resize((size_t)m_clipW * (size_t)m_clipH);
+    for (int y = y0; y <= y1; ++y)
+        for (int x = x0; x <= x1; ++x)
+            m_selectionClipboard[(y - y0) * m_clipW + (x - x0)] =
+                entityTypeToTile(map.caveEntities[y * map.width + x].getType());
+}
+
+void Editor::pasteSelection(Cave::Map& map, int destX, int destY)
+{
+    if (m_selectionClipboard.empty() || m_clipW <= 0 || m_clipH <= 0) return;
+    if (map.width < 3 || map.height < 3) return;
+    destX = std::clamp(destX, 1, map.width  - 2);
+    destY = std::clamp(destY, 1, map.height - 2);
+    saveUndoSnapshot(map);
+    for (int y = 0; y < m_clipH; ++y)
+    {
+        const int ty = destY + y;
+        if (ty <= 0 || ty >= map.height - 1) continue;
+        for (int x = 0; x < m_clipW; ++x)
+        {
+            const int tx = destX + x;
+            if (tx <= 0 || tx >= map.width - 1) continue;
+            map.placeEntity(ty * map.width + tx,
+                Cave::Data::getTileEntity(m_selectionClipboard[y * m_clipW + x]));
+        }
+    }
+    map.setEditorMode();
+    m_selX0 = destX;
+    m_selY0 = destY;
+    m_selX1 = std::min(map.width  - 2, destX + m_clipW - 1);
+    m_selY1 = std::min(map.height - 2, destY + m_clipH - 1);
+    m_hasSelection = true;
+}
+
 void Editor::syncCurrentCave(Cave::Map& map, Cave::File& loadedFile, int currentCaveIndex)
 {
     if (currentCaveIndex < 0 || currentCaveIndex >= (int)loadedFile.caves.size()) return;
@@ -358,6 +398,8 @@ void Editor::actionDeleteLevel()        { m_doDeleteLevel   = true; }
 void Editor::actionClearLevel()         { m_doClearLevel    = true; }
 void Editor::actionCopyLevel()          { m_doCopyLevel     = true; }
 void Editor::actionPasteLevel()         { m_doPasteLevel    = true; }
+void Editor::actionCopySelection()      { m_doCopySelection = true; }
+void Editor::actionPasteSelection()     { m_doPasteSelection = true; }
 void Editor::actionRandomDist()         { m_doRandomDist    = true; }
 void Editor::actionShowSettings()       { m_doShowSettings  = true; }
 void Editor::actionShowCaveProperties() { m_doShowCaveProps = true; }
@@ -390,27 +432,40 @@ void Editor::handleShortcuts(const sf::Event::KeyPressed& e, HUD::Editor::Panel*
 
     if (ctrl)
     {
-        switch (e.code)
+        if (e.shift)
         {
-        case Key::N: actionNewFile();            break;
-        case Key::O: actionOpenFile();           break;
-        case Key::S: actionSaveFile();           break;
-        case Key::A: actionSaveFileAs();         break;
-        case Key::T: actionTest();               break;
-        case Key::U: actionUndo();               break;
-        case Key::C: actionCopyLevel();          break;
-        case Key::V: actionPasteLevel();         break;
-        case Key::L: actionClearLevel();         break;
-        case Key::P: actionShowCaveProperties();          break;
-        case Key::R: actionRandomDist();                  break;
-        case Key::D: m_developerMode = !m_developerMode;  break;
-        default: break;
+            switch (e.code)
+            {
+            case Key::C: actionCopyLevel();  break;
+            case Key::V: actionPasteLevel(); break;
+            default: break;
+            }
+        }
+        else
+        {
+            switch (e.code)
+            {
+            case Key::N: actionNewFile();            break;
+            case Key::O: actionOpenFile();           break;
+            case Key::S: actionSaveFile();           break;
+            case Key::A: actionSaveFileAs();         break;
+            case Key::T: actionTest();               break;
+            case Key::U: actionUndo();               break;
+            case Key::C: actionCopySelection();      break;
+            case Key::V: actionPasteSelection();     break;
+            case Key::L: actionClearLevel();         break;
+            case Key::P: actionShowCaveProperties();          break;
+            case Key::R: actionRandomDist();                  break;
+            case Key::D: m_developerMode = !m_developerMode;  break;
+            default: break;
+            }
         }
     }
     else
     {
         switch (e.code)
         {
+        case Key::Escape:   m_hasSelection = false; break;
         case Key::Insert:   actionInsertLevel(); break;
         case Key::Delete:   actionDeleteLevel(); break;
         case Key::Add:      actionNextLevel();   break;
@@ -683,6 +738,7 @@ bool Editor::run()
     bool         panning          = false;
 
     bool         fillDragging      = false;
+    bool         selectDragging    = false;
     sf::Vector2i fillStartTile     = { 0, 0 };
     sf::Vector2i fillCurrentTile   = { 0, 0 };
     sf::Vector2f fillStartWorld    = { 0.f, 0.f };
@@ -831,22 +887,42 @@ bool Editor::run()
                             editorPanel.handleClick(vp, PANEL_X, TOOLBAR_H);
                     }
                     else if (!ImGui::GetIO().WantCaptureMouse &&
-                             vp.x < VSB_X && vp.y >= TOOLBAR_H && vp.y < HSB_Y &&
-                             ((settings.fillMode == Cave::FillMode::Rectangle && editorPanel.getFillSelected() != 0) ||
-                              (settings.fillMode != Cave::FillMode::Rectangle && editorPanel.getFillSelected() >= 1)))
+                             vp.x < VSB_X && vp.y >= TOOLBAR_H && vp.y < HSB_Y)
                     {
-                        sf::View caveView = caveCamera.view();
-                        caveView.setViewport(sf::FloatRect(sf::Vector2f(CAVE_VP_X, CAVE_VP_Y),
-                                                           sf::Vector2f(CAVE_VP_W, CAVE_VP_H)));
-                        sf::Vector2f mw = rt.mapPixelToCoords(sf::Vector2i((int)vp.x, (int)vp.y), caveView);
-                        int tx = std::clamp((int)mw.x / 32, 1, map.width  - 2);
-                        int ty = std::clamp((int)mw.y / 32, 1, map.height - 2);
-                        saveUndoSnapshot(map);
-                        fillDragging     = true;
-                        fillStartTile    = { tx, ty };
-                        fillCurrentTile  = { tx, ty };
-                        fillStartWorld   = mw;
-                        fillCurrentWorld = mw;
+                        const int fillSel = editorPanel.getFillSelected();
+                        const bool selectTool = (fillSel == 3);
+                        const bool areaTool =
+                            !selectTool &&
+                            ((settings.fillMode == Cave::FillMode::Rectangle && fillSel != 0) ||
+                             (settings.fillMode != Cave::FillMode::Rectangle && fillSel >= 1));
+                        if (selectTool || areaTool)
+                        {
+                            sf::View caveView = caveCamera.view();
+                            caveView.setViewport(sf::FloatRect(sf::Vector2f(CAVE_VP_X, CAVE_VP_Y),
+                                                               sf::Vector2f(CAVE_VP_W, CAVE_VP_H)));
+                            sf::Vector2f mw = rt.mapPixelToCoords(sf::Vector2i((int)vp.x, (int)vp.y), caveView);
+                            if (selectTool)
+                            {
+                                int tx = std::clamp((int)mw.x / 32, 0, map.width  - 1);
+                                int ty = std::clamp((int)mw.y / 32, 0, map.height - 1);
+                                selectDragging   = true;
+                                fillStartTile    = { tx, ty };
+                                fillCurrentTile  = { tx, ty };
+                                fillStartWorld   = mw;
+                                fillCurrentWorld = mw;
+                            }
+                            else
+                            {
+                                int tx = std::clamp((int)mw.x / 32, 1, map.width  - 2);
+                                int ty = std::clamp((int)mw.y / 32, 1, map.height - 2);
+                                saveUndoSnapshot(map);
+                                fillDragging     = true;
+                                fillStartTile    = { tx, ty };
+                                fillCurrentTile  = { tx, ty };
+                                fillStartWorld   = mw;
+                                fillCurrentWorld = mw;
+                            }
+                        }
                     }
                 }
             }
@@ -856,6 +932,16 @@ bool Editor::run()
                 if (e->button == sf::Mouse::Button::Left)
                 {
                     vsbDragging = false; hsbDragging = false; minimapDragging = false; editorPanel.handleRelease();
+
+                    if (selectDragging)
+                    {
+                        selectDragging = false;
+                        m_selX0 = std::min(fillStartTile.x, fillCurrentTile.x);
+                        m_selY0 = std::min(fillStartTile.y, fillCurrentTile.y);
+                        m_selX1 = std::max(fillStartTile.x, fillCurrentTile.x);
+                        m_selY1 = std::max(fillStartTile.y, fillCurrentTile.y);
+                        m_hasSelection = true;
+                    }
 
                     if (fillDragging)
                     {
@@ -948,15 +1034,19 @@ bool Editor::run()
                     caveCamera.setCentre(caveCamera.getCenter() - (vp - prevVp));
                     lastPanPos = e->position;
                 }
-                if (fillDragging)
+                if (fillDragging || selectDragging)
                 {
                     sf::View caveView = caveCamera.view();
                     caveView.setViewport(sf::FloatRect(sf::Vector2f(CAVE_VP_X, CAVE_VP_Y),
                                                        sf::Vector2f(CAVE_VP_W, CAVE_VP_H)));
                     sf::Vector2f mw = rt.mapPixelToCoords(sf::Vector2i((int)vp.x, (int)vp.y), caveView);
+                    const int minX = selectDragging ? 0 : 1;
+                    const int maxX = selectDragging ? map.width  - 1 : map.width  - 2;
+                    const int minY = selectDragging ? 0 : 1;
+                    const int maxY = selectDragging ? map.height - 1 : map.height - 2;
                     fillCurrentTile  = {
-                        std::clamp((int)mw.x / 32, 1, map.width  - 2),
-                        std::clamp((int)mw.y / 32, 1, map.height - 2)
+                        std::clamp((int)mw.x / 32, minX, maxX),
+                        std::clamp((int)mw.y / 32, minY, maxY)
                     };
                     fillCurrentWorld = mw;
                 }
@@ -1166,6 +1256,29 @@ bool Editor::run()
             }
         }
 
+        if (selectDragging || (m_hasSelection && editorPanel.isSelectTool()))
+        {
+            int x0, y0, x1, y1;
+            if (selectDragging)
+            {
+                x0 = std::min(fillStartTile.x, fillCurrentTile.x);
+                y0 = std::min(fillStartTile.y, fillCurrentTile.y);
+                x1 = std::max(fillStartTile.x, fillCurrentTile.x);
+                y1 = std::max(fillStartTile.y, fillCurrentTile.y);
+            }
+            else
+            {
+                x0 = m_selX0; y0 = m_selY0; x1 = m_selX1; y1 = m_selY1;
+            }
+            fillPreview.setPosition(sf::Vector2f((float)x0 * 32.f, (float)y0 * 32.f));
+            fillPreview.setSize(sf::Vector2f((float)(x1 - x0 + 1) * 32.f, (float)(y1 - y0 + 1) * 32.f));
+            fillPreview.setFillColor(sf::Color::Transparent);
+            fillPreview.setOutlineColor(sf::Color::Yellow);
+            rt.draw(fillPreview);
+            fillPreview.setFillColor(sf::Color::Transparent);
+            fillPreview.setOutlineColor(sf::Color::Yellow);
+        }
+
         sf::View panelRenderView = panelCamera.view();
         panelRenderView.setViewport(sf::FloatRect(sf::Vector2f(PANEL_VP_X, PANEL_VP_Y),
                                                    sf::Vector2f(PANEL_VP_W, PANEL_VP_H)));
@@ -1217,6 +1330,7 @@ bool Editor::run()
             m_undoTileData.clear();
             m_isDirty       = false;
             m_undoAvailable = false;
+            m_hasSelection  = false;
             caveCamera.setCentre(sf::Vector2f(viewSize.x / 2.f, viewSize.y / 2.f));
             lastPlacedX = -1; lastPlacedY = -1;
             updateTitle();
@@ -1255,6 +1369,7 @@ bool Editor::run()
                         syncCaveBounds();
                         caveCamera.setCentre(sf::Vector2f(viewSize.x / 2.f, viewSize.y / 2.f));
                         lastPlacedX = -1; lastPlacedY = -1;
+                        m_hasSelection = false;
                         updateTitle();
                     }
                 }
@@ -1286,6 +1401,7 @@ bool Editor::run()
                     syncCaveBounds();
                     caveCamera.setCentre(sf::Vector2f(viewSize.x / 2.f, viewSize.y / 2.f));
                     lastPlacedX = -1; lastPlacedY = -1;
+                    m_hasSelection = false;
                     updateTitle();
                 }
             }
@@ -1476,11 +1592,53 @@ bool Editor::run()
                 lastPlacedX = -1; lastPlacedY = -1;
             }
         }
-        if (m_doClearLevel)   { m_doClearLevel   = false; saveUndoSnapshot(map); clearLevel(map); syncCaveBounds(); }
+        if (m_doClearLevel)
+        {
+            m_doClearLevel = false;
+            char msg[96];
+            std::snprintf(msg, sizeof(msg),
+                "Clear level %03d?\nAll tiles will be reset to a blank cave.",
+                currentCaveIndex + 1);
+            if (tinyfd_messageBox("Clear Level", msg, "okcancel", "warning", 0) == 1)
+            {
+                saveUndoSnapshot(map);
+                clearLevel(map);
+                syncCaveBounds();
+            }
+        }
         if (m_doCopyLevel)    { m_doCopyLevel    = false; copyLevel(map);  }
         if (m_doPasteLevel)   { m_doPasteLevel   = false; saveUndoSnapshot(map); pasteLevel(map); syncCaveBounds(); }
-        if (m_doInsertLevel)  { m_doInsertLevel  = false; insertLevel(map, loadedFile, currentCaveIndex); updateTitle(); syncCaveBounds(); }
-        if (m_doDeleteLevel)  { m_doDeleteLevel  = false; deleteLevel(map, loadedFile, currentCaveIndex); updateTitle(); syncCaveBounds(); }
+        if (m_doCopySelection) { m_doCopySelection = false; copySelection(map); }
+        if (m_doPasteSelection)
+        {
+            m_doPasteSelection = false;
+            pasteSelection(map, editorPanel.getMouseTileX(), editorPanel.getMouseTileY());
+        }
+        if (m_doInsertLevel)  { m_doInsertLevel  = false; insertLevel(map, loadedFile, currentCaveIndex); m_hasSelection = false; updateTitle(); syncCaveBounds(); }
+        if (m_doDeleteLevel)
+        {
+            m_doDeleteLevel = false;
+            if ((int)loadedFile.caves.size() <= 1)
+            {
+                tinyfd_messageBox("Remove Level",
+                    "Cannot remove the last remaining level.",
+                    "ok", "info", 1);
+            }
+            else
+            {
+                char msg[96];
+                std::snprintf(msg, sizeof(msg),
+                    "Remove level %03d from this cave file?\nThis cannot be undone.",
+                    currentCaveIndex + 1);
+                if (tinyfd_messageBox("Remove Level", msg, "okcancel", "warning", 0) == 1)
+                {
+                    deleteLevel(map, loadedFile, currentCaveIndex);
+                    m_hasSelection = false;
+                    updateTitle();
+                    syncCaveBounds();
+                }
+            }
+        }
         if (m_doSaveFile)     { m_doSaveFile     = false; saveFile(map, loadedFile, currentCaveIndex);    updateTitle(); }
         if (m_doSaveFileAs)   { m_doSaveFileAs   = false; saveFileAs(map, loadedFile, currentCaveIndex); updateTitle(); }
         if (m_doTest)

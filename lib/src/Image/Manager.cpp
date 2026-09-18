@@ -25,6 +25,7 @@ void Image::Manager::loadAllImages() {
     loadTexture(Image::Texture::EditorEllipseFill, "./assets/textures/Editor/ellipsefill.png");
     loadTexture(Image::Texture::EditorCoords, "./assets/textures/Editor/coords.png");
     loadTexture(Image::Texture::EditorTestButton, "./assets/textures/Editor/test_button.png");
+    loadTexture(Image::Texture::EditorSelect, "./assets/textures/Editor/select.png");
     loadTexture(Image::Texture::EditorMiniTiles, "./assets/textures/Editor/mini_tiles.png");
 }
 

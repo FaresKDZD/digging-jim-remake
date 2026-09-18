@@ -70,6 +70,9 @@ namespace Image {
         /// @brief Editor test button.
         EditorTestButton,
 
+        /// @brief Editor selection tool button.
+        EditorSelect,
+
         /// @brief Editor mini tiles for map.
         EditorMiniTiles
     };

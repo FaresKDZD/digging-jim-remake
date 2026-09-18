@@ -7,9 +7,13 @@ static constexpr float PALETTE_H    = 342.f;
 static constexpr float SB_THICK     = 16.f;
 static constexpr float SB_X         = 104.f;
 static constexpr float FILL_Y       = 460.f;
-static constexpr float FILL_LX      = 10.f;
-static constexpr float FILL_CX      = 40.f;
-static constexpr float FILL_RX      = 70.f;
+static constexpr float FILL_LX      = 4.f;
+static constexpr float FILL_CX      = 32.f;
+static constexpr float FILL_RX      = 60.f;
+static constexpr float SELECT_X     = 88.f;
+static constexpr float SELECT_Y     = 461.f;
+static constexpr float SELECT_S     = 24.f;
+static constexpr float TEST_Y       = 434.f;
 static constexpr float CORDS_BASE_X = (PANEL_W - 60.f) / 2.f;
 static constexpr float CORDS_BASE_Y = 348.f;
 
@@ -67,11 +71,15 @@ void HUD::Editor::Panel::load()
     initDigit(m_digitY2, 61.f, 3.f);
 
     m_testBtn.emplace(testTex, sf::IntRect({0, 0}, {42, 20}));
-    m_testBtn->setPosition({(PANEL_W - 42.f) / 2.f, 434.f});
+    m_testBtn->setPosition({(PANEL_W - 42.f) / 2.f, TEST_Y});
 
     m_fillBtnL.emplace(fillTex, sf::IntRect({0,  0}, {24, 26}));  m_fillBtnL->setPosition({FILL_LX, FILL_Y});
     m_fillBtnC.emplace(fillTex, sf::IntRect({24, 0}, {24, 26}));  m_fillBtnC->setPosition({FILL_CX, FILL_Y});
     m_fillBtnR.emplace(fillTex, sf::IntRect({48, 0}, {24, 26}));  m_fillBtnR->setPosition({FILL_RX, FILL_Y});
+
+    const sf::Texture& selectTex = m_editor->imageManager.getTexture(Image::Texture::EditorSelect);
+    m_selectBtn.emplace(selectTex, sf::IntRect({0, 0}, {(int)SELECT_S, (int)SELECT_S}));
+    m_selectBtn->setPosition({SELECT_X, SELECT_Y});
 
     if (!m_sbTex.loadFromFile("./assets/textures/Editor/scroll_bar.png"))
         throw std::runtime_error("Error: Unable to load editor palette scrollbar.\n");
@@ -267,6 +275,10 @@ void HUD::Editor::Panel::update(const Camera& panelCamera, const Camera* caveCam
     m_fillBtnL->setTextureRect(m_fillSelected==0 ? sf::IntRect({0,  26},{24,26}) : sf::IntRect({0,  0},{24,26}));
     m_fillBtnC->setTextureRect(m_fillSelected==1 ? sf::IntRect({24, 26},{24,26}) : sf::IntRect({24, 0},{24,26}));
     m_fillBtnR->setTextureRect(m_fillSelected==2 ? sf::IntRect({48, 26},{24,26}) : sf::IntRect({48, 0},{24,26}));
+    if (m_selectBtn)
+        m_selectBtn->setTextureRect(m_fillSelected==3
+            ? sf::IntRect({0, (int)SELECT_S}, {(int)SELECT_S, (int)SELECT_S})
+            : sf::IntRect({0, 0}, {(int)SELECT_S, (int)SELECT_S}));
 
     const float sbX = (float)position.x + SB_X;
     const float sbY = (float)position.y;
@@ -342,6 +354,7 @@ void HUD::Editor::Panel::draw(sf::RenderTarget& target, sf::RenderStates states)
     if (m_fillBtnL)   target.draw(*m_fillBtnL,   noShader);
     if (m_fillBtnC)   target.draw(*m_fillBtnC,   noShader);
     if (m_fillBtnR)   target.draw(*m_fillBtnR,   noShader);
+    if (m_selectBtn)  target.draw(*m_selectBtn,  noShader);
 }
 
 void HUD::Editor::Panel::handleClick(sf::Vector2f vp, float panelX, float toolbarH)
@@ -377,14 +390,16 @@ void HUD::Editor::Panel::handleClick(sf::Vector2f vp, float panelX, float toolba
     if (px >= 0 && px < 3 && py >= 0 && py < VISIBLE_PALETTE_ROWS && lx < SB_X)
     {
         selectType(px, py + m_scrollRow);
+        if (m_fillSelected == 3) m_fillSelected = 0;
         return;
     }
 
     if      (lx >= FILL_LX && lx < FILL_LX+24.f && ly >= FILL_Y && ly < FILL_Y+26.f) m_fillSelected = 0;
     else if (lx >= FILL_CX && lx < FILL_CX+24.f && ly >= FILL_Y && ly < FILL_Y+26.f) m_fillSelected = 1;
     else if (lx >= FILL_RX && lx < FILL_RX+24.f && ly >= FILL_Y && ly < FILL_Y+26.f) m_fillSelected = 2;
+    else if (lx >= SELECT_X && lx < SELECT_X+SELECT_S && ly >= SELECT_Y && ly < SELECT_Y+SELECT_S) m_fillSelected = 3;
     else if (lx >= (PANEL_W-42.f)/2.f && lx < (PANEL_W-42.f)/2.f+42.f &&
-             ly >= 434.f && ly < 454.f)
+             ly >= TEST_Y && ly < TEST_Y+20.f)
     {
         m_testPressed = true;
         m_editor->actionTest();

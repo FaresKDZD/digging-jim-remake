@@ -143,8 +143,11 @@ void HUD::Editor::Toolbar::drawEditMenu()
         ImGui::Indent(m_menuIndent);
         if (ImGui::MenuItem("Undo", "Ctrl+U")) m_editor->actionUndo();
         ImGui::Separator();
-        if (ImGui::MenuItem("Copy Level",  "Ctrl+C")) m_editor->actionCopyLevel();
-        if (ImGui::MenuItem("Paste Level", "Ctrl+V")) m_editor->actionPasteLevel();
+        if (ImGui::MenuItem("Copy",  "Ctrl+C")) m_editor->actionCopySelection();
+        if (ImGui::MenuItem("Paste", "Ctrl+V")) m_editor->actionPasteSelection();
+        ImGui::Separator();
+        if (ImGui::MenuItem("Copy Level",  "Ctrl+Shift+C")) m_editor->actionCopyLevel();
+        if (ImGui::MenuItem("Paste Level", "Ctrl+Shift+V")) m_editor->actionPasteLevel();
         if (ImGui::MenuItem("Clear Level", "Ctrl+L")) m_editor->actionClearLevel();
         ImGui::Separator();
         if (ImGui::MenuItem("Insert Level", "Insert")) m_editor->actionInsertLevel();
