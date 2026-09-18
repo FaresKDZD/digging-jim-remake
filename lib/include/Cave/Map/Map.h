@@ -776,6 +776,17 @@ namespace Cave {
         void updateCaveGull(const int& index);
         
         /**
+         * @brief Updates the Spinner enemy's behavior.
+         *
+         * Attempts to move the Spinner in a clockwise arc (turning right) relative to its current
+         * direction. If movement fails, it will attempt a fallback move and finally
+         * stop moving if no valid movement is possible.
+         *
+         * @param index The entity index of the Spinner.
+         */
+        void updateSpinner(const int& index);
+        
+        /**
          * @brief Updates the Cilia enemy's behavior.
          *
          * The Cilia moves in its current direction if possible. If movement is blocked,
@@ -796,6 +807,16 @@ namespace Cave {
          * @param index The entity index of the Eater.
          */
         void updateEater(const int& index);
+
+        /**
+         * @brief Updates the Boulder Eater enemy's behavior.
+         *
+         * Moves like a Protozo (anticlockwise / turning left). If a boulder is found
+         * directly in front, it consumes it the same way an Eater consumes collectables.
+         *
+         * @param index The entity index of the Boulder Eater.
+         */
+        void updateBoulderEater(const int& index);
         
        /**
          * @brief Updates the Aggressor enemy's behavior.
@@ -806,6 +827,24 @@ namespace Cave {
          * @param index The entity index of the Aggressor.
          */
         void updateAggressor(const int& index);
+
+        /**
+         * @brief Updates the Tetrapus enemy's behavior.
+         *
+         * Pathfinds to Jim through empty space (other monsters are ignored for routing).
+         * If no empty route exists, it hunts like an Aggressor until a gap opens.
+         *
+         * @param index The entity index of the Tetrapus.
+         */
+        void updateTetrapus(const int& index);
+
+        /**
+         * @brief First empty step along a real route to Jim, or NO_DIRECTION if none.
+         */
+        Cave::Entity::Direction findPathToJim(const int& index);
+
+        /// @brief True if this tile is another creature Tetrapus may plan through.
+        bool isPathfindMonster(const int& index) const;
 
         /**
          * @brief Handles basic per-update enemy logic.
@@ -842,6 +881,13 @@ namespace Cave {
          * @return true if the movement succeeded, false otherwise.
          */
         bool tryMoveEnemy(const int& index, const Cave::Entity::Trait& trait, const Cave::Entity::Direction& direction);
+
+        /**
+         * @brief Attempts to move an enemy onto a destination of a specific entity type.
+         *
+         * Used for enemies that consume a tile (for example a Boulder Eater eating a boulder).
+         */
+        bool tryMoveEnemy(const int& index, const Cave::Entity::Type& type, const Cave::Entity::Direction& direction);
 
         // -----------------------------
         // - Static Tile-Type Behavior -

@@ -2,7 +2,10 @@
 #include "HUD/Panel.h"
 #include "Editor/Editor.h"
 
-static constexpr float PANEL_W      = 104.f;
+static constexpr float PANEL_W      = 120.f;
+static constexpr float PALETTE_H    = 342.f;
+static constexpr float SB_THICK     = 16.f;
+static constexpr float SB_X         = 104.f;
 static constexpr float FILL_Y       = 460.f;
 static constexpr float FILL_LX      = 10.f;
 static constexpr float FILL_CX      = 40.f;
@@ -11,7 +14,7 @@ static constexpr float CORDS_BASE_X = (PANEL_W - 60.f) / 2.f;
 static constexpr float CORDS_BASE_Y = 348.f;
 
 HUD::Editor::Panel::Panel(::Editor* editor) : m_editor(editor), m_tileRenderer(&editor->imageManager) {
-    m_background.setSize(sf::Vector2f(104.f, 342.f));
+    m_background.setSize(sf::Vector2f(PANEL_W, PALETTE_H));
     m_background.setFillColor(sf::Color(128, 128, 128));
 
     m_selectedBox.setSize(sf::Vector2f(32.f, 32.f));
@@ -19,16 +22,17 @@ HUD::Editor::Panel::Panel(::Editor* editor) : m_editor(editor), m_tileRenderer(&
     m_selectedBox.setOutlineColor(sf::Color::Yellow);
     m_selectedBox.setOutlineThickness(2.f);
 
-    for (int y = 0; y < 10; ++y) {
+    for (int y = 0; y < TOTAL_PALETTE_ROWS; ++y) {
         for (int x = 0; x < 3; ++x) {
             Cave::Entity::Type type = getType(x, y);
-            m_entities[type] = getNewEntity(type);
+            if (type != Cave::Entity::Type::NoType)
+                m_entities[type] = getNewEntity(type);
         }
     }
 
-    m_builderMenu.setSize(sf::Vector2f(PANEL_W, 496.f - 342.f));
+    m_builderMenu.setSize(sf::Vector2f(PANEL_W, 496.f - PALETTE_H));
     m_builderMenu.setFillColor(sf::Color(128, 128, 128));
-    m_builderMenu.setPosition(sf::Vector2f(0.f, 342.f));
+    m_builderMenu.setPosition(sf::Vector2f(0.f, PALETTE_H));
 
     m_minimapVerts.setPrimitiveType(sf::PrimitiveType::Triangles);
 }
@@ -68,6 +72,13 @@ void HUD::Editor::Panel::load()
     m_fillBtnL.emplace(fillTex, sf::IntRect({0,  0}, {24, 26}));  m_fillBtnL->setPosition({FILL_LX, FILL_Y});
     m_fillBtnC.emplace(fillTex, sf::IntRect({24, 0}, {24, 26}));  m_fillBtnC->setPosition({FILL_CX, FILL_Y});
     m_fillBtnR.emplace(fillTex, sf::IntRect({48, 0}, {24, 26}));  m_fillBtnR->setPosition({FILL_RX, FILL_Y});
+
+    if (!m_sbTex.loadFromFile("./assets/textures/Editor/scroll_bar.png"))
+        throw std::runtime_error("Error: Unable to load editor palette scrollbar.\n");
+    m_sbArrUp.emplace(m_sbTex, sf::IntRect({0,  0},  {16, 16}));
+    m_sbArrDown.emplace(m_sbTex, sf::IntRect({0,  16}, {16, 16}));
+    m_sbThumb.emplace(m_sbTex, sf::IntRect({0,  32}, {16, 16}));
+    m_sbBgTile.emplace(m_sbTex, sf::IntRect({16, 32}, {16, 16}));
 }
 
 int HUD::Editor::Panel::miniTileIndex(Cave::Entity::Type type)
@@ -104,6 +115,9 @@ int HUD::Editor::Panel::miniTileIndex(Cave::Entity::Type type)
     case T::TubeDown:        return 27;
     case T::StartDoor:       return 28;
     case T::ExitDoor:        return 29;
+    case T::Spinner:         return 30;
+    case T::BoulderEater:    return 31;
+    case T::Tetrapus:        return 32;
     default:                 return 0;
     }
 }
@@ -157,20 +171,29 @@ void HUD::Editor::Panel::update(const Camera& panelCamera, const Camera* caveCam
     sf::Vector2f viewSize   = camera.getSize();
     sf::Vector2f viewCenter = camera.getCenter();
     sf::Vector2f topLeft    = viewCenter - viewSize / 2.f;
-    sf::Vector2i position   = { static_cast<int>(topLeft.x + viewSize.x - 104),
+    sf::Vector2i position   = { static_cast<int>(topLeft.x),
                                  static_cast<int>(topLeft.y) };
 
     m_background.setPosition(sf::Vector2f((float)position.x, (float)position.y));
-    m_selectedBox.setPosition({
-        m_selectedPosition.x * 34.f + 2.f + position.x,
-        m_selectedPosition.y * 34.f + 2.f + position.y
-    });
+    const int visY = m_selectedPosition.y - m_scrollRow;
+    if (visY < 0 || visY >= VISIBLE_PALETTE_ROWS)
+        m_selectedBox.setPosition({-100.f, -100.f});
+    else
+        m_selectedBox.setPosition({
+            m_selectedPosition.x * 34.f + 2.f + position.x,
+            visY * 34.f + 2.f + position.y
+        });
 
     std::vector<Cave::Entity::Base> entities;
-    for (int y = 0; y < 10; ++y)
+    bool tickFired = animate && m_TickCounter.onTick();
+    for (int y = m_scrollRow; y < m_scrollRow + VISIBLE_PALETTE_ROWS; ++y)
         for (int x = 0; x < 3; ++x) {
             Cave::Entity::Type type = getType(x, y);
-            if (animate && m_TickCounter.onTick()) m_entities[type].updateAnimation();
+            if (type == Cave::Entity::Type::NoType) {
+                entities.push_back(Cave::Entity::Base());
+                continue;
+            }
+            if (tickFired) m_entities[type].updateAnimation();
             entities.push_back(m_entities[type]);
         }
 
@@ -235,6 +258,12 @@ void HUD::Editor::Panel::update(const Camera& panelCamera, const Camera* caveCam
     m_fillBtnC->setTextureRect(m_fillSelected==1 ? sf::IntRect({24, 26},{24,26}) : sf::IntRect({24, 0},{24,26}));
     m_fillBtnR->setTextureRect(m_fillSelected==2 ? sf::IntRect({48, 26},{24,26}) : sf::IntRect({48, 0},{24,26}));
 
+    const float sbX = (float)position.x + SB_X;
+    const float sbY = (float)position.y;
+    if (m_sbArrUp)   m_sbArrUp->setPosition({sbX, sbY});
+    if (m_sbArrDown) m_sbArrDown->setPosition({sbX, sbY + PALETTE_H - SB_THICK});
+    if (m_sbThumb)   m_sbThumb->setPosition({sbX, sbY + scrollbarThumbY()});
+
     if (map) rebuildMinimap(*map);
 
     static constexpr float MINI_X = (PANEL_W - 100.f) / 2.f;
@@ -265,6 +294,19 @@ void HUD::Editor::Panel::draw(sf::RenderTarget& target, sf::RenderStates states)
     target.draw(m_background,  noShader);
     m_tileRenderer.render(target, states);
     target.draw(m_selectedBox, noShader);
+    if (m_sbBgTile)
+    {
+        sf::Sprite tile = *m_sbBgTile;
+        for (float y = SB_THICK; y < PALETTE_H - SB_THICK; y += SB_THICK)
+        {
+            tile.setPosition({m_background.getPosition().x + SB_X,
+                              m_background.getPosition().y + y});
+            target.draw(tile, noShader);
+        }
+    }
+    if (m_sbArrUp)   target.draw(*m_sbArrUp,   noShader);
+    if (m_sbArrDown) target.draw(*m_sbArrDown, noShader);
+    if (m_sbThumb)   target.draw(*m_sbThumb,   noShader);
     target.draw(m_builderMenu,   noShader);
     if (m_cordsBackground) target.draw(*m_cordsBackground, noShader);
     if (m_cordsLabelX) target.draw(*m_cordsLabelX, noShader);
@@ -297,11 +339,34 @@ void HUD::Editor::Panel::handleClick(sf::Vector2f vp, float panelX, float toolba
     float lx = vp.x - panelX;
     float ly = vp.y - toolbarH;
 
+    if (lx >= SB_X && lx < PANEL_W && ly >= 0.f && ly < PALETTE_H)
+    {
+        if (ly < SB_THICK)
+            handleScroll(1.f);
+        else if (ly >= PALETTE_H - SB_THICK)
+            handleScroll(-1.f);
+        else if (ly >= scrollbarThumbY() && ly < scrollbarThumbY() + SB_THICK)
+        {
+            m_sbDragging = true;
+            m_sbDragOffsetY = ly - scrollbarThumbY();
+        }
+        else
+        {
+            const float trackH = PALETTE_H - 2.f * SB_THICK;
+            const float thumbH = scrollbarThumbHeight();
+            float frac = 0.f;
+            if (trackH > thumbH)
+                frac = std::clamp((ly - SB_THICK - thumbH * 0.5f) / (trackH - thumbH), 0.f, 1.f);
+            setScrollRow((int)std::round(frac * (float)MAX_SCROLL_ROW));
+        }
+        return;
+    }
+
     int px = static_cast<int>(lx) / 34;
     int py = static_cast<int>(ly) / 34;
-    if (px >= 0 && px < 3 && py >= 0 && py < 10)
+    if (px >= 0 && px < 3 && py >= 0 && py < VISIBLE_PALETTE_ROWS && lx < SB_X)
     {
-        selectType(px, py);
+        selectType(px, py + m_scrollRow);
         return;
     }
 
@@ -319,6 +384,40 @@ void HUD::Editor::Panel::handleClick(sf::Vector2f vp, float panelX, float toolba
 void HUD::Editor::Panel::handleRelease()
 {
     m_testPressed = false;
+    m_sbDragging = false;
+}
+
+void HUD::Editor::Panel::handleDrag(sf::Vector2f vp, float panelX, float toolbarH)
+{
+    if (!m_sbDragging) return;
+
+    float ly = vp.y - toolbarH;
+    const float trackH = PALETTE_H - 2.f * SB_THICK;
+    const float thumbH = scrollbarThumbHeight();
+    float frac = 0.f;
+    if (trackH > thumbH)
+        frac = std::clamp((ly - m_sbDragOffsetY - SB_THICK) / (trackH - thumbH), 0.f, 1.f);
+    setScrollRow((int)std::round(frac * (float)MAX_SCROLL_ROW));
+}
+
+float HUD::Editor::Panel::scrollbarThumbHeight() const
+{
+    return SB_THICK;
+}
+
+float HUD::Editor::Panel::scrollbarThumbY() const
+{
+    const float trackH = PALETTE_H - 2.f * SB_THICK;
+    const float thumbH = scrollbarThumbHeight();
+    if (MAX_SCROLL_ROW <= 0 || trackH <= thumbH)
+        return SB_THICK;
+    const float frac = (float)m_scrollRow / (float)MAX_SCROLL_ROW;
+    return SB_THICK + frac * (trackH - thumbH);
+}
+
+void HUD::Editor::Panel::setScrollRow(int row)
+{
+    m_scrollRow = std::clamp(row, 0, MAX_SCROLL_ROW);
 }
 
 bool HUD::Editor::Panel::getMinimapCavePos(sf::Vector2f vp, float panelX, float toolbarH, sf::Vector2f& outCavePos) const
@@ -347,8 +446,16 @@ void HUD::Editor::Panel::setMouseTile(int x, int y)
 }
 
 void HUD::Editor::Panel::selectType(const int& x, const int& y) {
-    m_selectedType     = getType(x, y);
+    Cave::Entity::Type type = getType(x, y);
+    if (type == Cave::Entity::Type::NoType) return;
+
+    m_selectedType     = type;
     m_selectedPosition = { x, y };
+
+    if (y < m_scrollRow)
+        m_scrollRow = y;
+    else if (y >= m_scrollRow + VISIBLE_PALETTE_ROWS)
+        m_scrollRow = y - VISIBLE_PALETTE_ROWS + 1;
 }
 
 Cave::Entity::Base HUD::Editor::Panel::getSelectedEntity() {
@@ -359,8 +466,16 @@ Cave::Entity::Type HUD::Editor::Panel::getSelectedType() const {
     return m_selectedType;
 }
 
+void HUD::Editor::Panel::handleScroll(float delta)
+{
+    if (delta > 0)
+        setScrollRow(m_scrollRow - 1);
+    else
+        setScrollRow(m_scrollRow + 1);
+}
+
 Cave::Entity::Type HUD::Editor::Panel::getType(const int& x, const int& y) {
-    int num = std::clamp(y, 0, 14) * 3 + std::clamp(x, 0, 2);
+    int num = std::clamp(y, 0, TOTAL_PALETTE_ROWS - 1) * 3 + std::clamp(x, 0, 2);
     switch (num) {
     case 0:  return Cave::Entity::Type::Space;
     case 1:  return Cave::Entity::Type::Dirt;
@@ -392,7 +507,10 @@ Cave::Entity::Type HUD::Editor::Panel::getType(const int& x, const int& y) {
     case 27: return Cave::Entity::Type::TubeDown;
     case 28: return Cave::Entity::Type::StartDoor;
     case 29: return Cave::Entity::Type::ExitDoor;
-    default: return Cave::Entity::Type::Space;
+    case 30: return Cave::Entity::Type::Spinner;
+    case 31: return Cave::Entity::Type::BoulderEater;
+    case 32: return Cave::Entity::Type::Tetrapus;
+    default: return Cave::Entity::Type::NoType;
     }
 }
 
@@ -428,6 +546,9 @@ Cave::Entity::Base HUD::Editor::Panel::getNewEntity(Cave::Entity::Type type) {
     case Cave::Entity::Type::TubeDown:        return Cave::Entity::TubeDown();
     case Cave::Entity::Type::StartDoor:       return Cave::Entity::StartDoor();
     case Cave::Entity::Type::ExitDoor:        return Cave::Entity::ExitDoor();
-    default:                                  return Cave::Entity::Space();
+    case Cave::Entity::Type::Spinner:         return Cave::Entity::Spinner();
+    case Cave::Entity::Type::BoulderEater:    return Cave::Entity::BoulderEater();
+    case Cave::Entity::Type::Tetrapus:        return Cave::Entity::Tetrapus();
+    default:                                  return Cave::Entity::Base();
     }
 }

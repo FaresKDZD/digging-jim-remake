@@ -32,6 +32,9 @@ Cave::Entity::Base Cave::Data::getTileEntity(const char& tile) {
 	case 31: return Cave::Entity::Plasma();
 	case 32: return Cave::Entity::Cilia();
 	case 33: return Cave::Entity::Ore();
+	case 34: return Cave::Entity::Spinner();
+	case 35: return Cave::Entity::BoulderEater();
+	case 36: return Cave::Entity::Tetrapus();
 	default:
 		return Cave::Entity::Space();
 	}

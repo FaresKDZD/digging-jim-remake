@@ -231,6 +231,9 @@ void HUD::Editor::Toolbar::drawToolItems(HUD::Editor::Panel* editorPanel)
     tool("Granite Ore",              "",  2, 1, Cave::Entity::Type::Ore);
     tool("Start Door",               "",  1, 9, Cave::Entity::Type::StartDoor);
     tool("Exit Door",                "",  2, 9, Cave::Entity::Type::ExitDoor);
+    tool("Spinner",                  "",  0, 10, Cave::Entity::Type::Spinner);
+    tool("Boulder Eater",            "",  1, 10, Cave::Entity::Type::BoulderEater);
+    tool("Tetrapus",                 "",  2, 10, Cave::Entity::Type::Tetrapus);
 }
 
 void HUD::Editor::Toolbar::drawToolsMenu(HUD::Editor::Panel* editorPanel)

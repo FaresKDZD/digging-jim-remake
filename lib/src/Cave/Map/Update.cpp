@@ -159,9 +159,12 @@ void Cave::Map::initEntityUpdateMaps() {
 
 	m_entityUpdateMap[Cave::Entity::Type::Protozo] = [this](int i) { updateProtoza(i); };
 	m_entityUpdateMap[Cave::Entity::Type::CaveGull] = [this](int i) { updateCaveGull(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Spinner] = [this](int i) { updateSpinner(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Cilia] = [this](int i) { updateCilia(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Eater] = [this](int i) { updateEater(i); };
+	m_entityUpdateMap[Cave::Entity::Type::BoulderEater] = [this](int i) { updateBoulderEater(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Aggressor] = [this](int i) { updateAggressor(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Tetrapus] = [this](int i) { updateTetrapus(i); };
 
 	m_entityUpdateMap[Cave::Entity::Type::Explosion] = [this](int i) { updateTransientEntity(i, Cave::Entity::Space()); };
 	m_entityUpdateMap[Cave::Entity::Type::OreTransformation] = [this](int i) { updateTransientEntity(i, Cave::Entity::Diamond()); };

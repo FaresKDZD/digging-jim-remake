@@ -50,7 +50,7 @@ namespace HUD::Editor {
         /**
          * @brief Select the entity at grid position (x, y) in the entity palette.
          * @param x Column index (0–2).
-         * @param y Row index (0–9).
+         * @param y Row index (0–10).
          */
         void selectType(const int& x, const int& y);
 
@@ -61,7 +61,7 @@ namespace HUD::Editor {
         Cave::Entity::Type getSelectedType() const;
 
         /// @brief Map a palette grid position to the corresponding entity type.
-        /// @param x Column (0–2). @param y Row (0–9).
+        /// @param x Column (0–2). @param y Row (0–10).
         Cave::Entity::Type getType(const int& x, const int& y);
 
         /// @brief Construct a fresh entity instance for the given type.
@@ -93,7 +93,18 @@ namespace HUD::Editor {
          */
         void handleClick(sf::Vector2f vp, float panelX, float toolbarH);
 
-        /// @brief Handle a left mouse button release (resets the test button state).
+        /**
+         * @brief Drag the palette scrollbar thumb, if it is currently held.
+         */
+        void handleDrag(sf::Vector2f vp, float panelX, float toolbarH);
+
+        /**
+         * @brief Scroll the entity palette up or down.
+         * @param delta Positive to scroll up, negative to scroll down.
+         */
+        void handleScroll(float delta);
+
+        /// @brief Handle a left mouse button release (resets the test button and scrollbar drag).
         void handleRelease();
 
         /**
@@ -171,6 +182,26 @@ namespace HUD::Editor {
 
         /// @brief Tick counter that drives palette entity animation.
         Utils::TickCounter        m_TickCounter  = Utils::TickCounter();
+
+        /// @brief Current scroll row offset for the entity palette.
+        int                       m_scrollRow    = 0;
+        static constexpr int      TOTAL_PALETTE_ROWS   = 11;
+        static constexpr int      VISIBLE_PALETTE_ROWS = 10;
+        static constexpr int      MAX_SCROLL_ROW       = TOTAL_PALETTE_ROWS - VISIBLE_PALETTE_ROWS;
+
+        static constexpr float    PALETTE_W            = 104.f;
+        static constexpr float    PALETTE_H            = 342.f;
+        static constexpr float    SB_THICK             = 16.f;
+
+        /// @brief Win95 scrollbar art used beside the entity palette.
+        sf::Texture               m_sbTex;
+        std::optional<sf::Sprite> m_sbArrUp, m_sbArrDown, m_sbThumb, m_sbBgTile;
+        bool                      m_sbDragging     = false;
+        float                     m_sbDragOffsetY  = 0.f;
+
+        void setScrollRow(int row);
+        float scrollbarThumbHeight() const;
+        float scrollbarThumbY() const;
 
         // ----------------------------------------------------------------------------------
         // Builder menu area

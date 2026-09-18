@@ -53,29 +53,29 @@ static std::string getCavesDir() {
 // -----------------------------------------------------------------------
 // Virtual screen layout (all sizes in pixels):
 //
-//   |<-------- 640 ------->|<16>|<------ 104 ------>|
+//   |<-------- 640 ------->|<16>|<------ 120 ------>|
 //   +----------------------+----+-------------------+  ---
 //   |     Menu toolbar     |    |   Menu toolbar    |   20  (TOOLBAR_H)
 //   +----------------------+----+-------------------+  ---
 //   |                      | V  |                   |
 //   |    Cave map view     | S  |   Entity panel    |  480  (MAP_H)
-//   |      640 x 480       | B  |    104 wide       |
+//   |      640 x 480       | B  |    120 wide       |
 //   |                      |    |                   |
 //   +----------------------+----+-------------------+  ---
 //   |  Horizontal scroll   |cor |                   |   16  (SB_THICK)
 //   +----------------------+----+-------------------+  ---
 //
-//   WIN_W = 640 + 16 + 104 = 760
+//   WIN_W = 640 + 16 + 120 = 776
 //   WIN_H =  20 + 480 + 16 = 516
 // -----------------------------------------------------------------------
-static constexpr unsigned int WIN_W = 760u;
+static constexpr unsigned int WIN_W = 776u;
 static constexpr unsigned int WIN_H = 516u;
 
 static constexpr float TOOLBAR_H = 20.f;
 static constexpr float MAP_W     = 640.f;
 static constexpr float MAP_H     = 480.f;
 static constexpr float SB_THICK  = 16.f;
-static constexpr float PANEL_W   = 104.f;
+static constexpr float PANEL_W   = 120.f;
 
 static constexpr float VSB_X          = MAP_W;
 static constexpr float HSB_Y          = TOOLBAR_H + MAP_H;
@@ -162,6 +162,9 @@ static char entityTypeToTile(Cave::Entity::Type type)
     case Cave::Entity::Type::Plasma:              return 31;
     case Cave::Entity::Type::Cilia:               return 32;
     case Cave::Entity::Type::Ore:                 return 33;
+    case Cave::Entity::Type::Spinner:             return 34;
+    case Cave::Entity::Type::BoulderEater:        return 35;
+    case Cave::Entity::Type::Tetrapus:            return 36;
     default:                                      return 0;
     }
 }
@@ -744,6 +747,16 @@ bool Editor::run()
                 handleShortcuts(*e, &editorPanel);
             }
 
+            if (window.hasFocus()) if (const auto* e = event->getIf<sf::Event::MouseWheelScrolled>())
+            {
+                if (!ImGui::GetIO().WantCaptureMouse)
+                {
+                    sf::Vector2f vp = windowToVirtual(sf::Mouse::getPosition(window));
+                    if (vp.x >= PANEL_X)
+                        editorPanel.handleScroll(e->delta);
+                }
+            }
+
             if (window.hasFocus()) if (const auto* e = event->getIf<sf::Event::MouseButtonPressed>())
             {
                 if (e->button == sf::Mouse::Button::Middle) { panning = true; lastPanPos = e->position; }
@@ -957,6 +970,7 @@ bool Editor::run()
                     float nx = std::round((hsbDragStartCamX + delta / (HSB_EFF_W - hThumbW) * camRange) / 32.f) * 32.f;
                     caveCamera.setCentre({nx, caveCamera.getCenter().y});
                 }
+                editorPanel.handleDrag(vp, PANEL_X, TOOLBAR_H);
             }
         }
 
