@@ -233,3 +233,9 @@ void Renderer::TextRenderer::render(sf::RenderTarget& target, sf::RenderStates s
     states.texture = &m_tileset;
     target.draw(m_vertices, states);
 }
+
+void Renderer::TextRenderer::setColor(const sf::Color& color) {
+    for (std::size_t i = 0; i < m_vertices.getVertexCount(); ++i) {
+        m_vertices[i].color = color;
+    }
+}

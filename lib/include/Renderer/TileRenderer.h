@@ -20,7 +20,7 @@ namespace Renderer {
         /**
          * @brief Prepare the texture for drawing by updating the positions and textures for each tile drawn.
          */
-        void updateTexture(const std::vector<Cave::Entity::Base>& entities, const sf::Vector2i& position, const sf::IntRect& gridRange, int gap = 0);
+        void updateTexture(const std::vector<Cave::Entity::Base>& entities, const sf::Vector2i& position, const sf::IntRect& gridRange, int gap = 0, sf::Color jimTint = sf::Color::White);
         
         /**
          * @brief Prepare the locations of the loading tiles to be drawn,

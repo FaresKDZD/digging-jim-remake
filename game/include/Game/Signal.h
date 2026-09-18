@@ -38,6 +38,9 @@ enum class GameSignal {
     /// @brief Player collected a diamond.
     CollectDiamond,
 
+    /// @brief Player collected a ruby (flat 100 points, no quota).
+    CollectRuby,
+
     /// @brief Player has paused the game.
     CavePause,
 

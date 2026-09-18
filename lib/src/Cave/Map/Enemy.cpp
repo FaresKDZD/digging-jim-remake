@@ -162,6 +162,54 @@ void Cave::Map::updateCreep(const int& index) {
 	if (ey < jy && tryMoveEnemy(index, Cave::Entity::Trait::Empty, Cave::Entity::Direction::DOWN)) return;
 }
 
+void Cave::Map::updatePyramChaseHalfTick() {
+	if (m_state != Cave::State::Play) return;
+	for (int index = 0; index < width * height; ++index) {
+		if (getEntityType(index) != Cave::Entity::Type::Pyram) continue;
+		updatePyram(index);
+	}
+}
+
+void Cave::Map::updatePyram(const int& index) {
+	if (handleEnemyBasicUpdate(index)) return;
+	if (m_jimIndex == OUT_OF_BOUNDS_INDEX) return;
+
+	if (hasPyramLineOfSight(index)) {
+		caveEntities[index].targetIndex = 0;
+		const int ex = index % width, ey = index / width;
+		const int jx = m_jimIndex % width, jy = m_jimIndex / width;
+		Cave::Entity::Direction chase = Cave::Entity::Direction::NO_DIRECTION;
+		if (ey == jy) {
+			chase = (ex > jx) ? Cave::Entity::Direction::LEFT : Cave::Entity::Direction::RIGHT;
+		}
+		else if (ex == jx) {
+			chase = (ey > jy) ? Cave::Entity::Direction::UP : Cave::Entity::Direction::DOWN;
+		}
+		if (chase == Cave::Entity::Direction::NO_DIRECTION) return;
+		if (!tryMoveEnemy(index, Cave::Entity::Trait::Empty, chase)) return;
+		const int dest = getIndex(index, chase);
+		caveEntities[index].setTransitionDisplacementIncrement(8);
+		if (dest != OUT_OF_BOUNDS_INDEX) {
+			caveEntities[dest].setTransitionDisplacementIncrement(8);
+		}
+		return;
+	}
+
+	if (!Utils::TickCounter::onTick()) return;
+
+	int& phase = caveEntities[index].targetIndex;
+	if (phase < 0) phase = 0;
+	phase++;
+	if ((phase & 1) == 0) return;
+
+	auto arc = anticlockwiseArc(getEntityDirection(index));
+	for (int i = 0; i < 3; ++i) {
+		if (tryMoveEnemy(index, Cave::Entity::Trait::Empty, arc[i])) return;
+	}
+	if (!getEntityMoving(index) && tryMoveEnemy(index, Cave::Entity::Trait::Empty, arc[3])) return;
+	setEntityMoving(index, false);
+}
+
 void Cave::Map::updateSludg(const int& index) {
 	if (handleEnemyBasicUpdate(index)) return;
 
@@ -636,6 +684,7 @@ bool Cave::Map::isPathfindMonster(const int& index) const {
 	case Cave::Entity::Type::Sludg:
 	case Cave::Entity::Type::SaturatedSludg:
 	case Cave::Entity::Type::Glutton:
+	case Cave::Entity::Type::Pyram:
 		return true;
 	default:
 		return false;
@@ -702,6 +751,48 @@ Cave::Entity::Direction Cave::Map::findPathToJim(const int& index) {
 	return via[static_cast<size_t>(step)];
 }
 
+bool Cave::Map::isFallableEntity(const int& index) const {
+	if (index == OUT_OF_BOUNDS_INDEX) return false;
+	switch (getEntityType(index)) {
+	case Cave::Entity::Type::Boulder:
+	case Cave::Entity::Type::Diamond:
+	case Cave::Entity::Type::FragileDiamond:
+	case Cave::Entity::Type::HollowDiamond:
+	case Cave::Entity::Type::Ore:
+	case Cave::Entity::Type::Bomb:
+	case Cave::Entity::Type::TimeBomb:
+	case Cave::Entity::Type::Ruby:
+		return true;
+	default:
+		return false;
+	}
+}
+
+bool Cave::Map::hasPyramLineOfSight(const int& index) const {
+	if (index == OUT_OF_BOUNDS_INDEX || m_jimIndex == OUT_OF_BOUNDS_INDEX) return false;
+
+	const int ex = index % width, ey = index / width;
+	const int jx = m_jimIndex % width, jy = m_jimIndex / width;
+	if (ex != jx && ey != jy) return false;
+	if (index == m_jimIndex) return false;
+
+	Cave::Entity::Direction dir = Cave::Entity::Direction::NO_DIRECTION;
+	if (ey == jy) {
+		dir = (ex > jx) ? Cave::Entity::Direction::LEFT : Cave::Entity::Direction::RIGHT;
+	}
+	else {
+		dir = (ey > jy) ? Cave::Entity::Direction::UP : Cave::Entity::Direction::DOWN;
+	}
+
+	int cell = getIndex(index, dir);
+	while (cell != OUT_OF_BOUNDS_INDEX) {
+		if (cell == m_jimIndex) return true;
+		if (!hasTrait(Cave::Entity::Trait::Empty, cell)) return false;
+		cell = getIndex(cell, dir);
+	}
+	return false;
+}
+
 bool Cave::Map::handleEnemyBasicUpdate(const int& index) {
 	updateEntityAnimation(index);
 
@@ -713,6 +804,11 @@ bool Cave::Map::handleEnemyBasicUpdate(const int& index) {
 }
 
 bool Cave::Map::handleEnemyDeath(const int& index) {
+	if (isJimInvincible() && isRubyPrey(index) && isAdjacentTo(index, Cave::Entity::Type::Jim)) {
+		setEntity(index, Cave::Entity::Space());
+		m_game->soundManager.play(Sound::Effect::Drop);
+		return true;
+	}
 	if (isAdjacentTo(index, Cave::Entity::Trait::Reactive)) {
 		createExplosion(index);
 		return true;

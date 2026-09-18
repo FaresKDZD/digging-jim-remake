@@ -3,6 +3,7 @@
 void Cave::Map::updateJim(const int& index) {
 	m_jimIndex = index;
 	if (m_game->inputSystem.isPressed(Input::Action::SelfDestruct) || m_game->getTime() <= 0) {
+		m_jimInvincibleFrames = 0;
 		createExplosion(index);
 		return;
 	}
@@ -64,6 +65,10 @@ void Cave::Map::updateJimFacing(const int& index, const int& inFront, const bool
 
 
 bool Cave::Map::handleJimTraverse(const int& index, const int& inFront, const bool& collectMode, const Cave::Entity::Facing& facing, const Cave::Entity::Direction& direction) {
+	if (isJimInvincible() && isRubyPrey(inFront) && !getEntityTransitioning(inFront)) {
+		setEntity(inFront, Cave::Entity::Space());
+		m_game->soundManager.play(Sound::Effect::Drop);
+	}
 	if (!hasTrait(Cave::Entity::Trait::Traversable, inFront)) {
 		(facing == Cave::Entity::Facing::NEUTRAL) ? setJimMoveAmination(index) : setJimPushAmination(index);
 		return false;
@@ -73,12 +78,18 @@ bool Cave::Map::handleJimTraverse(const int& index, const int& inFront, const bo
 	bool collectable = hasTrait(Cave::Entity::Trait::Collectable, inFront);
 	bool hollow = getEntityType(inFront) == Cave::Entity::Type::HollowDiamond;
 	bool timeBomb = getEntityType(inFront) == Cave::Entity::Type::TimeBomb;
+	bool ruby = getEntityType(inFront) == Cave::Entity::Type::Ruby;
 	bool digging = getEntityType(inFront) == Cave::Entity::Type::Dirt;
 	if (collectMode) {
 		if (!getEntityTransitioning(inFront)) {
 			if (collectable) {
 				m_game->soundManager.play(Sound::Effect::Collect);
 				m_game->sendSignal(GameSignal::CollectDiamond);
+			}
+			else if (ruby) {
+				m_jimInvincibleFrames = Cave::Entity::Ruby::INVINCIBLE_FRAMES;
+				m_game->soundManager.play(Sound::Effect::Collect);
+				m_game->sendSignal(GameSignal::CollectRuby);
 			}
 			else if (hollow) {
 				m_hollowCarried++;
@@ -114,6 +125,11 @@ bool Cave::Map::handleJimTraverse(const int& index, const int& inFront, const bo
 		if (collectable) {
 			m_game->soundManager.play(Sound::Effect::Collect);
 			m_game->sendSignal(GameSignal::CollectDiamond);
+		}
+		else if (ruby) {
+			m_jimInvincibleFrames = Cave::Entity::Ruby::INVINCIBLE_FRAMES;
+			m_game->soundManager.play(Sound::Effect::Collect);
+			m_game->sendSignal(GameSignal::CollectRuby);
 		}
 		else if (hollow) {
 			m_hollowCarried++;

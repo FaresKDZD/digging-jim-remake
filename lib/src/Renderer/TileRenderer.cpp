@@ -15,7 +15,7 @@ bool Renderer::TileRenderer::load(const Image::Texture& texture, const sf::Vecto
     return true;
 }
 
-void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>& entities, const sf::Vector2i& position, const sf::IntRect& gridRange, int gap) {
+void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>& entities, const sf::Vector2i& position, const sf::IntRect& gridRange, int gap, sf::Color jimTint) {
     int index = 0;
     m_vertices.resize(gridRange.size.x * gridRange.size.y * 12);
     for (int y = gridRange.position.y; y < gridRange.position.y + gridRange.size.y; ++y) {
@@ -71,6 +71,9 @@ void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>
             tri[3].position = { px1, py1 };
             tri[4].position = { px2, py2 };
             tri[5].position = { px1, py2 };
+
+            const sf::Color tint = (entity.getType() == Cave::Entity::Type::Jim) ? jimTint : sf::Color::White;
+            for (int v = 0; v < 6; ++v) tri[v].color = tint;
 
             tileIndex = entity.getPreviousTextureIndex();
             if (tileIndex == Cave::Entity::NO_TEXTURE_INDEX) {
@@ -136,6 +139,9 @@ void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>
             tri2[3].position = { px1, py1 };
             tri2[4].position = { px2, py2 };
             tri2[5].position = { px1, py2 };
+
+            const sf::Color prevTint = (entity.getType() == Cave::Entity::Type::Jim) ? jimTint : sf::Color::White;
+            for (int v = 0; v < 6; ++v) tri2[v].color = prevTint;
 
             index++;
         }

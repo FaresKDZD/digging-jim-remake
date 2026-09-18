@@ -52,6 +52,9 @@ namespace Renderer {
          */
         void render(sf::RenderTarget& target, sf::RenderStates states) const;
 
+        /// @brief Multiply all glyph vertices by this color.
+        void setColor(const sf::Color& color);
+
     private:
         /**
          * @brief Override to draw text to screen.

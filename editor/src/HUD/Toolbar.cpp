@@ -240,6 +240,9 @@ void HUD::Editor::Toolbar::drawToolItems(HUD::Editor::Panel* editorPanel)
     tool("Glutton",                  "",  0, 12, Cave::Entity::Type::Glutton);
     tool("Hollow Diamond",           "",  1, 12, Cave::Entity::Type::HollowDiamond);
     tool("Time Bomb",                "",  2, 12, Cave::Entity::Type::TimeBomb);
+    tool("Pyram",                    "",  0, 13, Cave::Entity::Type::Pyram);
+    tool("Ruby",                     "",  1, 13, Cave::Entity::Type::Ruby);
+    tool("Magic Boulder",            "",  2, 13, Cave::Entity::Type::MagicBoulder);
 }
 
 void HUD::Editor::Toolbar::drawToolsMenu(HUD::Editor::Panel* editorPanel)

@@ -150,6 +150,10 @@ void Game::handleCavePlay(const GameSignal& signal) {
         m_collected++;
         break;
 
+    case GameSignal::CollectRuby:
+        m_score += 100;
+        break;
+
     case GameSignal::CavePause:
         m_gameIsPaused = true;
         break;

@@ -8,6 +8,22 @@ void Cave::Map::setEntityFalling(const int& index, const bool& falling) {
 	caveEntities[index].falling = falling;
 }
 
+bool Cave::Map::isJimInvincible() const {
+	return m_jimInvincibleFrames > 0;
+}
+
+int Cave::Map::getJimInvincibleFrames() const {
+	return m_jimInvincibleFrames;
+}
+
+bool Cave::Map::isRubyPrey(const int& index) const {
+	if (index == OUT_OF_BOUNDS_INDEX) return false;
+	if (getEntityType(index) == Cave::Entity::Type::Jim) return false;
+	if (!hasTrait(Cave::Entity::Trait::Crushable, index)) return false;
+	if (isFallableEntity(index)) return false;
+	return true;
+}
+
 bool Cave::Map::getEntityMoving(const int& index) const {
 	return caveEntities[index].moving;
 }

@@ -144,6 +144,14 @@ namespace Cave::Entity {
 			return (m_displacement >= 32);
 		}
 
+		/// @brief Pixel step per frame. 8 finishes a tile in half a tick.
+		void setDisplacementIncrement(int inc) {
+			m_inc = inc;
+			if (m_displacement < m_inc) {
+				m_displacement = m_inc;
+			}
+		}
+
 		/// @brief Retrieves the current animation texture index.
 		int getTextureIndex() const {
 			return m_animation.getTextureIndex();

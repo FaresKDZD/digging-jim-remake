@@ -42,6 +42,9 @@ Cave::Entity::Base Cave::Data::getTileEntity(const char& tile) {
 	case 41: return Cave::Entity::Glutton();
 	case 42: return Cave::Entity::HollowDiamond();
 	case 43: return Cave::Entity::TimeBomb();
+	case 44: return Cave::Entity::Pyram();
+	case 45: return Cave::Entity::Ruby();
+	case 46: return Cave::Entity::MagicBoulder();
 	default:
 		return Cave::Entity::Space();
 	}

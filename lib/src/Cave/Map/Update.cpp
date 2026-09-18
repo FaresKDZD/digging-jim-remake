@@ -1,4 +1,6 @@
 #include "Cave/Map/Map.h"
+#include <cmath>
+#include <string>
 
 std::vector<int> Cave::Map::preUpdateCaveEntities() {
 	std::vector<int> indicies;
@@ -182,6 +184,7 @@ void Cave::Map::initEntityUpdateMaps() {
 	m_entityUpdateMap[Cave::Entity::Type::Sludg] = [this](int i) { updateSludg(i); };
 	m_entityUpdateMap[Cave::Entity::Type::SaturatedSludg] = [this](int i) { updateSaturatedSludg(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Glutton] = [this](int i) { updateGlutton(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Pyram] = [this](int i) { updatePyram(i); };
 
 	m_entityUpdateMap[Cave::Entity::Type::Explosion] = [this](int i) { updateTransientEntity(i, Cave::Entity::Space()); };
 	m_entityUpdateMap[Cave::Entity::Type::OreTransformation] = [this](int i) { updateTransientEntity(i, Cave::Entity::Diamond()); };
@@ -194,8 +197,10 @@ void Cave::Map::initEntityUpdateMaps() {
 	m_entityUpdateMap[Cave::Entity::Type::Diamond] = [this](int i) { updateFallableEntity(i); };
 	m_entityUpdateMap[Cave::Entity::Type::FragileDiamond] = [this](int i) { updateFallableEntity(i); };
 	m_entityUpdateMap[Cave::Entity::Type::HollowDiamond] = [this](int i) { updateFallableEntity(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Ruby] = [this](int i) { updateFallableEntity(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Ore] = [this](int i) { updateFallableEntity(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Boulder] = [this](int i) { updateFallableEntity(i); };
+	m_entityUpdateMap[Cave::Entity::Type::MagicBoulder] = [this](int i) { updateFallableEntity(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Bomb] = [this](int i) { updateFallableEntity(i); };
 }
 
@@ -262,6 +267,13 @@ void Cave::Map::update(Camera camera) {
 	if (m_TickCounter.onTick()) {
 		updateCaveEntities(indicies);
 	}
+	else if ((globalCounter % 4) == 0) {
+		updatePyramChaseHalfTick();
+	}
+
+	if (m_state == Cave::State::Play && m_jimInvincibleFrames > 0) {
+		m_jimInvincibleFrames--;
+	}
 
 	// Visible tiles are refreshed each frame based on the camera position
 	updateVisibleTiles(camera);
@@ -280,6 +292,13 @@ void Cave::Map::updateVisibleTiles(Camera camera) {
 	int max_y = std::min(min_y + tilesY, height);
 
 	std::vector<Cave::Entity::Base> entities;
+
+	sf::Color jimTint = sf::Color::White;
+	if (isJimInvincible()) {
+		const float pulse = 0.5f + 0.5f * std::sin(static_cast<float>(m_jimInvincibleFrames) * 0.28f);
+		const unsigned char glow = static_cast<unsigned char>(170 + 85 * pulse);
+		jimTint = sf::Color(255, glow, 255);
+	}
 
 	if (m_state == Cave::State::Load) {
 		std::vector<bool> loaded;
@@ -305,7 +324,25 @@ void Cave::Map::updateVisibleTiles(Camera camera) {
 			entities.push_back(caveEntities[y * width + x]);
 		}
 	}
-	m_tileRenderer.updateTexture(entities, { 0, 0 }, sf::IntRect({ min_x, min_y }, { max_x - min_x,max_y - min_y }));
+	m_tileRenderer.updateTexture(entities, { 0, 0 }, sf::IntRect({ min_x, min_y }, { max_x - min_x,max_y - min_y }), 0, jimTint);
+
+	m_showInvincibleText = false;
+	if (isJimInvincible() && m_jimIndex != OUT_OF_BOUNDS_INDEX && getEntityType(m_jimIndex) == Cave::Entity::Type::Jim
+		&& m_state != Cave::State::Load && m_state != Cave::State::End) {
+		const int seconds = (m_jimInvincibleFrames + 63) / 64;
+		if (seconds > 0) {
+			const sf::IntRect ep = caveEntities[m_jimIndex].getCurrentPosition();
+			const int jx = m_jimIndex % width;
+			const int jy = m_jimIndex / width;
+			const std::string label = std::to_string(seconds);
+			const int textW = static_cast<int>(label.size()) * 16;
+			const int px = jx * 32 + ep.position.x + 16 - textW / 2;
+			const int py = jy * 32 + ep.position.y - 30;
+			m_invincibleText.updateText(px, py, label);
+			m_invincibleText.setColor(sf::Color::White);
+			m_showInvincibleText = true;
+		}
+	}
 }
 
 void Cave::Map::draw(sf::RenderTarget& target, sf::RenderStates states) const {
@@ -314,5 +351,8 @@ void Cave::Map::draw(sf::RenderTarget& target, sf::RenderStates states) const {
 	noShaderStates.shader = nullptr;
 	if (m_state == Cave::State::Load || m_state == Cave::State::End) {
 		m_loadingTileRenderer.render(target, noShaderStates);
+	}
+	if (m_showInvincibleText) {
+		m_invincibleText.render(target, noShaderStates);
 	}
 }

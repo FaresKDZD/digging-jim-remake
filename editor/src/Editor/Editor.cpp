@@ -172,6 +172,9 @@ static char entityTypeToTile(Cave::Entity::Type type)
     case Cave::Entity::Type::Glutton:             return 41;
     case Cave::Entity::Type::HollowDiamond:       return 42;
     case Cave::Entity::Type::TimeBomb:            return 43;
+    case Cave::Entity::Type::Pyram:               return 44;
+    case Cave::Entity::Type::Ruby:                return 45;
+    case Cave::Entity::Type::MagicBoulder:        return 46;
     default:                                      return 0;
     }
 }

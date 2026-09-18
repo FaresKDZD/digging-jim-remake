@@ -4,6 +4,9 @@ void Cave::Map::handleBoulderRoll(const int& index, const Cave::Entity::Directio
 	if ((direction == Cave::Entity::Direction::LEFT || direction == Cave::Entity::Direction::RIGHT) && getEntityType(index) == Cave::Entity::Type::Boulder) {
 		setEntity(index, Cave::Entity::Boulder());
 	}
+	if ((direction == Cave::Entity::Direction::LEFT || direction == Cave::Entity::Direction::RIGHT) && getEntityType(index) == Cave::Entity::Type::MagicBoulder) {
+		setEntity(index, Cave::Entity::MagicBoulder());
+	}
 }
 
 void Cave::Map::createExplosion(const int& index) {
@@ -22,6 +25,10 @@ void Cave::Map::createExplosion(const int& index, bool caveGullExplosion) {
 
 		// Cannot create an explosion where the entity is indestructible
 		if (hasTrait(Cave::Entity::Trait::Indestructible, explosionIndex)) {
+			continue;
+		}
+
+		if (getEntityType(explosionIndex) == Cave::Entity::Type::Jim && isJimInvincible()) {
 			continue;
 		}
 

@@ -10,6 +10,7 @@
 #include "Cave/Properties/Properties.h"
 #include "Camera/Camera.h"
 #include "Renderer/TileRenderer.h"
+#include "Renderer/TextRenderer.h"
 #include "Input/Input.h"
 #include "Sound/Manager.h"
 #include "Cave/Entity/Direction.h"
@@ -207,6 +208,12 @@ namespace Cave {
          * Converts MagicWallActive -> MagicWallInactive, and wall placeholders -> real walls.
          */
         void prepareForPlay();
+
+        /// @brief True if Jim cannot currently be killed by explosions or falling objects.
+        bool isJimInvincible() const;
+
+        /// @brief Remaining ruby invincibility frames, or 0.
+        int getJimInvincibleFrames() const;
 
     private:
         // -------------
@@ -702,6 +709,9 @@ namespace Cave {
          */
         bool handleJimComplete(const int& index, const int& inFront);
 
+        /// @brief Crushable enemies Jim can walk into and eat while ruby-invincible.
+        bool isRubyPrey(const int& index) const;
+
         /**
         * @brief Sets Jim�s movement animation based on current facing direction.
         *
@@ -890,6 +900,19 @@ namespace Cave {
          */
         void updateGlutton(const int& index);
 
+        /**
+         * @brief Updates the Pyram enemy's behavior.
+         *
+         * Without orthogonal empty-space line of sight to Jim, wanders like a Protozo
+         * once every two ticks. With line of sight, slides toward Jim at double speed.
+         *
+         * @param index The entity index of the Pyram.
+         */
+        void updatePyram(const int& index);
+
+        /// @brief Mid-tick chase step so Pyram can move twice per tick with a full slide each time.
+        void updatePyramChaseHalfTick();
+
         /// @brief True if this tile is a diamond source the Glutton will hunt.
         bool isGluttonFood(const int& index) const;
 
@@ -927,6 +950,12 @@ namespace Cave {
          * @brief First empty step along a real route to Jim, or NO_DIRECTION if none.
          */
         Cave::Entity::Direction findPathToJim(const int& index);
+
+        /// @brief True if this tile can fall and crush.
+        bool isFallableEntity(const int& index) const;
+
+        /// @brief Orthogonal empty-space line of sight from Pyram to Jim.
+        bool hasPyramLineOfSight(const int& index) const;
 
         /// @brief True if this tile is another creature Tetrapus may plan through.
         bool isPathfindMonster(const int& index) const;
@@ -1114,67 +1143,15 @@ namespace Cave {
          *
          * @param index The entity index of the fallable entity.
          */
-        void updateFallableEntityDirection(const int& index);
+        void updateFallableEntityDirection(const int& index, Cave::Entity::Direction gravity);
 
-        /**
-         * @brief Handles falling behavior of a fallable entity.
-         *
-         * If the space below the entity is empty, the entity moves downward, triggers
-         * a sound effect, and is marked as falling. Also handles transition states.
-         *
-         * @param index The entity index of the fallable entity.
-         * @param below The index of the tile directly below the entity.
-         * @return true if the entity is falling or in a transition state, false otherwise.
-         */
-        bool handleEntityFalling(const int& index, const int& below);
-        
-        /**
-         * @brief Handles landing behavior of a fallable entity.
-         *
-         * Resolves interactions when a falling entity lands:
-         * - Bombs explode on impact.
-         * - Crushable entities below trigger explosions.
-         * - Boulders transform ore into diamonds.
-         * - Fragile diamonds break (either below or the landing entity itself).
-         * - Entities may interact with magic walls.
-         * - Otherwise, standard landing sounds are played.
-         *
-         * @param index The entity index of the landing entity.
-         * @param below The index of the tile directly below the entity.
-         * @return true if the landing caused an explosion or transformation, false otherwise.
-         */
-        bool handleEntityLanding(const int& index, const int& below);
-        
-        /**
-         * @brief Handles landing interactions with a magic wall.
-         *
-         * Boulders and diamonds transform when interacting with magic walls:
-         * - A used wall consumes the entity.
-         * - An inactive wall becomes active when first triggered.
-         * - Active walls convert boulders into diamonds (and vice versa),
-         *   spawning them beneath the wall if space is available.
-         *
-         * @param index The entity index of the landing entity.
-         * @param type The type of the landing entity (boulder or diamond).
-         * @param below The index of the tile directly below the entity.
-         * @param belowType The type of the entity below (magic wall state).
-         * @return true if a transformation occurred, false otherwise.
-         */
-        bool handleEntityLandingOnMagicWall(const int& index, const Cave::Entity::Type& type, const int& below, const Cave::Entity::Type& belowType);
-        
-        /**
-         * @brief Handles slipping behavior of a fallable entity.
-         *
-         * Entities (like boulders) can slip diagonally off slippery surfaces:
-         * - First attempts to slip right if both diagonal spaces are empty.
-         * - If not possible, attempts to slip left.
-         * - Marks slipped entities as falling in their new positions.
-         *
-         * @param index The entity index of the fallable entity.
-         * @param below The index of the tile directly below the entity.
-         * @return true if the entity slipped, false otherwise.
-         */
-        bool handleEntitySlip(const int& index, const int& below);
+        bool handleEntityFalling(const int& index, const int& ahead, const Cave::Entity::Direction& gravity);
+
+        bool handleEntityLanding(const int& index, const int& ahead);
+
+        bool handleEntitySlip(const int& index, const int& support, const Cave::Entity::Direction& gravity);
+
+        bool handleEntityLandingOnMagicWall(const int& index, const Cave::Entity::Type& type, const int& ahead, const Cave::Entity::Type& aheadType, const Cave::Entity::Direction& gravity);
 
         // --------------------
         // - Visual Updates   -
@@ -1288,6 +1265,12 @@ namespace Cave {
         /// @brief Used to render the cave loading tiles.
         Renderer::TileRenderer m_loadingTileRenderer;
 
+        /// @brief White seconds remaining drawn above Jim during ruby invincibility.
+        Renderer::TextRenderer m_invincibleText;
+
+        /// @brief True when the invincibility countdown should be drawn this frame.
+        bool m_showInvincibleText = false;
+
         /// @brief Map tick counter.
         Utils::TickCounter m_TickCounter = Utils::TickCounter();
 
@@ -1317,6 +1300,9 @@ namespace Cave {
 
         /// @brief Time bombs currently carried by Jim.
         int m_timeBombsCarried = 0;
+
+        /// @brief Remaining frames of ruby invincibility.
+        int m_jimInvincibleFrames = 0;
 
         /// @brief Whether the magic wall has been activated.
         bool m_magicWallStarted = false;

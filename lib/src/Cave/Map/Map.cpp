@@ -12,7 +12,7 @@
 #include "Utils/Random.h"
 
 Cave::Map::Map(Game* game)
-	: m_game(game), m_tileRenderer(&game->imageManager), m_loadingTileRenderer(&game->imageManager)
+	: m_game(game), m_tileRenderer(&game->imageManager), m_loadingTileRenderer(&game->imageManager), m_invincibleText(game, 2)
 {
 	initEntityUpdateMaps();
 }
@@ -23,6 +23,9 @@ void Cave::Map::load() {
 	}
 	if (!m_loadingTileRenderer.load(Image::Texture::CaveLoadingTiles, { 32, 32 })) {
 		throw std::runtime_error("Error: Unable to load map loading texture.\n");
+	}
+	if (!m_invincibleText.load(Image::Texture::GameFont, { 16, 32 })) {
+		throw std::runtime_error("Error: Unable to load invincibility font.\n");
 	}
 }
 
@@ -62,6 +65,7 @@ void Cave::Map::generateMap(const Cave::Properties* properties, const std::vecto
 	m_jimMovedThisTick = false;
 	m_hollowCarried = 0;
 	m_timeBombsCarried = 0;
+	m_jimInvincibleFrames = 0;
 
 	// Reset magic wall variables
 	m_magicWallStarted = false;

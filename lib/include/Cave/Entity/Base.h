@@ -163,6 +163,14 @@ namespace Cave::Entity {
             entity.m_transition = std::move(m_transition);
         }
 
+        /// @brief Speed or slow the current slide without changing how it is drawn.
+        void setTransitionDisplacementIncrement(int inc) {
+            if (!m_transition) {
+                return;
+            }
+            m_transition->setDisplacementIncrement(inc);
+        }
+
         /// @brief Terminate the current transition unless it is an "away" transition.
         void terminateCurrentTransition() {
             if (!m_transition || m_transition->isAway()) {

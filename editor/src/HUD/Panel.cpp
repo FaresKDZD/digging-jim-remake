@@ -125,6 +125,9 @@ int HUD::Editor::Panel::miniTileIndex(Cave::Entity::Type type)
     case T::Glutton:         return 36;
     case T::HollowDiamond:   return 37;
     case T::TimeBomb:        return 38;
+    case T::Pyram:           return 39;
+    case T::Ruby:            return 40;
+    case T::MagicBoulder:    return 41;
     default:                 return 0;
     }
 }
@@ -523,6 +526,9 @@ Cave::Entity::Type HUD::Editor::Panel::getType(const int& x, const int& y) {
     case 36: return Cave::Entity::Type::Glutton;
     case 37: return Cave::Entity::Type::HollowDiamond;
     case 38: return Cave::Entity::Type::TimeBomb;
+    case 39: return Cave::Entity::Type::Pyram;
+    case 40: return Cave::Entity::Type::Ruby;
+    case 41: return Cave::Entity::Type::MagicBoulder;
     default: return Cave::Entity::Type::NoType;
     }
 }
@@ -569,6 +575,9 @@ Cave::Entity::Base HUD::Editor::Panel::getNewEntity(Cave::Entity::Type type) {
     case Cave::Entity::Type::Glutton:         return Cave::Entity::Glutton();
     case Cave::Entity::Type::HollowDiamond:   return Cave::Entity::HollowDiamond();
     case Cave::Entity::Type::TimeBomb:        return Cave::Entity::TimeBomb();
+    case Cave::Entity::Type::Pyram:           return Cave::Entity::Pyram();
+    case Cave::Entity::Type::Ruby:            return Cave::Entity::Ruby();
+    case Cave::Entity::Type::MagicBoulder:    return Cave::Entity::MagicBoulder();
     default:                                  return Cave::Entity::Base();
     }
 }
