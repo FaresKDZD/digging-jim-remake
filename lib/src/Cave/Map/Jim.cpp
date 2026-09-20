@@ -9,6 +9,11 @@ void Cave::Map::updateJim(const int& index) {
 	}
 	updateEntityAnimation(index);
 
+	if (m_game->isFreeCamera()) {
+		updateJimIdle(index);
+		return;
+	}
+
 	if (m_game->inputSystem.isPressed(Input::Action::MoveUp)) {
 		updateJimMovement(index, Cave::Entity::Facing::NEUTRAL, Cave::Entity::Direction::UP, Cave::Entity::Trait::WarpableUp);
 	}
@@ -50,6 +55,8 @@ void Cave::Map::updateJimMovement(const int& index, const Cave::Entity::Facing& 
 
 	if (handleJimTubeWarp(index, inFront, collectMode, direction, warpTrait)) return;
 
+	if (handleJimPortal(index, inFront, direction)) return;
+
 	if (handleJimPushDetonator(index, inFront)) return;
 
 	if (handleJimPush(index, inFront, collectMode, direction)) return;
@@ -79,7 +86,7 @@ bool Cave::Map::handleJimTraverse(const int& index, const int& inFront, const bo
 	bool hollow = getEntityType(inFront) == Cave::Entity::Type::HollowDiamond;
 	bool timeBomb = getEntityType(inFront) == Cave::Entity::Type::TimeBomb;
 	bool ruby = getEntityType(inFront) == Cave::Entity::Type::Ruby;
-	bool digging = getEntityType(inFront) == Cave::Entity::Type::Dirt;
+	bool digging = Cave::Entity::isDirtLike(getEntityType(inFront));
 	if (collectMode) {
 		if (!getEntityTransitioning(inFront)) {
 			if (collectable) {
@@ -151,6 +158,9 @@ bool Cave::Map::handleJimPush(const int& index, const int& inFront, const bool& 
 	if (!hasTrait(Cave::Entity::Trait::Pushable, inFront)) {
 		return false;
 	}
+	if (direction == Cave::Entity::Direction::DOWN && getEntityType(inFront) != Cave::Entity::Type::Fan) {
+		return false;
+	}
 	if (!hasTrait(Cave::Entity::Trait::Empty, inFront, direction)) {
 		if (collectMode) {
 			setJimMoveAmination(index);
@@ -205,6 +215,78 @@ bool Cave::Map::handleJimTubeWarp(const int& index, const int& inFront, const bo
 		return true;
 	}
 	return false;
+}
+
+int Cave::Map::findNearestPortal(const int& from, const Cave::Entity::Direction& direction) const {
+	if (from == OUT_OF_BOUNDS_INDEX || !inBounds(from)) return OUT_OF_BOUNDS_INDEX;
+	const int fx = from % width;
+	const int fy = from / width;
+	int best = OUT_OF_BOUNDS_INDEX;
+	int bestDist = 0;
+	for (int i = 0; i < width * height; ++i) {
+		if (i == from) continue;
+		if (getEntityType(i) != Cave::Entity::Type::Portal) continue;
+		const int landing = getIndex(i, direction);
+		if (landing == OUT_OF_BOUNDS_INDEX || getEntityTransitioning(landing)) continue;
+		if (!hasTrait(Cave::Entity::Trait::Empty, landing)) continue;
+		const int dx = (i % width) - fx;
+		const int dy = (i / width) - fy;
+		const int dist = dx * dx + dy * dy;
+		if (best == OUT_OF_BOUNDS_INDEX || dist < bestDist) {
+			best = i;
+			bestDist = dist;
+		}
+	}
+	return best;
+}
+
+int Cave::Map::findLinkedPortal(const int& from, const Cave::Entity::Direction& direction) const {
+	if (from == OUT_OF_BOUNDS_INDEX || !inBounds(from)) return OUT_OF_BOUNDS_INDEX;
+	const int link = Cave::Entity::Portal::unpackLink(caveEntities[from].targetIndex);
+	if (link == 0) return findNearestPortal(from, direction);
+
+	const int fx = from % width;
+	const int fy = from / width;
+	int best = OUT_OF_BOUNDS_INDEX;
+	int bestDist = 0;
+	for (int i = 0; i < width * height; ++i) {
+		if (i == from) continue;
+		if (getEntityType(i) != Cave::Entity::Type::Portal) continue;
+		if (Cave::Entity::Portal::unpackId(caveEntities[i].targetIndex) != link) continue;
+		const int landing = getIndex(i, direction);
+		if (landing == OUT_OF_BOUNDS_INDEX || getEntityTransitioning(landing)) continue;
+		if (!hasTrait(Cave::Entity::Trait::Empty, landing)) continue;
+		const int dx = (i % width) - fx;
+		const int dy = (i / width) - fy;
+		const int dist = dx * dx + dy * dy;
+		if (best == OUT_OF_BOUNDS_INDEX || dist < bestDist) {
+			best = i;
+			bestDist = dist;
+		}
+	}
+	return best;
+}
+
+bool Cave::Map::handleJimPortal(const int& index, const int& inFront, const Cave::Entity::Direction& direction) {
+	if (getEntityType(inFront) != Cave::Entity::Type::Portal) return false;
+
+	const int destPortal = findLinkedPortal(inFront, direction);
+	if (destPortal == OUT_OF_BOUNDS_INDEX) return false;
+
+	const int landing = getIndex(destPortal, direction);
+	if (landing == OUT_OF_BOUNDS_INDEX) return false;
+
+	caveEntities[index].terminateCurrentTransition();
+	setJimMoveAmination(index);
+	Cave::Entity::Animation landingAnim = caveEntities[landing].getAnimation();
+	caveEntities[landing] = std::move(caveEntities[index]);
+	caveEntities[index] = Cave::Entity::Space();
+	caveEntities[landing].applyIntoTransition(direction, landingAnim);
+	setEntityDirection(landing, direction);
+	m_jimIndex = landing;
+	m_jimMovedThisTick = true;
+	m_snapCameraToJim = true;
+	return true;
 }
 
 bool Cave::Map::handleJimComplete(const int& index, const int& inFront) {

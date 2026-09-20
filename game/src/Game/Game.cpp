@@ -490,28 +490,35 @@ void Game::mainGameLoop() {
                 map.markForReset();
             }
 
+            if (caveActive && inputSystem.wasPressed(Input::Action::ToggleFreeCamera)) {
+                m_freeCamera = !m_freeCamera;
+                if (!m_freeCamera) {
+                    cameraOffset = { 0, 0 };
+                    map.snapCameraToJim();
+                }
+            }
+
+            if (m_freeCamera) {
+                if (inputSystem.isPressed(Input::Action::MoveUp))
+                    cameraOffset.y -= 4;
+                if (inputSystem.isPressed(Input::Action::MoveDown))
+                    cameraOffset.y += 4;
+                if (inputSystem.isPressed(Input::Action::MoveLeft))
+                    cameraOffset.x -= 4;
+                if (inputSystem.isPressed(Input::Action::MoveRight))
+                    cameraOffset.x += 4;
+            }
+
+        }
+        else {
+            m_freeCamera = false;
+            cameraOffset = { 0, 0 };
         }
 
         if (cheatMode() && developerMode()) {
 
             if (inputSystem.wasPressed(Input::Action::ToggleEditorProperties)) {
                 showtrigger = true;
-            }
-
-            if (inputSystem.isPressed(Input::Action::CameraUp)) {
-                if (cameraOffset.y > -2000) cameraOffset.y -= 4;
-            }
-            if (inputSystem.isPressed(Input::Action::CameraDown)) {
-                if (cameraOffset.y < 2000)  cameraOffset.y += 4;
-            }
-            if (inputSystem.isPressed(Input::Action::CameraLeft)) {
-                if (cameraOffset.x > -2000) cameraOffset.x -= 4;
-            }
-            if (inputSystem.isPressed(Input::Action::CameraRight)) {
-                if (cameraOffset.x < 2000)  cameraOffset.x += 4;
-            }
-            if (inputSystem.isPressed(Input::Action::CameraReset)) {
-                cameraOffset = { 0, 0 };
             }
 
         }
@@ -527,6 +534,10 @@ void Game::mainGameLoop() {
         if (caveActive) {
             map.update(camera);
             cameraTarget = map.updateCameraLocation(camera, cameraOffset);
+            if (m_freeCamera) {
+                cameraOffset.x += camera.getCenter().x - cameraTarget.x;
+                cameraOffset.y += camera.getCenter().y - cameraTarget.y;
+            }
         }
 
         rt.setView(camera.view());
@@ -537,19 +548,27 @@ void Game::mainGameLoop() {
 
         cameraPositionDisplay.update(camera, "Camera", { camera.getCenter().x, camera.getCenter().y }, 16.0);
         cameraOffsetDisplay.update(camera, "Offset", { cameraOffset.x, cameraOffset.y }, 35.0);
-        cameraCenter.update(camera, cameraTarget);
         fpsCounter.update(camera);
         levelPanel.update(camera);
         mainMenu.update();
 
         if (caveActive) rt.draw(map, shaderManager.currentShader());
 
-        if (cameraOffset.x != 0 || cameraOffset.y != 0) {
+        if (m_freeCamera) {
+            sf::Vector2f markerPos = camera.getCenter();
+            cameraCenter.update(camera, markerPos);
+            rt.draw(cameraCenter);
+        }
+
+        if (developerMode() && (cameraOffset.x != 0 || cameraOffset.y != 0)) {
             rt.draw(jimPositionDisplay);
             rt.draw(cameraPositionDisplay);
             rt.draw(cameraOffsetDisplay);
             rt.draw(fpsCounter);
-            rt.draw(cameraCenter);
+            if (!m_freeCamera) {
+                cameraCenter.update(camera, cameraTarget);
+                rt.draw(cameraCenter);
+            }
         }
         if (!caveActive) rt.draw(mainMenu, shaderManager.defaultShader());
 
@@ -591,6 +610,8 @@ void Game::mainGameLoop() {
         if ((!m_caveActive && caveActive)) {
             camera.setCentre({ 0, 0 });
             caveActive = false;
+            m_freeCamera = false;
+            cameraOffset = { 0, 0 };
         }
 
         if (map.requiresReset()) {
@@ -598,6 +619,7 @@ void Game::mainGameLoop() {
             map.prepareForPlay();
             camera.setBounds(map.getCameraBounds());
             if (map.resetCameraPosition()) camera.setCentre(map.getCameraStartLocation());
+            cameraOffset = { 0, 0 };
         }
 
         Utils::incrementGlobalCounter();
@@ -767,6 +789,10 @@ bool Game::developerMode() const {
 
 bool Game::cheatMode() const {
     return m_cheatMode || m_developerMode;
+}
+
+bool Game::isFreeCamera() const {
+    return m_freeCamera && cheatMode();
 }
 
 bool Game::caveQuotaReached() const {

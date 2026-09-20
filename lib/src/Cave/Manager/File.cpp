@@ -28,6 +28,43 @@ static uint32_t readReversedUint32(const char* bytes) {
         );
 }
 
+static void writeUint32LE(std::ofstream& file, uint32_t v) {
+    char bytes[4] = {};
+    bytes[0] = static_cast<char>(v & 0xFF);
+    bytes[1] = static_cast<char>((v >> 8) & 0xFF);
+    bytes[2] = static_cast<char>((v >> 16) & 0xFF);
+    bytes[3] = static_cast<char>((v >> 24) & 0xFF);
+    file.write(bytes, 4);
+}
+
+template <typename Rec>
+static void writePackedChunk(std::ofstream& file, const char magic[4],
+    const std::vector<Cave::Data>& caves,
+    std::vector<Rec> Cave::Data::* field) {
+    uint32_t count = 0;
+    for (const auto& cave : caves)
+        count += static_cast<uint32_t>((cave.*field).size());
+    if (count == 0) return;
+    file.write(magic, 4);
+    writeUint32LE(file, 1);
+    writeUint32LE(file, count);
+    for (uint16_t caveIndex = 0; caveIndex < static_cast<uint16_t>(caves.size()); ++caveIndex) {
+        for (const auto& rec : caves[caveIndex].*field) {
+            char bytes[8] = {};
+            bytes[0] = static_cast<char>(caveIndex & 0xFF);
+            bytes[1] = static_cast<char>((caveIndex >> 8) & 0xFF);
+            bytes[2] = static_cast<char>(rec.index & 0xFF);
+            bytes[3] = static_cast<char>((rec.index >> 8) & 0xFF);
+            const uint32_t packed = static_cast<uint32_t>(rec.packed);
+            bytes[4] = static_cast<char>(packed & 0xFF);
+            bytes[5] = static_cast<char>((packed >> 8) & 0xFF);
+            bytes[6] = static_cast<char>((packed >> 16) & 0xFF);
+            bytes[7] = static_cast<char>((packed >> 24) & 0xFF);
+            file.write(bytes, 8);
+        }
+    }
+}
+
 
 Cave::File Cave::File::loadFromFile(const std::string& directory, const std::string& filename) {
 
@@ -91,6 +128,39 @@ Cave::File Cave::File::loadFromFile(const std::string& directory, const std::str
         caveFile.caves.push_back(Cave::Data{ properties, tileData });
     }
 
+    char magic[4] = {};
+    while (file.read(magic, 4)) {
+        char verBytes[4] = {};
+        char countBytes[4] = {};
+        if (!file.read(verBytes, 4) || !file.read(countBytes, 4)) break;
+        const uint32_t count = readReversedUint32(countBytes);
+        const bool isWell = magic[0] == 'W' && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'L';
+        const bool isPort = magic[0] == 'P' && magic[1] == 'O' && magic[2] == 'R' && magic[3] == 'T';
+        const bool isChum = magic[0] == 'C' && magic[1] == 'H' && magic[2] == 'U' && magic[3] == 'M';
+        for (uint32_t n = 0; n < count; ++n) {
+            char rec[8] = {};
+            if (!file.read(rec, 8)) break;
+            const uint16_t caveIndex = readReversedUint16(&rec[0]);
+            if (caveIndex >= caveFile.caves.size()) continue;
+            if (isWell) {
+                Cave::WellRecord well;
+                well.index = readReversedUint16(&rec[2]);
+                well.packed = static_cast<int32_t>(readReversedUint32(&rec[4]));
+                caveFile.caves[caveIndex].wells.push_back(well);
+            }
+            else if (isPort) {
+                Cave::PortalRecord portal;
+                portal.index = readReversedUint16(&rec[2]);
+                portal.packed = static_cast<int32_t>(readReversedUint32(&rec[4]));
+                caveFile.caves[caveIndex].portals.push_back(portal);
+            }
+            else if (isChum) {
+                caveFile.caves[caveIndex].properties.chumGrowthSpeed = readReversedUint32(&rec[4]);
+            }
+        }
+        if (!isWell && !isPort && !isChum) break;
+    }
+
     return caveFile;
 }
 
@@ -133,5 +203,29 @@ void Cave::File::saveToFile(const Cave::File& caveFile, const std::string& fullP
 
         // Tile data
         file.write(cave.tileData.data(), static_cast<std::streamsize>(cave.tileData.size()));
+    }
+
+    const char wellMagic[4] = { 'W', 'E', 'L', 'L' };
+    writePackedChunk(file, wellMagic, caveFile.caves, &Cave::Data::wells);
+    const char portMagic[4] = { 'P', 'O', 'R', 'T' };
+    writePackedChunk(file, portMagic, caveFile.caves, &Cave::Data::portals);
+
+    const uint32_t chumCount = static_cast<uint32_t>(caveFile.caves.size());
+    if (chumCount > 0) {
+        const char chumMagic[4] = { 'C', 'H', 'U', 'M' };
+        file.write(chumMagic, 4);
+        writeUint32LE(file, 1);
+        writeUint32LE(file, chumCount);
+        for (uint16_t caveIndex = 0; caveIndex < static_cast<uint16_t>(chumCount); ++caveIndex) {
+            char bytes[8] = {};
+            bytes[0] = static_cast<char>(caveIndex & 0xFF);
+            bytes[1] = static_cast<char>((caveIndex >> 8) & 0xFF);
+            const uint32_t speed = caveFile.caves[caveIndex].properties.chumGrowthSpeed;
+            bytes[4] = static_cast<char>(speed & 0xFF);
+            bytes[5] = static_cast<char>((speed >> 8) & 0xFF);
+            bytes[6] = static_cast<char>((speed >> 16) & 0xFF);
+            bytes[7] = static_cast<char>((speed >> 24) & 0xFF);
+            file.write(bytes, 8);
+        }
     }
 }

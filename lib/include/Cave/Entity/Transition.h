@@ -84,8 +84,13 @@ namespace Cave::Entity {
 
 		/// @brief Get the transition type.
 		/// @return TransitionType the transition type.
-		TransitionType getType() {
+		TransitionType getType() const {
 			return m_type;
+		}
+
+		/// @brief Previous entity animation drawn during this transition.
+		Animation getAnimation() const {
+			return m_animation;
 		}
 
 		/// @brief Is the transition from a current entity.

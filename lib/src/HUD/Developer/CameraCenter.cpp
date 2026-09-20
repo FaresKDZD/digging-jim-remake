@@ -1,6 +1,5 @@
 #include "HUD/Developer/CameraCenter.h"
-#include <sstream>
-#include <iomanip>
+#include <cmath>
 
 HUD::Developer::CameraCenter::CameraCenter()
 {
@@ -11,9 +10,10 @@ HUD::Developer::CameraCenter::CameraCenter()
     m_marker.setPosition(sf::Vector2f(0.f, 0.f));
 }
 
-void HUD::Developer::CameraCenter::update(Camera Camera, sf::Vector2f& position) {
-    position.y -= 16.f;
-    m_marker.setPosition(position);
+void HUD::Developer::CameraCenter::update(const Camera&, sf::Vector2f position) {
+    const float x = std::floor(position.x / 32.f) * 32.f;
+    const float y = std::floor(position.y / 32.f) * 32.f;
+    m_marker.setPosition({ x, y });
 }
 
 void HUD::Developer::CameraCenter::draw(sf::RenderTarget& target, sf::RenderStates states) const {

@@ -29,6 +29,8 @@ namespace Input {
 
         /// @brief Activate cheat mode.
         ActivateCheatMode,
+        /// @brief Toggle free camera while cheat mode is active.
+        ToggleFreeCamera,
         /// @brief Restart the current cave.
         RestartCave,
         /// @brief Advance to the next cave.
@@ -159,6 +161,7 @@ namespace Input {
             {sf::Keyboard::Scan::F9,  Input::Action::CameraRight},
             {sf::Keyboard::Scan::F10, Input::Action::CameraReset},
             {sf::Keyboard::Scan::F11, Input::Action::ActivateCheatMode},
+            {sf::Keyboard::Scan::C,   Input::Action::ToggleFreeCamera},
 
             // Player controls
             {sf::Keyboard::Scan::Up,      Input::Action::MoveUp},

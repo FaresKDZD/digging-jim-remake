@@ -8,7 +8,7 @@ namespace Cave::Entity {
     /**
      * @class BoulderEater
      * @brief Moves through free space like a Protozo (turning left whenever possible).
-     * Deadly on contact with Jim. When a boulder is directly ahead, it eats the boulder
+     * Deadly on contact with Jim. When a boulder or magic boulder is directly ahead, it eats it
      * the same way a diamond eater consumes diamonds.
      */
     class BoulderEater : public Base {

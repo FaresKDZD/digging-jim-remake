@@ -1,6 +1,7 @@
 #pragma once
 #include <array>
 #include <functional>
+#include <utility>
 #include <vector>
 #include <SFML/Graphics.hpp>
 
@@ -8,6 +9,7 @@
 #include "Cave/State/State.h"
 #include "Cave/Entity/Entity.h"
 #include "Cave/Properties/Properties.h"
+#include "Cave/Manager/Data.h"
 #include "Camera/Camera.h"
 #include "Renderer/TileRenderer.h"
 #include "Renderer/TextRenderer.h"
@@ -94,7 +96,7 @@ namespace Cave {
          * @param properties Pointer to the cave properties (width, height, timings, etc.).
          * @param tileData Vector of raw tile identifiers used to populate cave entities.
          */
-        void generateMap(const Cave::Properties* properties, const std::vector<char>& tileData);
+        void generateMap(const Cave::Properties* properties, const std::vector<char>& tileData, const std::vector<Cave::WellRecord>& wells = {}, const std::vector<Cave::PortalRecord>& portals = {});
 
         /**
          * @brief Updates the cave state and its entities.
@@ -116,6 +118,15 @@ namespace Cave {
          */
         void placeEntity(const int& index, Cave::Entity::Base& entity);
 
+        /// @brief True if a 3x3 Charger centered here would stay inside the inner cave (not on/against the border).
+        bool canPlaceCharger(const int& index) const;
+
+        /// @brief Write spawn settings for every Well currently on the map.
+        void collectWellRecords(std::vector<Cave::WellRecord>& out) const;
+
+        /// @brief Write id/link settings for every Portal currently on the map.
+        void collectPortalRecords(std::vector<Cave::PortalRecord>& out) const;
+
         /**
          * @brief Counts the number of diamonds in the cave.
          *
@@ -133,9 +144,10 @@ namespace Cave {
         /**
          * @brief Gets the initial starting location for the camera.
          *
-         * If the start door is in the top half of the cave, the camera starts in the bottom-right corner.
-         * If the start door is in the bottom half, the camera starts in the top-left corner.
-         * If the start door index is out of bounds, the camera defaults to the top-left corner.
+         * If the start door is in the top half of the cave, the camera starts toward the
+         * bottom-right of the view around the door. If it is in the bottom half, the camera
+         * starts toward the top-left. On a vanilla-sized cave this matches the old far-corner
+         * pan; on larger caves the pan stays about one screen instead of crossing the whole map.
          *
          * @return sf::Vector2f The camera's starting coordinates in pixels.
          */
@@ -163,6 +175,9 @@ namespace Cave {
          * @return sf::Vector2f The target position
          */
         sf::Vector2f updateCameraLocation(Camera& camera, const sf::Vector2f& offset);
+
+        /// @brief Instantly snap the camera onto Jim on the next camera update (no pan).
+        void snapCameraToJim();
 
         /**
          * @brief Checks and manages the camera reset flag.
@@ -200,6 +215,9 @@ namespace Cave {
          * and AI do not run. Call this immediately after generateMap() in the editor.
          */
         void setEditorMode();
+
+        /// @brief True while the cave is shown in the level editor (paused preview).
+        bool isEditorPreview() const { return m_editorPreview; }
 
         /**
          * @brief Converts editor-state entities to their correct in-game initial states.
@@ -697,6 +715,11 @@ namespace Cave {
          * @return True if warp occurred, false otherwise.
          */
         bool handleJimTubeWarp(const int& index, const int& inFront, const bool& collectMode, const Cave::Entity::Direction& direction, const Cave::Entity::Trait& warpTrait);
+
+        /// @brief Teleport Jim to the nearest other portal, keeping movement direction.
+        bool handleJimPortal(const int& index, const int& inFront, const Cave::Entity::Direction& direction);
+        int findNearestPortal(const int& from, const Cave::Entity::Direction& direction) const;
+        int findLinkedPortal(const int& from, const Cave::Entity::Direction& direction) const;
         
         /**
          * @brief Handles Jim completing the level.
@@ -773,6 +796,14 @@ namespace Cave {
          * @param index The entity index of the Protozo.
          */
         void updateProtoza(const int& index);
+
+        /// @brief Protozo wander, but pipes in the facing direction count as a path.
+        void updateBlob(const int& index);
+        bool tryMoveBlob(const int& index, const Cave::Entity::Direction& direction);
+        int findBlobPipeExit(const int& index, const Cave::Entity::Direction& direction) const;
+
+        /// @brief Stationary Mole: proximity open/close, idle blink, crushable.
+        void updateMole(const int& index);
         
         /**
          * @brief Updates the Protozo enemy's behavior.
@@ -859,6 +890,29 @@ namespace Cave {
          */
         void updateBinocule(const int& index);
 
+        /// @brief Digs dirt, pathfinds to Jim, dodges falling boulders, petrifies Jim and monsters.
+        void updateGod(const int& index);
+        bool godTileUnsafe(const int& cell) const;
+        Cave::Entity::Direction findPathToJimForGod(const int& index) const;
+        Cave::Entity::Direction findPathToGoalForGod(const int& index, const int& goal) const;
+        int findNearestReachableTypeForGod(const int& index, Cave::Entity::Type type) const;
+        int findNearestReachableBoulderForGod(const int& index) const;
+        int findNearestReachableRubyForGod(const int& index) const;
+        bool godTouches(const int& index, const int& cell) const;
+        bool petrifyRuby(const int& cell);
+        bool tryMoveGod(const int& index, const Cave::Entity::Direction& direction, bool attack = true);
+        bool petrifyAt(const int& cell);
+        void petrifyAdjacentToGod(const int& index);
+        bool petrifyJim();
+        bool animateBoulderToMonster(const int& cell);
+        Cave::Entity::Base randomMonsterExceptGod() const;
+        Cave::Entity::Base monsterFromType(Cave::Entity::Type type) const;
+        void updateWell(const int& index);
+        void wanderGod(const int& index);
+        bool tryEscapeGod(const int& index, bool attack = true);
+        bool tryFleeGod(const int& index);
+        int godDistanceToJim(const int& cell) const;
+
         /**
          * @brief Updates the Creep enemy's behavior.
          *
@@ -904,14 +958,50 @@ namespace Cave {
          * @brief Updates the Pyram enemy's behavior.
          *
          * Without orthogonal empty-space line of sight to Jim, wanders like a Protozo
-         * once every two ticks. With line of sight, slides toward Jim at double speed.
+         * once every two ticks. When Jim crosses that LOS it charges for one second,
+         * rushes that direction at double speed until a wall, then pauses one second.
          *
          * @param index The entity index of the Pyram.
          */
         void updatePyram(const int& index);
 
-        /// @brief Mid-tick chase step so Pyram can move twice per tick with a full slide each time.
+        /// @brief Mid-tick step so a rushing Pyram can move twice per tick.
         void updatePyramChaseHalfTick();
+
+        /// @brief Stationary puff cycle: occupy 1x1 or 3x3, push into empty space, or explode.
+        void updatePuffer(const int& index);
+
+        /// @brief Keep an inflated Puffer's neighbour tile in sync, or clear it if orphaned.
+        void updatePufferBody(const int& index);
+
+        bool pufferCanOccupy(const int& center, const int& self) const;
+        bool pufferContainsJim(const int& center) const;
+        int findPufferPuffCenter(const int& index) const;
+        void clearPufferBodies(const int& center);
+        void syncPufferBodies(const int& center);
+        void inflatePuffer(int index, int dest);
+        void deflatePuffer(const int& index);
+        void freezePufferIdle(const int& index);
+
+        void updateCharger(const int& index);
+        void updateChargerBody(const int& index);
+        void inflateCharger(const int& center);
+        void chargerSetPose(const int& center, int clipBase, int frameCount, int frame);
+        void chargerTickIdle(const int& index, bool alternate);
+        void chargerAdvanceEnrage(const int& index);
+        void chargerHoldEnrage(const int& index);
+        void clearChargerBodies(const int& center);
+        void evictOverlappingChargers(const int& center);
+        bool chargerOwns(const int& center, const int& cell) const;
+        bool isChargerHardStop(const int& index) const;
+        bool isChargerBrick(const int& index) const;
+        bool chargerIsShoveable(const int& index) const;
+        bool chargerSightClear(const int& center, const int& jim, const Cave::Entity::Direction& dir) const;
+        bool chargerRushStep(const int& index);
+        bool chargerSlideFormation(const int& center, const Cave::Entity::Direction& dir, const std::vector<std::pair<int, Cave::Entity::Animation>>* shovedFrom = nullptr);
+        bool chargerFormationBusy(const int& center);
+        Cave::Entity::Animation chargerMoveOne(const int& src, const Cave::Entity::Direction& dir, Cave::Entity::Animation* vacatedPrev = nullptr);
+        Cave::Entity::Direction chargerSenseJim(const int& index) const;
 
         /// @brief True if this tile is a diamond source the Glutton will hunt.
         bool isGluttonFood(const int& index) const;
@@ -953,6 +1043,9 @@ namespace Cave {
 
         /// @brief True if this tile can fall and crush.
         bool isFallableEntity(const int& index) const;
+
+        /// @brief Orthogonal empty-space line of sight from Pyram to Jim, or NO_DIRECTION.
+        Cave::Entity::Direction pyramLineOfSightDirection(const int& index) const;
 
         /// @brief Orthogonal empty-space line of sight from Pyram to Jim.
         bool hasPyramLineOfSight(const int& index) const;
@@ -1046,6 +1139,16 @@ namespace Cave {
          * @param index The entity index of the plasma.
          */
         void updatePlasma(const int& index);
+
+        /**
+         * @brief Updates a chum tile.
+         *
+         * Chum grows into empty adjacent cells the same way plasma does,
+         * using the cave's chum growth speed.
+         *
+         * @param index The entity index of the chum.
+         */
+        void updateChum(const int& index);
         
         /**
          * @brief Updates a horizontal wall entity.
@@ -1334,6 +1437,9 @@ namespace Cave {
         /// @brief The plasma growth speed.
         int m_plasmaGrowthSpeed = 0;
 
+        /// @brief The chum growth speed.
+        int m_chumGrowthSpeed = 0;
+
         /// @brief Whether the detonator has been triggered or not.
         bool m_detonatorTriggered = false;
 
@@ -1343,8 +1449,14 @@ namespace Cave {
         /// @brief The speed the camera will move toward the target position.
         int m_cameraSpeed;
 
+        /// @brief Snap the camera onto Jim on the next camera update (portal teleport).
+        bool m_snapCameraToJim = false;
+
         /// @brief The current loading rate variable for loading tiles.
         int m_loadRate;
+
+        /// @brief True when this map is the editor cave preview.
+        bool m_editorPreview = false;
 
         /// @brief Whether the cave needs to be reset
         bool m_reset = false;

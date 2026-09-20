@@ -2,6 +2,7 @@
 
 #include <SFML/Audio.hpp>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <string>
 #include <memory>
@@ -32,7 +33,7 @@ namespace Sound {
          *
          * @param effect Enum identifier of the sound effect to play.
          */
-        void play(const Sound::Effect& effect);
+        void play(const Sound::Effect& effect, float pitch = 1.f);
 
         /**
          * @brief Play a sound effect in a continuous loop.
@@ -102,6 +103,9 @@ namespace Sound {
 
         /// @brief List of all currently active (playing) sounds.
         std::vector<std::unique_ptr<sf::Sound>> m_activeSounds;
+
+        /// @brief One-shot effects already started this frame; duplicates are ignored.
+        std::unordered_set<Sound::Effect> m_playedThisFrame;
 
         /// @brief Map of music identifiers to their loaded tracks.
         std::unordered_map<Sound::Music, std::unique_ptr<sf::Music>> m_music;

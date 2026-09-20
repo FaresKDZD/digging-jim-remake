@@ -194,7 +194,7 @@ namespace HUD::Editor {
 
         /// @brief Current scroll row offset for the entity palette.
         int                       m_scrollRow    = 0;
-        static constexpr int      TOTAL_PALETTE_ROWS   = 14;
+        static constexpr int      TOTAL_PALETTE_ROWS   = 17;
         static constexpr int      VISIBLE_PALETTE_ROWS = 10;
         static constexpr int      MAX_SCROLL_ROW       = TOTAL_PALETTE_ROWS - VISIBLE_PALETTE_ROWS;
 

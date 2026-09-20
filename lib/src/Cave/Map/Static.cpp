@@ -74,6 +74,16 @@ void Cave::Map::updatePlasma(const int& index) {
 	}
 }
 
+void Cave::Map::updateChum(const int& index) {
+	for (auto& direction : Cave::Entity::ALL_DIRECTIONS) {
+		int dest = getIndex(index, direction);
+		if (hasTrait(Cave::Entity::Trait::Empty, dest) && Utils::randomInteger(0, 1000) <= m_chumGrowthSpeed) {
+			setEntity(dest, Cave::Entity::Chum());
+			m_game->soundManager.play(Sound::Effect::Chum, 0.65f);
+		}
+	}
+}
+
 void Cave::Map::updateHorizontalWall(const int& index) {
 	for (auto& direction : Cave::Entity::HORIZONTAL_DIRECTIONS) {
 		int newWall = getIndex(index, direction);

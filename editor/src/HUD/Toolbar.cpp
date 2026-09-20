@@ -55,6 +55,20 @@ static void openUrl(const char* path)
 #endif
 }
 
+static bool customEditorPopupOpen()
+{
+    return ImGui::IsPopupOpen("##well_props")
+        || ImGui::IsPopupOpen("##portal_props")
+        || ImGui::IsPopupOpen("##tools_ctx");
+}
+
+static ImGuiHoveredFlags menuBarHoverFlags()
+{
+    return customEditorPopupOpen()
+        ? ImGuiHoveredFlags_None
+        : ImGuiHoveredFlags_AllowWhenBlockedByPopup;
+}
+
 HUD::Editor::Toolbar::Toolbar(::Editor* editor) : m_editor(editor)
 {
     std::ifstream f("./assets/builder.txt");
@@ -107,7 +121,7 @@ void HUD::Editor::Toolbar::drawMenuBorder(ImVec2 r0, ImVec2 r1, bool pressed)
 void HUD::Editor::Toolbar::drawFileMenu()
 {
     bool open = ImGui::BeginMenu("File");
-    bool hov  = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup);
+    bool hov  = ImGui::IsItemHovered(menuBarHoverFlags());
     ImVec2 r0 = ImGui::GetItemRectMin(), r1 = ImGui::GetItemRectMax();
     if (open)
     {
@@ -134,7 +148,7 @@ void HUD::Editor::Toolbar::drawFileMenu()
 void HUD::Editor::Toolbar::drawEditMenu()
 {
     bool open = ImGui::BeginMenu("Edit");
-    bool hov  = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup);
+    bool hov  = ImGui::IsItemHovered(menuBarHoverFlags());
     ImVec2 r0 = ImGui::GetItemRectMin(), r1 = ImGui::GetItemRectMax();
     if (open)
     {
@@ -166,7 +180,7 @@ void HUD::Editor::Toolbar::drawEditMenu()
 void HUD::Editor::Toolbar::drawViewMenu()
 {
     bool open = ImGui::BeginMenu("View");
-    bool hov  = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup);
+    bool hov  = ImGui::IsItemHovered(menuBarHoverFlags());
     ImVec2 r0 = ImGui::GetItemRectMin(), r1 = ImGui::GetItemRectMax();
     if (open)
     {
@@ -246,12 +260,21 @@ void HUD::Editor::Toolbar::drawToolItems(HUD::Editor::Panel* editorPanel)
     tool("Pyram",                    "",  0, 13, Cave::Entity::Type::Pyram);
     tool("Ruby",                     "",  1, 13, Cave::Entity::Type::Ruby);
     tool("Magic Boulder",            "",  2, 13, Cave::Entity::Type::MagicBoulder);
+    tool("Puffer",                   "",  0, 14, Cave::Entity::Type::Puffer);
+    tool("Blob",                     "",  1, 14, Cave::Entity::Type::Blob);
+    tool("Portal",                   "",  2, 14, Cave::Entity::Type::Portal);
+    tool("Mole",                     "",  0, 15, Cave::Entity::Type::Mole);
+    tool("Fan",                      "",  1, 15, Cave::Entity::Type::Fan);
+    tool("God",                      "",  2, 15, Cave::Entity::Type::God);
+    tool("Charger",                  "",  0, 16, Cave::Entity::Type::Charger);
+    tool("Well",                     "",  1, 16, Cave::Entity::Type::Well);
+    tool("Chum",                     "",  2, 16, Cave::Entity::Type::Chum);
 }
 
 void HUD::Editor::Toolbar::drawToolsMenu(HUD::Editor::Panel* editorPanel)
 {
     bool open = ImGui::BeginMenu("Tools");
-    bool hov  = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup);
+    bool hov  = ImGui::IsItemHovered(menuBarHoverFlags());
     ImVec2 r0 = ImGui::GetItemRectMin(), r1 = ImGui::GetItemRectMax();
     if (open)
     {
@@ -283,7 +306,7 @@ void HUD::Editor::Toolbar::drawToolsContextPopup(HUD::Editor::Panel* editorPanel
 void HUD::Editor::Toolbar::drawHelpMenu()
 {
     bool open = ImGui::BeginMenu("Help");
-    bool hov  = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup);
+    bool hov  = ImGui::IsItemHovered(menuBarHoverFlags());
     ImVec2 r0 = ImGui::GetItemRectMin(), r1 = ImGui::GetItemRectMax();
     if (open)
     {

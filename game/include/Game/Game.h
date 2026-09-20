@@ -196,6 +196,10 @@ public:
     /// @return true if the game is in cheat mode, false otherwise
     bool cheatMode() const;
 
+    /// @brief Check whether free camera is currently active (cheat mode, toggled with C).
+    /// @return true if arrows should pan the camera instead of moving Jim
+    bool isFreeCamera() const;
+
     /// @brief Check if the required quota has been met.
     /// @return true if quota is reached, false otherwise.
     bool caveQuotaReached() const;
@@ -312,6 +316,9 @@ private:
 
     /// @brief Whether the game is in cheat mode
     bool m_cheatMode = false;
+
+    /// @brief Whether free camera is active (arrows pan the camera, Jim stays still)
+    bool m_freeCamera = false;
 
     /// @brief Whether the game was launched from the editor
     bool m_editorMode = false;

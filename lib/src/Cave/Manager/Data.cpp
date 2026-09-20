@@ -45,6 +45,15 @@ Cave::Entity::Base Cave::Data::getTileEntity(const char& tile) {
 	case 44: return Cave::Entity::Pyram();
 	case 45: return Cave::Entity::Ruby();
 	case 46: return Cave::Entity::MagicBoulder();
+	case 47: return Cave::Entity::Puffer();
+	case 48: return Cave::Entity::Blob();
+	case 49: return Cave::Entity::Portal();
+	case 50: return Cave::Entity::Mole();
+	case 51: return Cave::Entity::Fan();
+	case 52: return Cave::Entity::God();
+	case 53: return Cave::Entity::Charger();
+	case 54: return Cave::Entity::Well();
+	case 55: return Cave::Entity::Chum();
 	default:
 		return Cave::Entity::Space();
 	}

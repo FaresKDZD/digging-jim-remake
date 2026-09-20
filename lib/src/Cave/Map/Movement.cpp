@@ -20,15 +20,12 @@ bool Cave::Map::moveEntity(const int& sourceIndex, const Cave::Entity::Direction
 	// Roll if entity is a boulder
 	handleBoulderRoll(sourceIndex, direction);
 
-	// Save animations to apply them during transition
 	Cave::Entity::Animation sourceAnimation = caveEntities[sourceIndex].getAnimation();
 	Cave::Entity::Animation destinationAnimation = caveEntities[destinationIndex].getAnimation();
 
-	// Move/set entities to new locations
 	caveEntities[destinationIndex] = std::move(caveEntities[sourceIndex]);
 	caveEntities[sourceIndex] = Cave::Entity::Space();
 
-	// Apply transition animations
 	caveEntities[sourceIndex].applyAwayTransition(direction, sourceAnimation);
 	caveEntities[destinationIndex].applyIntoTransition(direction, destinationAnimation);
 
@@ -95,7 +92,6 @@ bool Cave::Map::pushEntity(const int& sourceIndex, const Cave::Entity::Direction
 	caveEntities[pushedIndex] = std::move(caveEntities[sourceIndex]);
 	caveEntities[sourceIndex] = Cave::Entity::Space();
 
-	// Apply transition animations
 	caveEntities[sourceIndex].applyAwayTransition(direction, sourceAmination);
 	caveEntities[pushedIndex].applyPushTransition(direction, pushedAmination);
 	caveEntities[destinationIndex].applyIntoTransition(direction, destinationAmination);

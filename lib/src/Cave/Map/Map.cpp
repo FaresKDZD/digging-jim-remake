@@ -29,7 +29,7 @@ void Cave::Map::load() {
 	}
 }
 
-void Cave::Map::generateMap(const Cave::Properties* properties, const std::vector<char>& tileData) {
+void Cave::Map::generateMap(const Cave::Properties* properties, const std::vector<char>& tileData, const std::vector<Cave::WellRecord>& wells, const std::vector<Cave::PortalRecord>& portals) {
 
 	// Reset start door location
 	m_startDoorIndex = OUT_OF_BOUNDS_INDEX;
@@ -53,6 +53,23 @@ void Cave::Map::generateMap(const Cave::Properties* properties, const std::vecto
 		if (Cave::Data::isStartDoor(tileData[index])) m_startDoorIndex = index;
 	}
 
+	for (int index = 0; index < width * height; ++index) {
+		if (getEntityType(index) == Cave::Entity::Type::Charger)
+			inflateCharger(index);
+	}
+
+	for (const auto& well : wells) {
+		const int index = static_cast<int>(well.index);
+		if (inBounds(index) && getEntityType(index) == Cave::Entity::Type::Well)
+			caveEntities[index].targetIndex = well.packed;
+	}
+
+	for (const auto& portal : portals) {
+		const int index = static_cast<int>(portal.index);
+		if (inBounds(index) && getEntityType(index) == Cave::Entity::Type::Portal)
+			caveEntities[index].targetIndex = portal.packed;
+	}
+
 	// Update tube textures
 	for (int index = 0; index < width * height; ++index) {
 		updateTubeTexture(index);
@@ -73,6 +90,7 @@ void Cave::Map::generateMap(const Cave::Properties* properties, const std::vecto
 	
 	// Reset plasma variables
 	m_plasmaGrowthSpeed = properties->plasmaGrowthSpeed;
+	m_chumGrowthSpeed = static_cast<int>(properties->chumGrowthSpeed);
 
 	// Reset amoeba variables
 	m_amoebaGrowthCount = 0;
@@ -91,12 +109,14 @@ void Cave::Map::generateMap(const Cave::Properties* properties, const std::vecto
 
 	// Reset camera variables
 	m_cameraSpeed = 4;
+	m_snapCameraToJim = false;
 
 	// Set quota variables
 	m_quotaReached = false;
 
 	// Set cave state to loading
 	m_state = Cave::State::Load;
+	m_editorPreview = false;
 
 	// Game logic
 	m_game->sendSignal(GameSignal::CaveLoad);
@@ -106,6 +126,7 @@ void Cave::Map::generateMap(const Cave::Properties* properties, const std::vecto
 void Cave::Map::setEditorMode() {
 	std::fill(m_loaded.begin(), m_loaded.end(), true);
 	m_state = Cave::State::Pause;
+	m_editorPreview = true;
 }
 
 void Cave::Map::prepareForPlay() {
@@ -126,11 +147,37 @@ void Cave::Map::prepareForPlay() {
 	}
 }
 
+bool Cave::Map::canPlaceCharger(const int& index) const {
+	if (!inBounds(index) || width < 5 || height < 5) return false;
+	const int x = index % width;
+	const int y = index / width;
+	return x >= 2 && y >= 2 && x < width - 2 && y < height - 2;
+}
+
 void Cave::Map::placeEntity(const int& index, Cave::Entity::Base& entity) {
 	if (!inBounds(index) || getEntityTransitioning(index)) {
 		return;
 	}
+	if (entity.getType() == Cave::Entity::Type::Charger && !canPlaceCharger(index)) {
+		return;
+	}
+	const Cave::Entity::Type prev = getEntityType(index);
+	if (prev == Cave::Entity::Type::Charger) {
+		clearChargerBodies(index);
+	}
+	else if (prev == Cave::Entity::Type::ChargerBody) {
+		const int center = caveEntities[index].targetIndex;
+		if (inBounds(center) && getEntityType(center) == Cave::Entity::Type::Charger) {
+			clearChargerBodies(center);
+			caveEntities[center] = Cave::Entity::Space();
+		}
+	}
 	caveEntities[index] = entity;
+
+	if (getEntityType(index) == Cave::Entity::Type::Charger) {
+		evictOverlappingChargers(index);
+		inflateCharger(index);
+	}
 
 	// Update tube animation
 	updateTubeTexture(index);
@@ -139,6 +186,28 @@ void Cave::Map::placeEntity(const int& index, Cave::Entity::Base& entity) {
 		if (inBounds(neighbourIndex)) {
 			updateTubeTexture(neighbourIndex);
 		}
+	}
+}
+
+void Cave::Map::collectWellRecords(std::vector<Cave::WellRecord>& out) const {
+	out.clear();
+	for (int index = 0; index < width * height; ++index) {
+		if (getEntityType(index) != Cave::Entity::Type::Well) continue;
+		Cave::WellRecord rec;
+		rec.index = static_cast<uint16_t>(index);
+		rec.packed = caveEntities[index].targetIndex;
+		out.push_back(rec);
+	}
+}
+
+void Cave::Map::collectPortalRecords(std::vector<Cave::PortalRecord>& out) const {
+	out.clear();
+	for (int index = 0; index < width * height; ++index) {
+		if (getEntityType(index) != Cave::Entity::Type::Portal) continue;
+		Cave::PortalRecord rec;
+		rec.index = static_cast<uint16_t>(index);
+		rec.packed = caveEntities[index].targetIndex;
+		out.push_back(rec);
 	}
 }
 

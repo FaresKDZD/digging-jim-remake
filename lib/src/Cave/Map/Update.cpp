@@ -132,6 +132,11 @@ void Cave::Map::updateInactiveEntity(const std::vector<int> indicies) {
 		case Cave::Entity::Type::ExitDoorComplete: updateTransientEntity(index, Cave::Entity::ExitDoorFinished()); break;
 		case Cave::Entity::Type::DetonatorTriggered: updateTransientEntity(index, Cave::Entity::DetonatorUsed()); break;
 		case Cave::Entity::Type::BreakingFragileDiamond: updateTransientEntity(index, Cave::Entity::Space()); break;
+		case Cave::Entity::Type::Puffer: updatePuffer(index); break;
+		case Cave::Entity::Type::PufferBody: updatePufferBody(index); break;
+		case Cave::Entity::Type::Charger: updateCharger(index); break;
+		case Cave::Entity::Type::ChargerBody: updateChargerBody(index); break;
+		case Cave::Entity::Type::Mole: updateMole(index); break;
 		default: if (!hasTrait(Cave::Entity::Trait::Immutable, index)) updateEntityAnimation(index); break;
 		}
 	}
@@ -147,6 +152,11 @@ void Cave::Map::updateEntityDuringIntro(const std::vector<int> indicies) {
 		case Cave::Entity::Type::StartDoor: updateStartDoor(index); break;
 		case Cave::Entity::Type::StartDoorOpen: updateStartDoorOpen(index); break;
 		case Cave::Entity::Type::ExitDoor: break;
+		case Cave::Entity::Type::Puffer: freezePufferIdle(index); break;
+		case Cave::Entity::Type::PufferBody: updatePufferBody(index); break;
+		case Cave::Entity::Type::Charger: updateCharger(index); break;
+		case Cave::Entity::Type::ChargerBody: updateChargerBody(index); break;
+		case Cave::Entity::Type::Mole: updateMole(index); break;
 		default:
 			auto it = m_entityUpdateMap.find(type);
 			if (it != m_entityUpdateMap.end()) {
@@ -164,6 +174,7 @@ void Cave::Map::initEntityUpdateMaps() {
 	m_entityUpdateMap[Cave::Entity::Type::Amoeba] = [this](int i) { updateAmoeba(i); };
 	m_entityUpdateMap[Cave::Entity::Type::TimeBomb] = [this](int i) { updateTimeBomb(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Plasma] = [this](int i) { updatePlasma(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Chum] = [this](int i) { updateChum(i); };
 	m_entityUpdateMap[Cave::Entity::Type::HorizontalWall] = [this](int i) { updateHorizontalWall(i); };
 	m_entityUpdateMap[Cave::Entity::Type::VerticalWall] = [this](int i) { updateVerticalWall(i); };
 	m_entityUpdateMap[Cave::Entity::Type::MagicWallActive] = [this](int i) { updateMagicWallActive(i); };
@@ -172,6 +183,11 @@ void Cave::Map::initEntityUpdateMaps() {
 	m_entityUpdateMap[Cave::Entity::Type::DetonatorUsed] = [this](int i) { updateDetonatorUsed(i); };
 
 	m_entityUpdateMap[Cave::Entity::Type::Protozo] = [this](int i) { updateProtoza(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Blob] = [this](int i) { updateBlob(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Mole] = [this](int i) { updateMole(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Portal] = [this](int i) { updateEntityAnimation(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Fan] = [this](int i) { updateEntityAnimation(i); };
+	m_entityUpdateMap[Cave::Entity::Type::God] = [this](int i) { updateGod(i); };
 	m_entityUpdateMap[Cave::Entity::Type::CaveGull] = [this](int i) { updateCaveGull(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Spinner] = [this](int i) { updateSpinner(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Cilia] = [this](int i) { updateCilia(i); };
@@ -185,6 +201,11 @@ void Cave::Map::initEntityUpdateMaps() {
 	m_entityUpdateMap[Cave::Entity::Type::SaturatedSludg] = [this](int i) { updateSaturatedSludg(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Glutton] = [this](int i) { updateGlutton(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Pyram] = [this](int i) { updatePyram(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Puffer] = [this](int i) { updatePuffer(i); };
+	m_entityUpdateMap[Cave::Entity::Type::PufferBody] = [this](int i) { updatePufferBody(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Charger] = [this](int i) { updateCharger(i); };
+	m_entityUpdateMap[Cave::Entity::Type::ChargerBody] = [this](int i) { updateChargerBody(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Well] = [this](int i) { updateWell(i); };
 
 	m_entityUpdateMap[Cave::Entity::Type::Explosion] = [this](int i) { updateTransientEntity(i, Cave::Entity::Space()); };
 	m_entityUpdateMap[Cave::Entity::Type::OreTransformation] = [this](int i) { updateTransientEntity(i, Cave::Entity::Diamond()); };

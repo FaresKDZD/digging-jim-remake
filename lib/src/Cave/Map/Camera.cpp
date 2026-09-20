@@ -4,10 +4,15 @@ sf::Vector2f Cave::Map::getCameraStartLocation() const {
 	if (m_startDoorIndex == OUT_OF_BOUNDS_INDEX) {
 		return { 0, 0 };
 	}
+	const float doorX = static_cast<float>((m_startDoorIndex % width) * 32);
+	const float doorY = static_cast<float>((m_startDoorIndex / width) * 32) + 16.f;
+	// Vanilla pans from a nearby corner of the view, not the far corner of a huge cave.
+	constexpr float viewW = 640.f;
+	constexpr float viewH = 480.f;
 	if (m_startDoorIndex < width * height / 2) {
-		return { static_cast<float>(width * 32), static_cast<float>(height * 32) };
+		return { doorX + viewW, doorY + viewH };
 	}
-	return { 0.0, 0.0 };
+	return { doorX - viewW, doorY - viewH };
 }
 
 sf::Vector2f Cave::Map::getCameraBounds() const {
@@ -22,24 +27,28 @@ sf::Vector2f Cave::Map::updateCameraLocation(Camera& camera, const sf::Vector2f&
 	int targetX = (m_jimIndex % width) * 32 + offset.x;
 	int targetY = (m_jimIndex / width) * 32 + offset.y + 32 / 2;
 
-	// Clamp camera so it is never more than 25 tiles (h) or 15 tiles (v) from Jim
-	constexpr float MAX_H = 25 * 32.f;
-	constexpr float MAX_V = 15 * 32.f;
-	float cameraWidth  = camera.getSize().x;
-	float cameraHeight = camera.getSize().y;
-	float boundedTargetX = std::clamp((float)targetX, cameraWidth/2,   (float)(width * 32)  - cameraWidth / 2);
-	float boundedTargetY = std::clamp((float)targetY, cameraHeight /2, (float)(height * 32) - cameraHeight / 2);
-	location.x = std::clamp(location.x, boundedTargetX - MAX_H, boundedTargetX + MAX_H);
-	location.y = std::clamp(location.y, boundedTargetY - MAX_V, boundedTargetY + MAX_V);
-
-	if (location.x < targetX) location.x += m_cameraSpeed;
-	if (location.x > targetX) location.x -= m_cameraSpeed;
-	if (location.y < targetY) location.y += m_cameraSpeed;
-	if (location.y > targetY) location.y -= m_cameraSpeed;
+	bool snapped = false;
+	if (m_snapCameraToJim) {
+		location.x = static_cast<float>(targetX);
+		location.y = static_cast<float>(targetY);
+		m_snapCameraToJim = false;
+		snapped = true;
+	}
+	else {
+		if (location.x < targetX) location.x += m_cameraSpeed;
+		if (location.x > targetX) location.x -= m_cameraSpeed;
+		if (location.y < targetY) location.y += m_cameraSpeed;
+		if (location.y > targetY) location.y -= m_cameraSpeed;
+	}
 
 	camera.setCentre(location);
+	if (snapped) updateVisibleTiles(camera);
 
 	return { static_cast<float>(targetX), static_cast<float>(targetY) };
+}
+
+void Cave::Map::snapCameraToJim() {
+	m_snapCameraToJim = true;
 }
 
 bool Cave::Map::resetCameraPosition() {

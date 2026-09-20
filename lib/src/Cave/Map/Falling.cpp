@@ -64,12 +64,18 @@ bool Cave::Map::handleEntityLanding(const int& index, const int& ahead) {
 		return true;
 	}
 
-	if (hasTrait(Cave::Entity::Trait::Crushable, ahead) && type != Cave::Entity::Type::TimeBomb) {
+	if (hasTrait(Cave::Entity::Trait::Crushable, ahead)) {
 		if (getEntityType(ahead) == Cave::Entity::Type::Jim && isJimInvincible()) {
 			m_game->soundManager.play(Sound::Effect::Land);
 			return false;
 		}
-		createExplosion(ahead);
+		int blast = ahead;
+		if (getEntityType(ahead) == Cave::Entity::Type::PufferBody) {
+			const int center = caveEntities[ahead].targetIndex;
+			if (inBounds(center) && getEntityType(center) == Cave::Entity::Type::Puffer)
+				blast = center;
+		}
+		createExplosion(blast);
 		return true;
 	}
 

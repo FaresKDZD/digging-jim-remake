@@ -107,16 +107,20 @@ public:
 
         outer->Add(topRow, 0, wxEXPAND | wxALL, 8);
 
-        // ── Amoeba growth speed ───────────────────────────────────────────────
+        // ── Amoeba / Plasma / Chum growth ─────────────────────────────────────
         outer->Add(sliderGroup("Amoeba growth speed",
                                m_amoebaSpd, props.amoebaGrowthSpeed,
-                               AMOEBA_GROWTH_SPEED_MIN, AMOEBA_GROWTH_SPEED_MAX),
-                   0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 8);
+                               AMOEBA_GROWTH_SPEED_MIN, AMOEBA_GROWTH_SPEED_MAX, 6),
+                   0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 4);
 
-        // ── Plasma growth speed ───────────────────────────────────────────────
         outer->Add(sliderGroup("Plasma growth speed",
                                m_plasmaSpd, props.plasmaGrowthSpeed,
-                               PLASMA_GROWTH_SPEED_MIN, PLASMA_GROWTH_SPEED_MAX),
+                               PLASMA_GROWTH_SPEED_MIN, PLASMA_GROWTH_SPEED_MAX, 6),
+                   0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 4);
+
+        outer->Add(sliderGroup("Chum growth speed",
+                               m_chumSpd, props.chumGrowthSpeed,
+                               CHUM_GROWTH_SPEED_MIN, CHUM_GROWTH_SPEED_MAX, 6),
                    0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 8);
 
         // ── Colors ────────────────────────────────────────────────────────────
@@ -190,6 +194,7 @@ public:
         m_props.magicWallTime     = clampGet(m_magicTime,    MAGIC_WALL_TIME_MIN,      MAGIC_WALL_TIME_MAX);
         m_props.amoebaGrowthSpeed = clampSlider(m_amoebaSpd, AMOEBA_GROWTH_SPEED_MIN,  AMOEBA_GROWTH_SPEED_MAX);
         m_props.plasmaGrowthSpeed = clampSlider(m_plasmaSpd, PLASMA_GROWTH_SPEED_MIN,  PLASMA_GROWTH_SPEED_MAX);
+        m_props.chumGrowthSpeed   = clampSlider(m_chumSpd,   CHUM_GROWTH_SPEED_MIN,    CHUM_GROWTH_SPEED_MAX);
         m_props.hue               = clampSlider(m_hue,       HUE_MIN,                  HUE_MAX);
         m_props.sat               = clampSlider(m_sat,       SAT_MIN,                  SAT_MAX);
         m_props.lum               = clampSlider(m_lum,       LUM_MIN,                  LUM_MAX);
@@ -211,16 +216,16 @@ private:
     }
 
     wxStaticBoxSizer* sliderGroup(const char* title, wxSlider*& outSlider,
-                                  uint32_t val, uint32_t lo, uint32_t hi)
+                                  uint32_t val, uint32_t lo, uint32_t hi, int pad = 10)
     {
         auto* box = new wxStaticBoxSizer(wxVERTICAL, this, title);
         wxWindow* p = box->GetStaticBox();
         auto* row = new wxBoxSizer(wxHORIZONTAL);
         row->Add(new wxStaticText(p, wxID_ANY, "Min"), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 6);
-        outSlider = new wxSlider(p, wxID_ANY, val, lo, hi);
+        outSlider = new wxSlider(p, wxID_ANY, (int)std::clamp(val, lo, hi), (int)lo, (int)hi);
         row->Add(outSlider, 1, wxEXPAND);
         row->Add(new wxStaticText(p, wxID_ANY, "Max"), 0, wxALIGN_CENTER_VERTICAL | wxLEFT, 6);
-        box->Add(row, 0, wxEXPAND | wxALL, 10);
+        box->Add(row, 0, wxEXPAND | wxALL, pad);
         return box;
     }
 
@@ -240,6 +245,7 @@ private:
     wxSpinCtrl* m_magicTime    = nullptr;
     wxSlider*   m_amoebaSpd    = nullptr;
     wxSlider*   m_plasmaSpd    = nullptr;
+    wxSlider*   m_chumSpd      = nullptr;
     wxSlider*   m_hue          = nullptr;
     wxSlider*   m_sat          = nullptr;
     wxSlider*   m_lum          = nullptr;

@@ -21,6 +21,8 @@ static constexpr uint32_t AMOEBA_GROWTH_SPEED_MIN = 1u;
 static constexpr uint32_t AMOEBA_GROWTH_SPEED_MAX = 1000u;
 static constexpr uint32_t PLASMA_GROWTH_SPEED_MIN = 1u;
 static constexpr uint32_t PLASMA_GROWTH_SPEED_MAX = 1000u;
+static constexpr uint32_t CHUM_GROWTH_SPEED_MIN = 0u;
+static constexpr uint32_t CHUM_GROWTH_SPEED_MAX = 1000u;
 static constexpr uint32_t HUE_MIN = 0u;
 static constexpr uint32_t HUE_MAX = 200u;
 static constexpr uint32_t SAT_MIN = 0u;
@@ -59,6 +61,8 @@ namespace Cave {
         uint32_t hue;
         uint32_t sat;
         uint32_t lum;
+        /// @brief Extra field (not in the 11×uint32 .cav properties blob). Persisted via CHUM chunk.
+        uint32_t chumGrowthSpeed = 0;
     };
 
     /**

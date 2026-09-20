@@ -87,6 +87,13 @@ namespace Cave::Entity {
             }
         }
 
+        /// @brief Jump to a frame in the current animation without replacing it.
+        void setAnimationFrame(int frame) {
+            if (m_animation.frames.empty()) return;
+            const int count = static_cast<int>(m_animation.frames.size());
+            m_animation.currentFrame = ((frame % count) + count) % count;
+        }
+
         /// @brief Check if the animation has looped at least once.
         bool animationLoopCompleted() const { return m_animation.loopCompleted; }
 
@@ -171,6 +178,11 @@ namespace Cave::Entity {
             m_transition->setDisplacementIncrement(inc);
         }
 
+        /// @brief Drop any in-progress slide so the entity draws fully in its tile.
+        void clearTransition() {
+            m_transition = std::nullopt;
+        }
+
         /// @brief Terminate the current transition unless it is an "away" transition.
         void terminateCurrentTransition() {
             if (!m_transition || m_transition->isAway()) {
@@ -219,6 +231,14 @@ namespace Cave::Entity {
         /// @brief Check if the entity is currently in transition.
         bool isTransitioning() const {
             return m_transition.has_value();
+        }
+
+        /// @brief Copy the away-slide animation if this tile is vacating in `direction`.
+        std::optional<Animation> copyAwayAnimation(const Direction& direction) const {
+            if (!m_transition || direction == Direction::NO_DIRECTION) return std::nullopt;
+            if (m_transition->getType() != awayTransitions[static_cast<int>(direction)])
+                return std::nullopt;
+            return m_transition->getAnimation();
         }
 
         // ---------------------------------------------------------------------
@@ -305,6 +325,9 @@ namespace Cave::Entity {
 
         /// @brief Locked pathfinding target cell, or -1 if none.
         int targetIndex = -1;
+
+        /// @brief Extra per-entity counter (Well spawn credit, unused elsewhere).
+        int spawnCredit = 0;
 
     protected:
 

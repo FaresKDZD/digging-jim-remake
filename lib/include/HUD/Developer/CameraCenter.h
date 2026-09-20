@@ -24,7 +24,7 @@ namespace HUD::Developer {
          * @param camera The current camera.
          * @param position The position to update the marker to.
          */
-        void update(Camera camera, sf::Vector2f& position);
+        void update(const Camera& camera, sf::Vector2f position);
 
     private:
         /**

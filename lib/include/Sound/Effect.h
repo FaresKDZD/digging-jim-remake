@@ -50,6 +50,18 @@ namespace Sound {
         /// @brief Plasma spawn sound.
         Plasma,
 
+        /// @brief Chum growth (pitched-down plasma).
+        Chum,
+
+        /// @brief Charger enrage / charge windup.
+        Enrage,
+
+        /// @brief Puffer expanding to 3x3.
+        Inflate,
+
+        /// @brief Puffer shrinking back to 1x1.
+        Deflate,
+
         /// @brief Jim moving through a tube.
         Tube,
 

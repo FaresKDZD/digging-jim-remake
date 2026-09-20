@@ -11,6 +11,7 @@
 #include <imgui.h>
 #include <imgui-SFML.h>
 #include <algorithm>
+#include <cstdio>
 #include <filesystem>
 #include <random>
 #ifdef _WIN32
@@ -48,6 +49,42 @@ static std::string getExeDir() {
 
 static std::string getCavesDir() {
     return (std::filesystem::path(getExeDir()) / "caves" / "").string();
+}
+
+static bool customEditorPopupOpen()
+{
+    return ImGui::IsPopupOpen("##well_props")
+        || ImGui::IsPopupOpen("##portal_props")
+        || ImGui::IsPopupOpen("##tools_ctx");
+}
+
+static bool imguiBlocksEditorMouse()
+{
+    return ImGui::GetIO().WantCaptureMouse
+        || ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup);
+}
+
+static void drawEditorPopupClickBlocker()
+{
+    if (!customEditorPopupOpen())
+        return;
+
+    const ImGuiIO& io = ImGui::GetIO();
+    ImGui::SetNextWindowPos(ImVec2(0.f, 0.f), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(io.DisplaySize, ImGuiCond_Always);
+    ImGui::SetNextWindowBgAlpha(0.f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.f, 0.f));
+    const ImGuiWindowFlags flags =
+        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoCollapse |
+        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav |
+        ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoFocusOnAppearing;
+    if (ImGui::Begin("##editor_popup_block", nullptr, flags))
+        ImGui::InvisibleButton("##editor_popup_block_hit", io.DisplaySize);
+    ImGui::End();
+    ImGui::PopStyleVar(2);
 }
 
 // -----------------------------------------------------------------------
@@ -112,6 +149,7 @@ static Cave::Properties defaultCaveProperties(uint32_t width = 50, uint32_t heig
     p.amoebaGrowthMax   = 1000;
     p.magicWallTime     = 20;
     p.plasmaGrowthSpeed = 1000;
+    p.chumGrowthSpeed   = 128;
     p.hue               = 100;
     p.sat               = 100;
     p.lum               = 100;
@@ -175,6 +213,15 @@ static char entityTypeToTile(Cave::Entity::Type type)
     case Cave::Entity::Type::Pyram:               return 44;
     case Cave::Entity::Type::Ruby:                return 45;
     case Cave::Entity::Type::MagicBoulder:        return 46;
+    case Cave::Entity::Type::Puffer:              return 47;
+    case Cave::Entity::Type::Blob:                return 48;
+    case Cave::Entity::Type::Portal:              return 49;
+    case Cave::Entity::Type::Mole:                return 50;
+    case Cave::Entity::Type::Fan:                 return 51;
+    case Cave::Entity::Type::God:                 return 52;
+    case Cave::Entity::Type::Charger:             return 53;
+    case Cave::Entity::Type::Well:                return 54;
+    case Cave::Entity::Type::Chum:                return 55;
     default:                                      return 0;
     }
 }
@@ -198,6 +245,8 @@ void Editor::copyLevel(const Cave::Map& map)
     m_clipboardTileData.resize(map.caveEntities.size());
     for (size_t i = 0; i < map.caveEntities.size(); ++i)
         m_clipboardTileData[i] = entityTypeToTile(map.caveEntities[i].getType());
+    map.collectWellRecords(m_clipboardWells);
+    map.collectPortalRecords(m_clipboardPortals);
 }
 
 void Editor::pasteLevel(Cave::Map& map)
@@ -205,7 +254,7 @@ void Editor::pasteLevel(Cave::Map& map)
     if (m_clipboardTileData.empty()) return;
     auto p = game.getCaveProperties();
     if (m_clipboardTileData.size() != (size_t)(p.width * p.height)) return;
-    map.generateMap(&p, m_clipboardTileData);
+    map.generateMap(&p, m_clipboardTileData, m_clipboardWells, m_clipboardPortals);
     map.setEditorMode();
 }
 
@@ -216,10 +265,18 @@ void Editor::copySelection(const Cave::Map& map)
     m_clipW = x1 - x0 + 1;
     m_clipH = y1 - y0 + 1;
     m_selectionClipboard.resize((size_t)m_clipW * (size_t)m_clipH);
+    m_selectionWellPacked.assign((size_t)m_clipW * (size_t)m_clipH, 0);
+    m_selectionPortalPacked.assign((size_t)m_clipW * (size_t)m_clipH, 0);
     for (int y = y0; y <= y1; ++y)
-        for (int x = x0; x <= x1; ++x)
-            m_selectionClipboard[(y - y0) * m_clipW + (x - x0)] =
-                entityTypeToTile(map.caveEntities[y * map.width + x].getType());
+        for (int x = x0; x <= x1; ++x) {
+            const int i = (y - y0) * m_clipW + (x - x0);
+            const auto& e = map.caveEntities[y * map.width + x];
+            m_selectionClipboard[i] = entityTypeToTile(e.getType());
+            if (e.getType() == Cave::Entity::Type::Well)
+                m_selectionWellPacked[i] = e.targetIndex;
+            if (e.getType() == Cave::Entity::Type::Portal)
+                m_selectionPortalPacked[i] = e.targetIndex;
+        }
 }
 
 void Editor::pasteSelection(Cave::Map& map, int destX, int destY)
@@ -237,8 +294,16 @@ void Editor::pasteSelection(Cave::Map& map, int destX, int destY)
         {
             const int tx = destX + x;
             if (tx <= 0 || tx >= map.width - 1) continue;
-            map.placeEntity(ty * map.width + tx,
-                Cave::Data::getTileEntity(m_selectionClipboard[y * m_clipW + x]));
+            char tile = m_selectionClipboard[y * m_clipW + x];
+            if (tile == 13 || tile == 14)
+                tile = 0;
+            Cave::Entity::Base e = Cave::Data::getTileEntity(tile);
+            if (tile == 54 && (size_t)(y * m_clipW + x) < m_selectionWellPacked.size()
+                && m_selectionWellPacked[y * m_clipW + x] != 0)
+                e.targetIndex = m_selectionWellPacked[y * m_clipW + x];
+            if (tile == 49 && (size_t)(y * m_clipW + x) < m_selectionPortalPacked.size())
+                e.targetIndex = m_selectionPortalPacked[y * m_clipW + x];
+            map.placeEntity(ty * map.width + tx, e);
         }
     }
     map.setEditorMode();
@@ -257,6 +322,8 @@ void Editor::syncCurrentCave(Cave::Map& map, Cave::File& loadedFile, int current
     cave.tileData.resize(map.caveEntities.size());
     for (size_t i = 0; i < map.caveEntities.size(); ++i)
         cave.tileData[i] = entityTypeToTile(map.caveEntities[i].getType());
+    map.collectWellRecords(cave.wells);
+    map.collectPortalRecords(cave.portals);
 }
 
 void Editor::insertLevel(Cave::Map& map, Cave::File& loadedFile, int& currentCaveIndex)
@@ -278,7 +345,7 @@ void Editor::insertLevel(Cave::Map& map, Cave::File& loadedFile, int& currentCav
 
     const Cave::Data& cave = loadedFile.caves[currentCaveIndex];
     game.setCaveProperties(cave.properties);
-    map.generateMap(&cave.properties, cave.tileData);
+    map.generateMap(&cave.properties, cave.tileData, cave.wells, cave.portals);
     map.setEditorMode();
 }
 
@@ -382,7 +449,7 @@ void Editor::deleteLevel(Cave::Map& map, Cave::File& loadedFile, int& currentCav
 
     const Cave::Data& cave = loadedFile.caves[currentCaveIndex];
     game.setCaveProperties(cave.properties);
-    map.generateMap(&cave.properties, cave.tileData);
+    map.generateMap(&cave.properties, cave.tileData, cave.wells, cave.portals);
     map.setEditorMode();
 }
 
@@ -770,6 +837,9 @@ bool Editor::run()
     bool         hsbDragging      = false;
     bool         minimapDragging  = false;
     bool         openTilePicker   = false;
+    bool         openWellProps    = false;
+    bool         openPortalProps  = false;
+    int          wellPropsIndex   = -1;
     ImVec2       tilePickerPos    = { 0.f, 0.f };
     float        vsbDragStartY    = 0.f;
     float        hsbDragStartX    = 0.f;
@@ -815,7 +885,7 @@ bool Editor::run()
 
             if (window.hasFocus()) if (const auto* e = event->getIf<sf::Event::MouseWheelScrolled>())
             {
-                if (!ImGui::GetIO().WantCaptureMouse)
+                if (!imguiBlocksEditorMouse())
                 {
                     sf::Vector2f vp = windowToVirtual(sf::Mouse::getPosition(window));
                     if (vp.x >= PANEL_X)
@@ -825,6 +895,9 @@ bool Editor::run()
 
             if (window.hasFocus()) if (const auto* e = event->getIf<sf::Event::MouseButtonPressed>())
             {
+                if (imguiBlocksEditorMouse())
+                    continue;
+
                 if (e->button == sf::Mouse::Button::Middle) { panning = true; lastPanPos = e->position; }
                 if (e->button == sf::Mouse::Button::Right)
                 {
@@ -833,10 +906,35 @@ bool Editor::run()
                     bool overPanel   = vp.x >= PANEL_X;
                     bool overVsb     = vp.x >= VSB_X;
                     bool overHsb     = vp.y >= HSB_Y;
-                    if (!ImGui::GetIO().WantCaptureMouse && !overToolbar && !overPanel && !overVsb && !overHsb)
+                    if (!overToolbar && !overPanel && !overVsb && !overHsb)
                     {
-                        tilePickerPos = ImVec2((float)e->position.x, (float)e->position.y);
-                        openTilePicker = true;
+                        sf::View caveView = caveCamera.view();
+                        caveView.setViewport(sf::FloatRect(sf::Vector2f(CAVE_VP_X, CAVE_VP_Y),
+                                                           sf::Vector2f(CAVE_VP_W, CAVE_VP_H)));
+                        sf::Vector2f mw = rt.mapPixelToCoords(sf::Vector2i((int)vp.x, (int)vp.y), caveView);
+                        const int tileX = std::clamp((int)mw.x / 32, 0, map.width  - 1);
+                        const int tileY = std::clamp((int)mw.y / 32, 0, map.height - 1);
+                        const int tileIndex = tileY * map.width + tileX;
+                        const Cave::Entity::Type clicked = map.caveEntities[tileIndex].getType();
+                        if (clicked == Cave::Entity::Type::Well)
+                        {
+                            saveUndoSnapshot(map);
+                            wellPropsIndex = tileIndex;
+                            openWellProps = true;
+                            tilePickerPos = ImVec2((float)e->position.x, (float)e->position.y);
+                        }
+                        else if (clicked == Cave::Entity::Type::Portal)
+                        {
+                            saveUndoSnapshot(map);
+                            wellPropsIndex = tileIndex;
+                            openPortalProps = true;
+                            tilePickerPos = ImVec2((float)e->position.x, (float)e->position.y);
+                        }
+                        else
+                        {
+                            tilePickerPos = ImVec2((float)e->position.x, (float)e->position.y);
+                            openTilePicker = true;
+                        }
                     }
                 }
                 if (e->button == sf::Mouse::Button::Left)
@@ -886,8 +984,7 @@ bool Editor::run()
                         else
                             editorPanel.handleClick(vp, PANEL_X, TOOLBAR_H);
                     }
-                    else if (!ImGui::GetIO().WantCaptureMouse &&
-                             vp.x < VSB_X && vp.y >= TOOLBAR_H && vp.y < HSB_Y)
+                    else if (vp.x < VSB_X && vp.y >= TOOLBAR_H && vp.y < HSB_Y)
                     {
                         const int fillSel = editorPanel.getFillSelected();
                         const bool selectTool = (fillSel == 3);
@@ -1109,6 +1206,7 @@ bool Editor::run()
         }
 
         toolbar.draw(&editorPanel, m_developerMode);
+        drawEditorPopupClickBlocker();
 
         // Right-click tile picker popup
         {
@@ -1120,6 +1218,127 @@ bool Editor::run()
             }
             toolbar.drawToolsContextPopup(&editorPanel);
         }
+
+        {
+            if (openWellProps)
+            {
+                ImGui::SetNextWindowPos(tilePickerPos, ImGuiCond_Always, ImVec2(0.f, 0.f));
+                ImGui::OpenPopup("##well_props");
+                openWellProps = false;
+            }
+            if (ImGui::BeginPopup("##well_props"))
+            {
+                if (wellPropsIndex < 0 || wellPropsIndex >= map.width * map.height
+                    || map.caveEntities[wellPropsIndex].getType() != Cave::Entity::Type::Well)
+                {
+                    ImGui::CloseCurrentPopup();
+                }
+                else
+                {
+                    using W = Cave::Entity::Well;
+                    int packed = map.caveEntities[wellPropsIndex].targetIndex;
+                    Cave::Entity::Type monster = W::unpackMonster(packed);
+                    float rate = W::unpackRate(packed);
+                    int current = 0;
+                    const int nOpts = static_cast<int>(sizeof(W::SUMMON_OPTIONS) / sizeof(W::SUMMON_OPTIONS[0]));
+                    for (int i = 0; i < nOpts; ++i)
+                        if (W::SUMMON_OPTIONS[i].type == monster) current = i;
+
+                    ImGui::TextUnformatted("Well");
+                    ImGui::Separator();
+                    if (ImGui::BeginCombo("Monster", W::SUMMON_OPTIONS[current].label))
+                    {
+                        for (int i = 0; i < nOpts; ++i)
+                        {
+                            bool selected = (i == current);
+                            if (ImGui::Selectable(W::SUMMON_OPTIONS[i].label, selected))
+                            {
+                                current = i;
+                                monster = W::SUMMON_OPTIONS[i].type;
+                            }
+                            if (selected) ImGui::SetItemDefaultFocus();
+                        }
+                        ImGui::EndCombo();
+                    }
+                    ImGui::SliderFloat("Rate", &rate, 0.f, 5.f, "%.2f /s");
+                    const int newPacked = W::pack(monster, rate);
+                    if (newPacked != packed)
+                    {
+                        map.caveEntities[wellPropsIndex].targetIndex = newPacked;
+                        m_isDirty = true;
+                    }
+                }
+                ImGui::EndPopup();
+            }
+        }
+
+        {
+            if (openPortalProps)
+            {
+                ImGui::SetNextWindowPos(tilePickerPos, ImGuiCond_Always, ImVec2(0.f, 0.f));
+                ImGui::OpenPopup("##portal_props");
+                openPortalProps = false;
+            }
+            if (ImGui::BeginPopup("##portal_props"))
+            {
+                if (wellPropsIndex < 0 || wellPropsIndex >= map.width * map.height
+                    || map.caveEntities[wellPropsIndex].getType() != Cave::Entity::Type::Portal)
+                {
+                    ImGui::CloseCurrentPopup();
+                }
+                else
+                {
+                    using P = Cave::Entity::Portal;
+                    int packed = map.caveEntities[wellPropsIndex].targetIndex;
+                    int id = P::unpackId(packed);
+                    int link = P::unpackLink(packed);
+
+                    std::vector<int> otherIds;
+                    for (int i = 0; i < map.width * map.height; ++i) {
+                        if (i == wellPropsIndex) continue;
+                        if (map.caveEntities[i].getType() != Cave::Entity::Type::Portal) continue;
+                        const int otherId = P::unpackId(map.caveEntities[i].targetIndex);
+                        if (std::find(otherIds.begin(), otherIds.end(), otherId) == otherIds.end())
+                            otherIds.push_back(otherId);
+                    }
+                    std::sort(otherIds.begin(), otherIds.end());
+
+                    ImGui::TextUnformatted("Portal");
+                    ImGui::Separator();
+                    if (ImGui::InputInt("Number", &id))
+                        id = std::clamp(id, 0, P::ID_MAX);
+
+                    char linkPreview[32];
+                    std::snprintf(linkPreview, sizeof(linkPreview), "%d", link);
+                    if (ImGui::BeginCombo("Link to", linkPreview))
+                    {
+                        for (int otherId : otherIds)
+                        {
+                            char label[32];
+                            std::snprintf(label, sizeof(label), "%d", otherId);
+                            bool selected = (link == otherId);
+                            if (ImGui::Selectable(label, selected))
+                                link = otherId;
+                            if (selected) ImGui::SetItemDefaultFocus();
+                        }
+                        ImGui::EndCombo();
+                    }
+                    if (ImGui::InputInt("Link number", &link))
+                        link = std::clamp(link, 0, P::ID_MAX);
+
+                    const int newPacked = P::pack(id, link);
+                    if (newPacked != packed)
+                    {
+                        map.caveEntities[wellPropsIndex].targetIndex = newPacked;
+                        m_isDirty = true;
+                    }
+                }
+                ImGui::EndPopup();
+            }
+        }
+
+        if (ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup))
+            ImGui::GetIO().WantCaptureMouse = true;
 
         // Apply zoom mode — double view size shows twice as many tiles
         {
@@ -1138,7 +1357,7 @@ bool Editor::run()
             bool overVsb     = rtPx.x >= (int)VSB_X;
             bool overHsb     = rtPx.y >= (int)HSB_Y;
 
-            if (!ImGui::GetIO().WantCaptureMouse && !overToolbar && !overVsb && !overHsb
+            if (!imguiBlocksEditorMouse() && !overToolbar && !overVsb && !overHsb
                 && !vsbDragging && !hsbDragging)
             {
                 sf::View caveView = caveCamera.view();
@@ -1171,6 +1390,9 @@ bool Editor::run()
                                 if (e.getType() == type) ++existing;
                             if (existing >= 1) canPlace = false;
                         }
+                        if (type == Cave::Entity::Type::Charger
+                            && !map.canPlaceCharger(tileY * map.width + tileX))
+                            canPlace = false;
 
                         if (canPlace)
                         {
@@ -1364,7 +1586,7 @@ bool Editor::run()
                         game.setCaveProperties(caveData.properties);
                         originalProps = caveData.properties;
                         auto p = game.getCaveProperties();
-                        map.generateMap(&p, caveData.tileData);
+                        map.generateMap(&p, caveData.tileData, caveData.wells, caveData.portals);
                         map.setEditorMode();
                         syncCaveBounds();
                         caveCamera.setCentre(sf::Vector2f(viewSize.x / 2.f, viewSize.y / 2.f));
@@ -1396,7 +1618,7 @@ bool Editor::run()
                     game.setCaveProperties(caveData.properties);
                     originalProps = caveData.properties;
                     auto p = game.getCaveProperties();
-                    map.generateMap(&p, caveData.tileData);
+                    map.generateMap(&p, caveData.tileData, caveData.wells, caveData.portals);
                     map.setEditorMode();
                     syncCaveBounds();
                     caveCamera.setCentre(sf::Vector2f(viewSize.x / 2.f, viewSize.y / 2.f));
@@ -1545,15 +1767,29 @@ bool Editor::run()
                     int dstX0 = (anchorCol == 0) ? 0 : (anchorCol == 1) ? std::max(0, (nIW - oIW) / 2) : std::max(0, nIW - oIW);
                     int dstY0 = (anchorRow == 0) ? 0 : (anchorRow == 1) ? std::max(0, (nIH - oIH) / 2) : std::max(0, nIH - oIH);
 
+                    std::vector<Cave::WellRecord> newWells;
+                    std::vector<Cave::PortalRecord> newPortals;
                     for (int cy = 0; cy < copyH; cy++) {
                         for (int cx = 0; cx < copyW; cx++) {
                             int srcIdx = (srcY0 + cy + 1) * (int)oldP.width + (srcX0 + cx + 1);
                             int dstIdx = (dstY0 + cy + 1) * (int)p.width    + (dstX0 + cx + 1);
                             newTiles[dstIdx] = entityTypeToTile(map.caveEntities[srcIdx].getType());
+                            if (map.caveEntities[srcIdx].getType() == Cave::Entity::Type::Well) {
+                                Cave::WellRecord rec;
+                                rec.index = static_cast<uint16_t>(dstIdx);
+                                rec.packed = map.caveEntities[srcIdx].targetIndex;
+                                newWells.push_back(rec);
+                            }
+                            if (map.caveEntities[srcIdx].getType() == Cave::Entity::Type::Portal) {
+                                Cave::PortalRecord rec;
+                                rec.index = static_cast<uint16_t>(dstIdx);
+                                rec.packed = map.caveEntities[srcIdx].targetIndex;
+                                newPortals.push_back(rec);
+                            }
                         }
                     }
 
-                    map.generateMap(&p, newTiles);
+                    map.generateMap(&p, newTiles, newWells, newPortals);
                     map.setEditorMode();
                     syncCaveBounds();
                 }
@@ -1732,17 +1968,34 @@ bool Editor::run()
             m_doRandomDist = false;
             Cave::Entity::Base entity = editorPanel.getSelectedEntity();
             auto t = entity.getType();
-            if (t != Cave::Entity::Type::StartDoor && t != Cave::Entity::Type::ExitDoor)
+            if (t != Cave::Entity::Type::StartDoor && t != Cave::Entity::Type::ExitDoor
+                && t != Cave::Entity::Type::Portal)
             {
+                int x0 = 1, y0 = 1, x1 = map.width - 2, y1 = map.height - 2;
+                if (t == Cave::Entity::Type::Charger)
+                {
+                    x0 = 2; y0 = 2; x1 = map.width - 3; y1 = map.height - 3;
+                }
+                if (m_hasSelection)
+                {
+                    const int margin = (t == Cave::Entity::Type::Charger) ? 2 : 1;
+                    x0 = std::max(margin, m_selX0);
+                    y0 = std::max(margin, m_selY0);
+                    x1 = std::min(map.width  - 1 - margin, m_selX1);
+                    y1 = std::min(map.height - 1 - margin, m_selY1);
+                }
+                if (x0 <= x1 && y0 <= y1)
+                {
                 saveUndoSnapshot(map);
                 std::mt19937 rng(std::random_device{}());
-                std::uniform_int_distribution<int> distX(1, map.width  - 2);
-                std::uniform_int_distribution<int> distY(1, map.height - 2);
+                std::uniform_int_distribution<int> distX(x0, x1);
+                std::uniform_int_distribution<int> distY(y0, y1);
                 for (uint32_t i = 0; i < settings.randomDistBlocks; ++i)
                 {
                     int tx = distX(rng);
                     int ty = distY(rng);
                     map.placeEntity(ty * map.width + tx, entity);
+                }
                 }
             }
         }

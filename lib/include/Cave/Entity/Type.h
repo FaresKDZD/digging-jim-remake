@@ -32,6 +32,17 @@ namespace Cave::Entity {
         SaturatedSludg,
         Glutton,
         Pyram,
+        Puffer,
+        PufferBody,
+        Blob,
+        Portal,
+        Mole,
+        Fan,
+        God,
+        Charger,
+        ChargerBody,
+        Well,
+        Chum,
         Boulder,
         MagicBoulder,
         Wall,
@@ -74,4 +85,8 @@ namespace Cave::Entity {
         DetonatorUsed,
         Space,
     };
+
+    inline bool isDirtLike(Type type) {
+        return type == Type::Dirt || type == Type::Chum;
+    }
 }

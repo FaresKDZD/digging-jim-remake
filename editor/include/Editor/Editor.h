@@ -5,6 +5,7 @@
 #include "Cave/Manager/File.h"
 #include "Image/Manager.h"
 #include <SFML/Graphics.hpp>
+#include <cstdint>
 #include <vector>
 #include <string>
 
@@ -324,11 +325,15 @@ private:
 
     /// @brief Tile data copied by copyLevel(), pasted by pasteLevel().
     std::vector<char> m_clipboardTileData;
+    std::vector<Cave::WellRecord> m_clipboardWells;
+    std::vector<Cave::PortalRecord> m_clipboardPortals;
 
     bool m_hasSelection = false;
     int  m_selX0 = 0, m_selY0 = 0, m_selX1 = 0, m_selY1 = 0;
     int  m_clipW = 0, m_clipH = 0;
     std::vector<char> m_selectionClipboard;
+    std::vector<int32_t> m_selectionWellPacked;
+    std::vector<int32_t> m_selectionPortalPacked;
 
     // ----------------------------------------------------------------------------------
     // Internal helpers

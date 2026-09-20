@@ -136,6 +136,16 @@ int HUD::Editor::Panel::miniTileIndex(Cave::Entity::Type type)
     case T::Pyram:           return 39;
     case T::Ruby:            return 40;
     case T::MagicBoulder:    return 41;
+    case T::Puffer:          return 42;
+    case T::Blob:            return 43;
+    case T::Portal:          return 44;
+    case T::Mole:            return 45;
+    case T::Fan:             return 46;
+    case T::God:             return 47;
+    case T::Charger:         return 48;
+    case T::ChargerBody:     return 48;
+    case T::Well:            return 49;
+    case T::Chum:            return 50;
     default:                 return 0;
     }
 }
@@ -211,7 +221,19 @@ void HUD::Editor::Panel::update(const Camera& panelCamera, const Camera* caveCam
                 entities.push_back(Cave::Entity::Base());
                 continue;
             }
-            if (tickFired) m_entities[type].updateAnimation();
+            if (tickFired) {
+                if (type == Cave::Entity::Type::Puffer)
+                    m_entities[type].setAnimationFrame(0);
+                else if (type == Cave::Entity::Type::Charger)
+                    m_entities[type].setAnimationFrame(0);
+                else if (type == Cave::Entity::Type::Mole) {
+                    if (m_entities[type].direction == Cave::Entity::Direction::NO_DIRECTION)
+                        m_entities[type].direction = Cave::Entity::Direction::UP;
+                    Cave::Entity::Mole::stepBlinkLoop(m_entities[type]);
+                }
+                else
+                    m_entities[type].updateAnimation();
+            }
             entities.push_back(m_entities[type]);
         }
 
@@ -544,6 +566,15 @@ Cave::Entity::Type HUD::Editor::Panel::getType(const int& x, const int& y) {
     case 39: return Cave::Entity::Type::Pyram;
     case 40: return Cave::Entity::Type::Ruby;
     case 41: return Cave::Entity::Type::MagicBoulder;
+    case 42: return Cave::Entity::Type::Puffer;
+    case 43: return Cave::Entity::Type::Blob;
+    case 44: return Cave::Entity::Type::Portal;
+    case 45: return Cave::Entity::Type::Mole;
+    case 46: return Cave::Entity::Type::Fan;
+    case 47: return Cave::Entity::Type::God;
+    case 48: return Cave::Entity::Type::Charger;
+    case 49: return Cave::Entity::Type::Well;
+    case 50: return Cave::Entity::Type::Chum;
     default: return Cave::Entity::Type::NoType;
     }
 }
@@ -593,6 +624,19 @@ Cave::Entity::Base HUD::Editor::Panel::getNewEntity(Cave::Entity::Type type) {
     case Cave::Entity::Type::Pyram:           return Cave::Entity::Pyram();
     case Cave::Entity::Type::Ruby:            return Cave::Entity::Ruby();
     case Cave::Entity::Type::MagicBoulder:    return Cave::Entity::MagicBoulder();
+    case Cave::Entity::Type::Puffer:          return Cave::Entity::Puffer();
+    case Cave::Entity::Type::Blob:            return Cave::Entity::Blob();
+    case Cave::Entity::Type::Portal:          return Cave::Entity::Portal();
+    case Cave::Entity::Type::Mole:            return Cave::Entity::Mole();
+    case Cave::Entity::Type::Fan:             return Cave::Entity::Fan();
+    case Cave::Entity::Type::God:             return Cave::Entity::God();
+    case Cave::Entity::Type::Charger: {
+        Cave::Entity::Charger charger;
+        charger.setAnimation(Cave::Entity::Animation{ { Cave::Entity::Charger::ICON_FRAME }, 0 });
+        return charger;
+    }
+    case Cave::Entity::Type::Well:            return Cave::Entity::Well();
+    case Cave::Entity::Type::Chum:            return Cave::Entity::Chum();
     default:                                  return Cave::Entity::Base();
     }
 }

@@ -1,6 +1,7 @@
 #include "Sound/Manager.h"
 #include <algorithm>
 #include <iostream>
+#include <unordered_set>
 
 Sound::Manager::Manager() {}
 
@@ -19,6 +20,10 @@ void Sound::Manager::loadAllSounds() {
     loadSound(Sound::Effect::MagicWall, "./assets/sounds/Effect/magic_wall.wav");
     loadSound(Sound::Effect::Open, "./assets/sounds/Effect/open.wav");
     loadSound(Sound::Effect::Plasma, "./assets/sounds/Effect/plasma.wav");
+    loadSound(Sound::Effect::Chum, "./assets/sounds/Effect/plasma.wav");
+    loadSound(Sound::Effect::Enrage, "./assets/sounds/Effect/enrage.wav");
+    loadSound(Sound::Effect::Inflate, "./assets/sounds/Effect/inflate.wav");
+    loadSound(Sound::Effect::Deflate, "./assets/sounds/Effect/deflate.wav");
     loadSound(Sound::Effect::Tube, "./assets/sounds/Effect/tube.wav");
     loadSound(Sound::Effect::Unlock, "./assets/sounds/Effect/unlock.wav");
     loadSound(Sound::Effect::Yahoo, "./assets/sounds/Effect/yahoo.wav");
@@ -51,13 +56,17 @@ void Sound::Manager::loadMusic(const Sound::Music& music, const std::string& fil
     m_music[music] = std::move(track);
 }
 
-void Sound::Manager::play(const Sound::Effect& effect) {
+void Sound::Manager::play(const Sound::Effect& effect, float pitch) {
+    if (m_playedThisFrame.count(effect)) return;
+    m_playedThisFrame.insert(effect);
+
     auto bufIt = m_buffers.find(effect);
     if (bufIt == m_buffers.end()) return;
 
     auto sound = std::make_unique<sf::Sound>(bufIt->second);
     sound->setLooping(false);
     sound->setVolume(m_volume/2);
+    sound->setPitch(pitch);
     sound->play();
 
     m_activeSounds.push_back(std::move(sound));
@@ -115,6 +124,7 @@ void Sound::Manager::setVolume(const float& volume) {
 }
 
 void Sound::Manager::update() {
+    m_playedThisFrame.clear();
     m_activeSounds.erase(
         std::remove_if(
             m_activeSounds.begin(),
