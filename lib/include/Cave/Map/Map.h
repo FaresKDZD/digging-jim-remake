@@ -1085,6 +1085,8 @@ namespace Cave {
         bool tryMoveGallopQueen(const int& index, const Cave::Entity::Direction& direction);
         void wanderGallopQueen(const int& index, const int& nest, bool nestOnly);
         bool tryLayGallopEgg(const int& index);
+        bool nestHasStableGallopSpot(const int& nest) const;
+        int gorgeGallopNestDiamonds(const int& nest);
 
         bool gallopCanTraverse(const int& cell) const;
         bool gallopDepositSupported(const int& cell) const;
@@ -1092,18 +1094,20 @@ namespace Cave {
         Cave::Entity::Direction findPathForGallop(const int& index, const int& goal) const;
         int findNearestGallopQueenNest(const int& index) const;
         Cave::Entity::Direction findPathToGallopNest(const int& index, const int& nest) const;
+        Cave::Entity::Direction findPathOutOfGallopNest(const int& index, const int& nest) const;
         int findGallopDepositSpot(const int& index, const int& nest) const;
         bool tryMoveGallop(const int& index, const Cave::Entity::Direction& direction, bool allowDiamond);
         bool tryDepositGallopDiamond(const int& index, const int& nest);
         void wanderClockwiseEmpty(const int& index);
-        bool tryWanderEmpty(const int& index, Cave::Entity::Direction direction, const int& nest, bool nestOnly);
-        bool wanderCellIsWall(const int& cell, const int& nest, bool nestOnly) const;
-        bool wanderHasTerrainWallIn3x3(const int& index, const int& nest, bool nestOnly) const;
+        void wanderOutsideGallopNest(const int& index, const int& nest);
+        bool tryWanderEmpty(const int& index, Cave::Entity::Direction direction, const int& nest, bool nestOnly, bool nestAvoid = false);
+        bool wanderCellIsWall(const int& cell, const int& nest, bool nestOnly, bool nestAvoid = false) const;
+        bool wanderHasTerrainWallIn3x3(const int& index, const int& nest, bool nestOnly, bool nestAvoid = false) const;
         bool wanderHasMonsterIn3x3(const int& index) const;
-        bool wanderIsTwoByTwoSpiral(const int& index, const int& nest, bool nestOnly) const;
-        void wanderLikeCaveGull(const int& index, const int& nest, bool nestOnly);
-        void wanderDropThenFollow(const int& index, const int& nest, bool nestOnly);
-        void wanderStraightThenFollow(const int& index, const int& nest, bool nestOnly);
+        bool wanderIsTwoByTwoSpiral(const int& index, const int& nest, bool nestOnly, bool nestAvoid = false) const;
+        void wanderLikeCaveGull(const int& index, const int& nest, bool nestOnly, bool nestAvoid = false);
+        void wanderDropThenFollow(const int& index, const int& nest, bool nestOnly, bool nestAvoid = false);
+        void wanderStraightThenFollow(const int& index, const int& nest, bool nestOnly, bool nestAvoid = false);
 
         /// @brief Nearest plasma reachable through empty space, or OUT_OF_BOUNDS_INDEX.
         int findNearestReachablePlasma(const int& index) const;

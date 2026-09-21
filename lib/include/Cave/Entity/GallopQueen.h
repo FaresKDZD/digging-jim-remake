@@ -25,6 +25,11 @@ namespace Cave::Entity {
         /// @brief spawnCredit >= MODE_LAY means waiting to lay; timer is spawnCredit - MODE_LAY.
         static constexpr int MODE_LAY = 4;
         static constexpr int LAY_TICKS = 24;
+        static constexpr int STALL_TICKS = 40;
+
+        static int packedState(int credit) { return credit & 0xFFFF; }
+        static int packedPending(int credit) { return credit >> 16; }
+        static int packCredit(int state, int pending) { return (pending << 16) | (state & 0xFFFF); }
 
         GallopQueen()
             : Base(Type::GallopQueen, Animation{ getFrames(), Utils::randomInteger(0, FRAME_COUNT - 1) }) {
