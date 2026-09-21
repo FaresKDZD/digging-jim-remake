@@ -75,13 +75,16 @@ bool Cave::Map::handleEntityLanding(const int& index, const int& ahead) {
 			if (inBounds(center) && getEntityType(center) == Cave::Entity::Type::Puffer)
 				blast = center;
 		}
+		if (Cave::Entity::isPegul(getEntityType(blast)))
+			m_pegulFuseHunt = true;
 		createExplosion(blast);
 		return true;
 	}
 
 	Cave::Entity::Type aheadType = getEntityType(ahead);
 
-	if ((type == Cave::Entity::Type::Boulder || type == Cave::Entity::Type::MagicBoulder)
+	if ((type == Cave::Entity::Type::Boulder || type == Cave::Entity::Type::MagicBoulder
+		|| type == Cave::Entity::Type::GallopEgg)
 		&& aheadType == Cave::Entity::Type::Ore) {
 		setEntity(ahead, Cave::Entity::OreTransformation());
 		m_game->soundManager.play(Sound::Effect::DiamondLand);
@@ -116,11 +119,13 @@ bool Cave::Map::handleEntityLanding(const int& index, const int& ahead) {
 			m_game->soundManager.play(Sound::Effect::Land);
 	}
 
+	notifyFusion5Stimulus(index);
 	return false;
 }
 
 bool Cave::Map::handleEntityLandingOnMagicWall(const int& index, const Cave::Entity::Type& type, const int& ahead, const Cave::Entity::Type& aheadType, const Cave::Entity::Direction& gravity) {
-	if (type != Cave::Entity::Type::Boulder && type != Cave::Entity::Type::MagicBoulder && type != Cave::Entity::Type::Diamond) {
+	if (type != Cave::Entity::Type::Boulder && type != Cave::Entity::Type::MagicBoulder
+		&& type != Cave::Entity::Type::GallopEgg && type != Cave::Entity::Type::Diamond) {
 		return false;
 	}
 
@@ -184,6 +189,19 @@ void Cave::Map::updateTNT(const int& index) {
 	if (m_detonatorTriggered) {
 		createExplosion(index);
 		return;
+	}
+	updateFallableEntity(index);
+}
+
+void Cave::Map::updateGallopEgg(const int& index) {
+	if (getEntityType(index) != Cave::Entity::Type::GallopEgg) return;
+	if (!getEntityTransitioning(index)) {
+		int& timer = caveEntities[index].spawnCredit;
+		timer++;
+		if (timer >= Cave::Entity::GallopEgg::HATCH_TICKS) {
+			setEntity(index, Cave::Entity::GallopEggPop());
+			return;
+		}
 	}
 	updateFallableEntity(index);
 }

@@ -23,4 +23,7 @@ add_custom_command(
             $<TARGET_FILE_DIR:DiggingJim>/assets
     COMMAND ${CMAKE_COMMAND} -E make_directory
             $<TARGET_FILE_DIR:DiggingJim>/caves
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:DiggingJim>
+            "D:/OneDrive/Desktop/games/Digjim/DiggingJim.exe"
 )

@@ -22,6 +22,7 @@ void Sound::Manager::loadAllSounds() {
     loadSound(Sound::Effect::Plasma, "./assets/sounds/Effect/plasma.wav");
     loadSound(Sound::Effect::Chum, "./assets/sounds/Effect/plasma.wav");
     loadSound(Sound::Effect::Enrage, "./assets/sounds/Effect/enrage.wav");
+    loadSound(Sound::Effect::Haze, "./assets/sounds/Effect/haze.wav");
     loadSound(Sound::Effect::Inflate, "./assets/sounds/Effect/inflate.wav");
     loadSound(Sound::Effect::Deflate, "./assets/sounds/Effect/deflate.wav");
     loadSound(Sound::Effect::Tube, "./assets/sounds/Effect/tube.wav");

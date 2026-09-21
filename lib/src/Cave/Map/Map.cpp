@@ -47,6 +47,7 @@ void Cave::Map::generateMap(const Cave::Properties* properties, const std::vecto
 	// Create caveEntities grid and loading tile grid
 	caveEntities.resize(0);
 	m_loaded.resize(0);
+	m_coveredGate.assign(static_cast<size_t>(width * height), Cave::Entity::Base());
 	for (int index = 0; index < width * height; ++index) {
 		m_loaded.push_back(false);
 		caveEntities.push_back(Cave::Data::getTileEntity(tileData[index]));
@@ -56,6 +57,8 @@ void Cave::Map::generateMap(const Cave::Properties* properties, const std::vecto
 	for (int index = 0; index < width * height; ++index) {
 		if (getEntityType(index) == Cave::Entity::Type::Charger)
 			inflateCharger(index);
+		if (getEntityType(index) == Cave::Entity::Type::GallopQueen)
+			caveEntities[index].targetIndex = index;
 	}
 
 	for (const auto& well : wells) {
@@ -83,6 +86,7 @@ void Cave::Map::generateMap(const Cave::Properties* properties, const std::vecto
 	m_hollowCarried = 0;
 	m_timeBombsCarried = 0;
 	m_jimInvincibleFrames = 0;
+	m_jimGateComboHeld = false;
 
 	// Reset magic wall variables
 	m_magicWallStarted = false;
@@ -117,6 +121,7 @@ void Cave::Map::generateMap(const Cave::Properties* properties, const std::vecto
 	// Set cave state to loading
 	m_state = Cave::State::Load;
 	m_editorPreview = false;
+	m_pegulFuseHunt = false;
 
 	// Game logic
 	m_game->sendSignal(GameSignal::CaveLoad);
@@ -178,6 +183,10 @@ void Cave::Map::placeEntity(const int& index, Cave::Entity::Base& entity) {
 		evictOverlappingChargers(index);
 		inflateCharger(index);
 	}
+	if (getEntityType(index) == Cave::Entity::Type::GallopQueen) {
+		caveEntities[index].targetIndex = index;
+		caveEntities[index].spawnCredit = Cave::Entity::GallopQueen::MODE_NEST;
+	}
 
 	// Update tube animation
 	updateTubeTexture(index);
@@ -232,8 +241,11 @@ void Cave::Map::setEntity(const int& index, Cave::Entity::Base&& entity) {
 	if (!inBounds(index)) {
 		return;
 	}
+	const bool dug = Cave::Entity::isDirtLike(getEntityType(index))
+		&& !Cave::Entity::isDirtLike(entity.getType());
 	caveEntities[index].transferTransition(entity);
 	caveEntities[index] = entity;
+	if (dug) notifyFusion5Stimulus(index);
 }
 
 bool Cave::Map::inBounds(const int& index) const {

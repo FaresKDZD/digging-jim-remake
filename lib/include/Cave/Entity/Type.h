@@ -43,6 +43,21 @@ namespace Cave::Entity {
         ChargerBody,
         Well,
         Chum,
+        GallopQueen,
+        GallopEgg,
+        GallopEggPop,
+        Gallop,
+        PegulNormo,
+        PegulFatto,
+        PegulTallo,
+        PegulBieye,
+        PegulTrieye,
+        Fusion1,
+        Fusion2,
+        Fusion3,
+        Fusion4,
+        Fusion5,
+        Gate,
         Boulder,
         MagicBoulder,
         Wall,
@@ -88,5 +103,35 @@ namespace Cave::Entity {
 
     inline bool isDirtLike(Type type) {
         return type == Type::Dirt || type == Type::Chum;
+    }
+
+    inline bool isPegul(Type type) {
+        switch (type) {
+        case Type::PegulNormo:
+        case Type::PegulFatto:
+        case Type::PegulTallo:
+        case Type::PegulBieye:
+        case Type::PegulTrieye:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    inline bool isFusion(Type type) {
+        switch (type) {
+        case Type::Fusion1:
+        case Type::Fusion2:
+        case Type::Fusion3:
+        case Type::Fusion4:
+        case Type::Fusion5:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    inline bool isGate(Type type) {
+        return type == Type::Gate;
     }
 }

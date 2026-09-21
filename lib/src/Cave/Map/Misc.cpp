@@ -10,20 +10,46 @@ void Cave::Map::handleBoulderRoll(const int& index, const Cave::Entity::Directio
 }
 
 void Cave::Map::createExplosion(const int& index) {
+	if (getEntityType(index) == Cave::Entity::Type::Fusion2) {
+		createHorizontalExplosion(index);
+		return;
+	}
 	bool caveGullExplosion = getEntityType(index) == Cave::Entity::Type::CaveGull
-		|| getEntityType(index) == Cave::Entity::Type::SaturatedSludg;
+		|| getEntityType(index) == Cave::Entity::Type::SaturatedSludg
+		|| getEntityType(index) == Cave::Entity::Type::GallopQueen
+		|| getEntityType(index) == Cave::Entity::Type::Gallop;
 	createExplosion(index, caveGullExplosion);
 }
 
 void Cave::Map::createExplosion(const int& index, bool caveGullExplosion) {
-	// Track any bombs hit by an explosion
-	std::vector<size_t> bombIndices;
-
-	// Create an explosion for each offset
+	std::vector<int> cells;
+	cells.reserve(m_explosionOffsets.size());
 	for (int offset : m_explosionOffsets) {
-		int explosionIndex = index + offset;
+		cells.push_back(index + offset);
+	}
+	detonateCells(index, cells, caveGullExplosion);
+}
 
-		// Cannot create an explosion where the entity is indestructible
+void Cave::Map::createHorizontalExplosion(const int& index) {
+	if (!inBounds(index)) return;
+	std::vector<int> cells;
+	const int x = index % width;
+	const int y = index / width;
+	for (int dx = -2; dx <= 2; ++dx) {
+		const int nx = x + dx;
+		if (nx < 0 || nx >= width) continue;
+		cells.push_back(y * width + nx);
+	}
+	detonateCells(index, cells, false);
+}
+
+void Cave::Map::detonateCells(const int& origin, const std::vector<int>& cells, bool caveGullExplosion) {
+	std::vector<int> bombIndices;
+	std::vector<int> fusion2Indices;
+
+	for (int explosionIndex : cells) {
+		if (!inBounds(explosionIndex)) continue;
+
 		if (hasTrait(Cave::Entity::Trait::Indestructible, explosionIndex)) {
 			continue;
 		}
@@ -32,37 +58,47 @@ void Cave::Map::createExplosion(const int& index, bool caveGullExplosion) {
 			continue;
 		}
 
-		// Handle the transitions for entities affected by this explosion creation
+		if (isFusion3Armored(explosionIndex)) {
+			int previousIndex = getIndex(explosionIndex, caveEntities[explosionIndex].getPreviousDirection());
+			if (previousIndex != OUT_OF_BOUNDS_INDEX) {
+				caveEntities[previousIndex].terminatePreviousTransition();
+			}
+			caveEntities[explosionIndex].terminateCurrentTransition();
+			damageFusion3(explosionIndex);
+			continue;
+		}
+
 		int previousIndex = getIndex(explosionIndex, caveEntities[explosionIndex].getPreviousDirection());
 		if (previousIndex != OUT_OF_BOUNDS_INDEX) {
-			//caveEntities[previousIndex].applyTransitionAmination(Space().getAnimation());
 			caveEntities[previousIndex].terminatePreviousTransition();
 		}
 		caveEntities[explosionIndex].terminateCurrentTransition();
 
-		// Add index of explosion if conditions are met
 		Cave::Entity::Type type = getEntityType(explosionIndex);
-		if (!caveGullExplosion && offset != 0 && type == Cave::Entity::Type::Bomb) {
+		if (!caveGullExplosion && explosionIndex != origin && type == Cave::Entity::Type::Bomb) {
 			bombIndices.push_back(explosionIndex);
 		}
+		if (explosionIndex != origin && type == Cave::Entity::Type::Fusion2) {
+			fusion2Indices.push_back(explosionIndex);
+		}
 
-		// Actually create explosion entity
 		caveGullExplosion ? setEntity(explosionIndex, Cave::Entity::CaveGullExplosion()) : setEntity(explosionIndex, Cave::Entity::Explosion());
 
-		// Jim has been killed
 		if (type == Cave::Entity::Type::Jim) {
 			m_game->sendSignal(GameSignal::CaveFail);
 			m_state = Cave::State::Fail;
-			// Do not reset camera position if failed
 			m_resetCameraPosition = false;
 		}
 	}
 
 	caveGullExplosion ? m_game->soundManager.play(Sound::Effect::CaveGullExplosion) : m_game->soundManager.play(Sound::Effect::Explosion);
+	notifyFusion5Stimulus(origin);
 
-	// Iterate through creating explosions for each bomb triggered
-	for (auto& index : bombIndices) {
-		createExplosion(index, false);
+	for (int bombIndex : bombIndices) {
+		createExplosion(bombIndex, false);
+	}
+	for (int fusion2Index : fusion2Indices) {
+		createHorizontalExplosion(fusion2Index);
 	}
 }
 

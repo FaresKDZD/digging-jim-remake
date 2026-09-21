@@ -1,10 +1,13 @@
 #include "Cave/Map/Map.h"
 #include "Utils/Counter.h"
 #include "Utils/Random.h"
+#include <limits>
 #include <queue>
 #include <unordered_set>
 #include <utility>
 #include <vector>
+
+static bool isWanderMonster(Cave::Entity::Type type);
 
 void Cave::Map::updateProtoza(const int& index) {
 	if (handleEnemyBasicUpdate(index)) return;
@@ -15,6 +18,951 @@ void Cave::Map::updateProtoza(const int& index) {
 	}
 	if (!getEntityMoving(index) && tryMoveEnemy(index, Cave::Entity::Trait::Empty, arc[3])) return;
 	setEntityMoving(index, false);
+}
+
+void Cave::Map::updatePegul(const int& index) {
+	if (m_editorPreview) {
+		updateEntityAnimation(index);
+		return;
+	}
+	if (isAdjacentTo(index, Cave::Entity::Type::Amoeba)) {
+		createExplosion(index);
+		return;
+	}
+	if (getEntityTransitioning(index)) return;
+	if (m_pegulFuseHunt && tryPegulFuseHunt(index)) return;
+
+	updateEntityAnimation(index);
+	auto arc = anticlockwiseArc(getEntityDirection(index));
+	for (int i = 0; i < 3; ++i) {
+		if (tryMoveEnemy(index, Cave::Entity::Trait::Empty, arc[i])) return;
+	}
+	if (!getEntityMoving(index) && tryMoveEnemy(index, Cave::Entity::Trait::Empty, arc[3])) return;
+	setEntityMoving(index, false);
+}
+
+void Cave::Map::updateFusion(const int& index) {
+	const int credit = caveEntities[index].spawnCredit;
+
+	if (credit == Cave::Entity::Fusion::MODE_FORMING) {
+		if (handleEnemyDeath(index)) return;
+		if (getEntityTransitioning(index)) return;
+		updateEntityAnimation(index);
+		if (caveEntities[index].animationLoopCompleted()) {
+			caveEntities[index].spawnCredit = 0;
+			setEntityAnimation(index, Cave::Entity::Fusion::idleAnimation(getEntityType(index)));
+		}
+		else {
+			setEntityMoving(index, false);
+			return;
+		}
+	}
+
+	if (Cave::Entity::Fusion::isTeleportOut(caveEntities[index].spawnCredit)) {
+		if (handleEnemyDeath(index)) return;
+		if (getEntityTransitioning(index)) return;
+		const int remaining = caveEntities[index].spawnCredit - Cave::Entity::Fusion::TELEPORT_OUT_BASE;
+		const int elapsed = Cave::Entity::Fusion::TELEPORT_TICKS - remaining;
+		caveEntities[index].setAnimationFrame(elapsed);
+		caveEntities[index].spawnCredit--;
+		setEntityMoving(index, false);
+		if (caveEntities[index].spawnCredit == Cave::Entity::Fusion::TELEPORT_OUT_BASE) {
+			const int dest = caveEntities[index].targetIndex;
+			if (!warpFusion1ThroughWall(index, dest)) {
+				caveEntities[index].spawnCredit = 0;
+				caveEntities[index].targetIndex = -1;
+				setEntityAnimation(index, Cave::Entity::Fusion::idleAnimation(getEntityType(index)));
+			}
+		}
+		return;
+	}
+
+	if (Cave::Entity::Fusion::isTeleportIn(caveEntities[index].spawnCredit)) {
+		if (handleEnemyDeath(index)) return;
+		if (getEntityTransitioning(index)) return;
+		const int remaining = caveEntities[index].spawnCredit - Cave::Entity::Fusion::TELEPORT_IN_BASE;
+		const int elapsed = Cave::Entity::Fusion::TELEPORT_TICKS - remaining;
+		caveEntities[index].setAnimationFrame(elapsed);
+		caveEntities[index].spawnCredit--;
+		setEntityMoving(index, false);
+		if (caveEntities[index].spawnCredit == Cave::Entity::Fusion::TELEPORT_IN_BASE) {
+			caveEntities[index].spawnCredit = 0;
+			caveEntities[index].targetIndex = -1;
+			setEntityAnimation(index, Cave::Entity::Fusion::idleAnimation(getEntityType(index)));
+		}
+		return;
+	}
+
+	if (getEntityType(index) == Cave::Entity::Type::Fusion1) {
+		updateFusion1Hunt(index);
+		return;
+	}
+	if (getEntityType(index) == Cave::Entity::Type::Fusion4) {
+		updateFusion4Hunt(index);
+		return;
+	}
+	if (getEntityType(index) == Cave::Entity::Type::Fusion5) {
+		updateFusion5Hunt(index);
+		return;
+	}
+	updateTetrapus(index);
+}
+
+void Cave::Map::updateFusion1Hunt(const int& index) {
+	if (handleEnemyBasicUpdate(index)) return;
+	if (m_jimIndex == OUT_OF_BOUNDS_INDEX) return;
+
+	if (tryFusion1HuntMove(index)) return;
+
+	int ex = index % width, ey = index / width;
+	int jx = m_jimIndex % width, jy = m_jimIndex / width;
+
+	if (ex > jx && tryMoveEnemy(index, Cave::Entity::Trait::Empty, Cave::Entity::Direction::LEFT)) return;
+	if (ex < jx && tryMoveEnemy(index, Cave::Entity::Trait::Empty, Cave::Entity::Direction::RIGHT)) return;
+	if (ey > jy && tryMoveEnemy(index, Cave::Entity::Trait::Empty, Cave::Entity::Direction::UP)) return;
+	if (ey < jy && tryMoveEnemy(index, Cave::Entity::Trait::Empty, Cave::Entity::Direction::DOWN)) return;
+}
+
+bool Cave::Map::tryFusion1HuntMove(const int& index) {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (index < 0 || index >= cellCount || m_jimIndex < 0 || m_jimIndex >= cellCount) {
+		return false;
+	}
+	if (index == m_jimIndex) return false;
+
+	auto canWalk = [this](int cell) {
+		if (cell == m_jimIndex) return true;
+		if (hasTrait(Cave::Entity::Trait::Empty, cell) || isPassableGate(cell)) return true;
+		return false;
+	};
+
+	const int walkCost = 1;
+	const int hopCost = cellCount + 1;
+	const int inf = std::numeric_limits<int>::max() / 4;
+
+	std::vector<int> dist(static_cast<size_t>(cellCount), inf);
+	std::vector<int> parent(static_cast<size_t>(cellCount), OUT_OF_BOUNDS_INDEX);
+	std::vector<Cave::Entity::Direction> via(static_cast<size_t>(cellCount), Cave::Entity::Direction::NO_DIRECTION);
+	std::vector<char> hop(static_cast<size_t>(cellCount), 0);
+	std::queue<int> frontier;
+
+	dist[static_cast<size_t>(index)] = 0;
+	frontier.push(index);
+
+	auto tryHopTo = [&](int from, int dest, Cave::Entity::Direction dir) {
+		if (dest == OUT_OF_BOUNDS_INDEX) return;
+		if (getEntityTransitioning(dest) || getEntityTransitioning(from)) return;
+		if (!isMonsterWalkable(dest)) return;
+		const int nd = dist[static_cast<size_t>(from)] + hopCost;
+		if (nd >= dist[static_cast<size_t>(dest)]) return;
+		dist[static_cast<size_t>(dest)] = nd;
+		parent[static_cast<size_t>(dest)] = from;
+		via[static_cast<size_t>(dest)] = dir;
+		hop[static_cast<size_t>(dest)] = 1;
+		frontier.push(dest);
+	};
+
+	while (!frontier.empty()) {
+		const int current = frontier.front();
+		frontier.pop();
+
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, dir);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+
+			if (canWalk(next)) {
+				const int nd = dist[static_cast<size_t>(current)] + walkCost;
+				if (nd < dist[static_cast<size_t>(next)]) {
+					dist[static_cast<size_t>(next)] = nd;
+					parent[static_cast<size_t>(next)] = current;
+					via[static_cast<size_t>(next)] = dir;
+					hop[static_cast<size_t>(next)] = 0;
+					frontier.push(next);
+				}
+			}
+
+			if (!isFusion1TeleportBlock(next)) continue;
+			tryHopTo(current, getIndex(next, dir), dir);
+			if (dir == Cave::Entity::Direction::LEFT || dir == Cave::Entity::Direction::RIGHT) {
+				tryHopTo(current, getIndex(next, Cave::Entity::Direction::UP), Cave::Entity::Direction::NO_DIRECTION);
+				tryHopTo(current, getIndex(next, Cave::Entity::Direction::DOWN), Cave::Entity::Direction::NO_DIRECTION);
+			}
+			else {
+				tryHopTo(current, getIndex(next, Cave::Entity::Direction::LEFT), Cave::Entity::Direction::NO_DIRECTION);
+				tryHopTo(current, getIndex(next, Cave::Entity::Direction::RIGHT), Cave::Entity::Direction::NO_DIRECTION);
+			}
+		}
+	}
+
+	if (dist[static_cast<size_t>(m_jimIndex)] >= inf) return false;
+
+	int step = m_jimIndex;
+	while (parent[static_cast<size_t>(step)] != index) {
+		step = parent[static_cast<size_t>(step)];
+		if (step == OUT_OF_BOUNDS_INDEX) return false;
+	}
+
+	if (hop[static_cast<size_t>(step)]) {
+		caveEntities[index].targetIndex = step;
+		caveEntities[index].spawnCredit = Cave::Entity::Fusion::TELEPORT_OUT_BASE + Cave::Entity::Fusion::TELEPORT_TICKS - 1;
+		setEntityAnimation(index, Cave::Entity::Fusion::teleportAnimation(false));
+		setEntityMoving(index, false);
+		m_game->soundManager.play(Sound::Effect::Haze);
+		return true;
+	}
+
+	if (isMonsterWalkable(step) || step == m_jimIndex) {
+		tryMoveEnemy(index, Cave::Entity::Trait::Empty, via[static_cast<size_t>(step)]);
+	}
+	return true;
+}
+
+bool Cave::Map::isFusion1TeleportBlock(const int& index) const {
+	if (!inBounds(index)) return false;
+	if (isMonsterWalkable(index)) return false;
+	if (getEntityType(index) == Cave::Entity::Type::Jim) return false;
+	if (hasTrait(Cave::Entity::Trait::Transient, index)) return false;
+	return true;
+}
+
+bool Cave::Map::warpFusion1ThroughWall(const int& index, const int& dest) {
+	if (!inBounds(index) || !inBounds(dest) || dest == index) return false;
+	if (getEntityTransitioning(index) || getEntityTransitioning(dest)) return false;
+	if (!isMonsterWalkable(dest)) return false;
+
+	coverPassableGate(dest);
+	Cave::Entity::Base mover = std::move(caveEntities[index]);
+	if (!restoreCoveredGate(index)) {
+		caveEntities[index] = Cave::Entity::Space();
+	}
+	caveEntities[dest] = std::move(mover);
+	caveEntities[dest].targetIndex = -1;
+	caveEntities[dest].spawnCredit = Cave::Entity::Fusion::TELEPORT_IN_BASE + Cave::Entity::Fusion::TELEPORT_TICKS - 1;
+	caveEntities[dest].setAnimation(Cave::Entity::Fusion::teleportAnimation(true));
+	setEntityMoving(dest, false);
+	m_game->soundManager.play(Sound::Effect::Haze);
+	return true;
+}
+
+bool Cave::Map::isFusion3Armored(const int& index) const {
+	return getEntityType(index) == Cave::Entity::Type::Fusion3
+		&& !Cave::Entity::Fusion::isDamaged(caveEntities[index].spawnCredit);
+}
+
+void Cave::Map::damageFusion3(const int& index) {
+	if (!inBounds(index) || getEntityType(index) != Cave::Entity::Type::Fusion3) return;
+	caveEntities[index].spawnCredit = Cave::Entity::Fusion::MODE_DAMAGED;
+	caveEntities[index].targetIndex = -1;
+	setEntityAnimation(index, Cave::Entity::Fusion::damaged3Animation());
+	setEntityMoving(index, false);
+}
+
+void Cave::Map::notifyFusion5Stimulus(const int& cell) {
+	if (m_editorPreview) return;
+	if (m_state != Cave::State::Play && m_state != Cave::State::Pass) return;
+	if (!inBounds(cell)) return;
+	const int cellCount = static_cast<int>(caveEntities.size());
+	for (int i = 0; i < cellCount; ++i) {
+		if (getEntityType(i) != Cave::Entity::Type::Fusion5) continue;
+		int& credit = caveEntities[i].spawnCredit;
+		if (credit == Cave::Entity::Fusion::MODE_FORMING) continue;
+
+		const bool alreadyAggro = Cave::Entity::Fusion::isAggro(credit, caveEntities[i].targetIndex);
+		caveEntities[i].targetIndex = cell;
+		if (alreadyAggro) {
+			if (Cave::Entity::Fusion::isAggroWait(credit))
+				credit = 0;
+			continue;
+		}
+
+		int previousIndex = getIndex(i, caveEntities[i].getPreviousDirection());
+		if (previousIndex != OUT_OF_BOUNDS_INDEX) {
+			caveEntities[previousIndex].terminatePreviousTransition();
+		}
+		caveEntities[i].terminateCurrentTransition();
+		credit = Cave::Entity::Fusion::AGGRO_PAUSE_BASE + Cave::Entity::Fusion::AGGRO_TICKS;
+		setEntityAnimation(i, Cave::Entity::Fusion::becomeAggro5Animation(false));
+		setEntityMoving(i, false);
+	}
+}
+
+void Cave::Map::updateFusion5Hunt(const int& index) {
+	if (m_editorPreview) {
+		updateEntityAnimation(index);
+		return;
+	}
+
+	int& credit = caveEntities[index].spawnCredit;
+	int& target = caveEntities[index].targetIndex;
+
+	if (Cave::Entity::Fusion::isAggroPause(credit) || Cave::Entity::Fusion::isIdleTrans(credit)) {
+		if (handleEnemyDeath(index)) return;
+		if (getEntityTransitioning(index)) return;
+		const bool toIdle = Cave::Entity::Fusion::isIdleTrans(credit);
+		const int base = toIdle ? Cave::Entity::Fusion::IDLE_TRANS_BASE : Cave::Entity::Fusion::AGGRO_PAUSE_BASE;
+		const int remaining = credit - base;
+		const int elapsed = Cave::Entity::Fusion::AGGRO_TICKS - remaining;
+		caveEntities[index].setAnimationFrame(elapsed);
+		credit--;
+		if (credit == base) {
+			if (toIdle) {
+				credit = 0;
+				target = OUT_OF_BOUNDS_INDEX;
+				setEntityAnimation(index, Cave::Entity::Fusion::idleAnimation(Cave::Entity::Type::Fusion5));
+			}
+			else {
+				credit = 0;
+				setEntityAnimation(index, Cave::Entity::Fusion::aggro5Animation());
+			}
+		}
+		setEntityMoving(index, false);
+		return;
+	}
+
+	if (handleEnemyBasicUpdate(index)) return;
+
+	if (Cave::Entity::Fusion::isAggroWait(credit)) {
+		credit--;
+		if (!Cave::Entity::Fusion::isAggroWait(credit)) {
+			credit = Cave::Entity::Fusion::IDLE_TRANS_BASE + Cave::Entity::Fusion::AGGRO_TICKS;
+			setEntityAnimation(index, Cave::Entity::Fusion::becomeAggro5Animation(true));
+		}
+		setEntityMoving(index, false);
+		return;
+	}
+
+	if (inBounds(target)) {
+		const bool onTarget = (index == target);
+		const bool occupant = (target == m_jimIndex) || isWanderMonster(getEntityType(target));
+		const bool blocked = occupant || (!hasTrait(Cave::Entity::Trait::Empty, target) && !isPassableGate(target));
+		if (onTarget || (blocked && isAdjacentCell(index, target))) {
+			credit = Cave::Entity::Fusion::AGGRO_WAIT_BASE + Cave::Entity::Fusion::AGGRO_WAIT_TICKS;
+			setEntityMoving(index, false);
+			return;
+		}
+
+		const Cave::Entity::Direction dir = findPathToFusion5Goal(index, target);
+		if (dir != Cave::Entity::Direction::NO_DIRECTION) {
+			const int step = getIndex(index, dir);
+			if (inBounds(step) && isWanderMonster(getEntityType(step)) && step != m_jimIndex && step != target) {
+				credit = Cave::Entity::Fusion::AGGRO_WAIT_BASE + Cave::Entity::Fusion::AGGRO_WAIT_TICKS;
+				setEntityMoving(index, false);
+				return;
+			}
+			if (tryMoveEnemy(index, Cave::Entity::Trait::Empty, dir)) return;
+			for (Cave::Entity::Direction around : Cave::Entity::ALL_DIRECTIONS) {
+				const int next = getIndex(index, around);
+				if (next == OUT_OF_BOUNDS_INDEX) continue;
+				if (!(hasTrait(Cave::Entity::Trait::Empty, next) || isPassableGate(next))) continue;
+				if (next != target && findPathToFusion5Goal(next, target) == Cave::Entity::Direction::NO_DIRECTION)
+					continue;
+				if (tryMoveEnemy(index, Cave::Entity::Trait::Empty, around)) return;
+			}
+		}
+
+		const int tx = target % width, ty = target / width;
+		const int ex = index % width, ey = index / width;
+		if (ex > tx && tryMoveEnemy(index, Cave::Entity::Trait::Empty, Cave::Entity::Direction::LEFT)) return;
+		if (ex < tx && tryMoveEnemy(index, Cave::Entity::Trait::Empty, Cave::Entity::Direction::RIGHT)) return;
+		if (ey > ty && tryMoveEnemy(index, Cave::Entity::Trait::Empty, Cave::Entity::Direction::UP)) return;
+		if (ey < ty && tryMoveEnemy(index, Cave::Entity::Trait::Empty, Cave::Entity::Direction::DOWN)) return;
+
+		credit = Cave::Entity::Fusion::AGGRO_WAIT_BASE + Cave::Entity::Fusion::AGGRO_WAIT_TICKS;
+		setEntityMoving(index, false);
+		return;
+	}
+
+	auto arc = anticlockwiseArc(getEntityDirection(index));
+	for (int i = 0; i < 3; ++i) {
+		if (tryMoveEnemy(index, Cave::Entity::Trait::Empty, arc[i], Cave::Entity::Fusion::IDLE_SLIDE_INC)) return;
+	}
+	if (!getEntityMoving(index) && tryMoveEnemy(index, Cave::Entity::Trait::Empty, arc[3], Cave::Entity::Fusion::IDLE_SLIDE_INC)) return;
+	setEntityMoving(index, false);
+}
+
+bool Cave::Map::isFusion4ExitDoor(const int& index) const {
+	if (!inBounds(index)) return false;
+	switch (getEntityType(index)) {
+	case Cave::Entity::Type::ExitDoor:
+	case Cave::Entity::Type::ExitDoorOpen:
+	case Cave::Entity::Type::ExitDoorOpening:
+	case Cave::Entity::Type::ExitDoorComplete:
+	case Cave::Entity::Type::ExitDoorFinished:
+		return true;
+	default:
+		return false;
+	}
+}
+
+bool Cave::Map::isFusion4Objective(const int& index) const {
+	return isDiamond(index) || isFusion4ExitDoor(index);
+}
+
+bool Cave::Map::isAdjacentCell(const int& a, const int& b) const {
+	if (!inBounds(a) || !inBounds(b)) return false;
+	for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+		if (getIndex(a, dir) == b) return true;
+	}
+	return false;
+}
+
+bool Cave::Map::fusion4BombWouldRest(const int& spot) const {
+	if (!inBounds(spot)) return false;
+	const int below = getIndex(spot, Cave::Entity::Direction::DOWN);
+	if (below == OUT_OF_BOUNDS_INDEX) return false;
+	return !hasTrait(Cave::Entity::Trait::Empty, below);
+}
+
+void Cave::Map::collectFusion4BombSpots(const int& hunter, const int& objective, std::vector<int>& spots) const {
+	spots.clear();
+	auto usable = [&](int cell) {
+		if (!inBounds(cell) || cell == m_jimIndex) return false;
+		if (getEntityTransitioning(cell) && cell != hunter) return false;
+		return hasTrait(Cave::Entity::Trait::Empty, cell) || cell == hunter;
+	};
+	auto addUnique = [&](int cell) {
+		if (!usable(cell)) return;
+		for (int existing : spots) {
+			if (existing == cell) return;
+		}
+		spots.push_back(cell);
+	};
+
+	if (isFusion4ExitDoor(objective)) {
+		const int above = getIndex(objective, Cave::Entity::Direction::UP);
+		const int left = getIndex(objective, Cave::Entity::Direction::LEFT);
+		const int right = getIndex(objective, Cave::Entity::Direction::RIGHT);
+		const int below = getIndex(objective, Cave::Entity::Direction::DOWN);
+
+		bool allAroundEmpty = true;
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int neighbour = getIndex(objective, dir);
+			if (neighbour == OUT_OF_BOUNDS_INDEX || !usable(neighbour)) {
+				allAroundEmpty = false;
+				break;
+			}
+		}
+
+		if (usable(above)) addUnique(above);
+		if (!allAroundEmpty) {
+			if (fusion4BombWouldRest(left)) addUnique(left);
+			if (fusion4BombWouldRest(right)) addUnique(right);
+			if (fusion4BombWouldRest(below)) addUnique(below);
+		}
+		return;
+	}
+
+	for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+		addUnique(getIndex(objective, dir));
+	}
+}
+
+bool Cave::Map::isFusion4BombableObjective(const int& hunter, const int& objective) const {
+	std::vector<int> spots;
+	collectFusion4BombSpots(hunter, objective, spots);
+	return !spots.empty();
+}
+
+int Cave::Map::findNearestFusion4BombSpot(const int& index, const int& objective) const {
+	std::vector<int> spots;
+	collectFusion4BombSpots(index, objective, spots);
+	if (spots.empty()) return OUT_OF_BOUNDS_INDEX;
+
+	const int cellCount = static_cast<int>(caveEntities.size());
+	std::vector<char> isSpot(static_cast<size_t>(cellCount), 0);
+	for (int spot : spots) {
+		if (spot >= 0 && spot < cellCount)
+			isSpot[static_cast<size_t>(spot)] = 1;
+	}
+	if (index >= 0 && index < cellCount && isSpot[static_cast<size_t>(index)])
+		return index;
+
+	std::vector<char> visited(static_cast<size_t>(cellCount), 0);
+	std::queue<int> frontier;
+	visited[static_cast<size_t>(index)] = 1;
+	frontier.push(index);
+	while (!frontier.empty()) {
+		const int current = frontier.front();
+		frontier.pop();
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, dir);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (visited[static_cast<size_t>(next)]) continue;
+			if (isSpot[static_cast<size_t>(next)]) return next;
+			if (!(hasTrait(Cave::Entity::Trait::Empty, next) || isPassableGate(next) || isPathfindMonster(next)))
+				continue;
+			visited[static_cast<size_t>(next)] = 1;
+			frontier.push(next);
+		}
+	}
+	return OUT_OF_BOUNDS_INDEX;
+}
+
+void Cave::Map::updateFusion4Hunt(const int& index) {
+	if (handleEnemyBasicUpdate(index)) return;
+
+	int& credit = caveEntities[index].spawnCredit;
+	if (credit >= Cave::Entity::Fusion::BOMB_COOLDOWN_BASE) {
+		credit--;
+		if (credit <= Cave::Entity::Fusion::BOMB_COOLDOWN_BASE)
+			credit = 0;
+	}
+
+	const int bomb = caveEntities[index].targetIndex;
+	if (inBounds(bomb) && getEntityType(bomb) == Cave::Entity::Type::TimeBomb) {
+		if (tryFusion4Flee(index, bomb)) return;
+		auto arc = clockwiseArc(getEntityDirection(index));
+		for (int i = 0; i < 3; ++i) {
+			if (tryMoveEnemy(index, Cave::Entity::Trait::Empty, arc[i])) return;
+		}
+		if (!getEntityMoving(index) && tryMoveEnemy(index, Cave::Entity::Trait::Empty, arc[3])) return;
+		setEntityMoving(index, false);
+		return;
+	}
+	caveEntities[index].targetIndex = -1;
+
+	const int objective = findFusion4Objective(index);
+	if (objective != OUT_OF_BOUNDS_INDEX) {
+		std::vector<int> spots;
+		collectFusion4BombSpots(index, objective, spots);
+		if (credit == 0) {
+			for (int spot : spots) {
+				if (tryFusion4PlaceBombAt(index, spot)) return;
+			}
+			for (int spot : spots) {
+				if (spot != index) continue;
+				for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+					const int step = getIndex(index, dir);
+					if (step == objective) continue;
+					if (tryMoveEnemy(index, Cave::Entity::Trait::Empty, dir)) return;
+				}
+				break;
+			}
+		}
+
+		const int goal = findNearestFusion4BombSpot(index, objective);
+		if (goal != OUT_OF_BOUNDS_INDEX && goal != index) {
+			const Cave::Entity::Direction dir = findPathToFusion4Goal(index, goal);
+			if (dir != Cave::Entity::Direction::NO_DIRECTION) {
+				const int next = getIndex(index, dir);
+				if (next == goal) {
+					if (credit == 0 && tryFusion4PlaceBombAt(index, goal)) return;
+					setEntityMoving(index, false);
+					return;
+				}
+				if (tryMoveEnemy(index, Cave::Entity::Trait::Empty, dir)) return;
+			}
+		}
+		setEntityMoving(index, false);
+		return;
+	}
+
+	const Cave::Entity::Direction toJim = findPathToJim(index);
+	if (toJim != Cave::Entity::Direction::NO_DIRECTION) {
+		if (credit == 0) {
+			const int step = getIndex(index, toJim);
+			if (tryFusion4PlaceBomb(index, (step == m_jimIndex) ? OUT_OF_BOUNDS_INDEX : step))
+				return;
+		}
+		if (getIndex(index, toJim) != m_jimIndex)
+			tryMoveEnemy(index, Cave::Entity::Trait::Empty, toJim);
+		return;
+	}
+
+	auto arc = clockwiseArc(getEntityDirection(index));
+	for (int i = 0; i < 3; ++i) {
+		if (tryMoveEnemy(index, Cave::Entity::Trait::Empty, arc[i])) return;
+	}
+	if (!getEntityMoving(index) && tryMoveEnemy(index, Cave::Entity::Trait::Empty, arc[3])) return;
+	setEntityMoving(index, false);
+}
+
+bool Cave::Map::tryFusion4PlaceBombAt(const int& index, const int& spot) {
+	if (spot == index || !isAdjacentCell(index, spot)) return false;
+	if (spot == m_jimIndex) return false;
+	if (getEntityTransitioning(spot)) return false;
+	if (!hasTrait(Cave::Entity::Trait::Empty, spot)) return false;
+
+	setEntity(spot, Cave::Entity::TimeBomb());
+	caveEntities[spot].targetIndex = Cave::Entity::TimeBomb::FUSE_TICKS;
+	caveEntities[index].targetIndex = spot;
+	caveEntities[index].spawnCredit = Cave::Entity::Fusion::BOMB_COOLDOWN_BASE + Cave::Entity::Fusion::BOMB_COOLDOWN_TICKS;
+	m_game->soundManager.play(Sound::Effect::Drop);
+	tryFusion4Flee(index, spot);
+	return true;
+}
+
+bool Cave::Map::tryFusion4PlaceBomb(const int& index, const int& prefer) {
+	Cave::Entity::Direction order[4];
+	int count = 0;
+	auto add = [&](Cave::Entity::Direction dir) {
+		for (int i = 0; i < count; ++i) {
+			if (order[i] == dir) return;
+		}
+		order[count++] = dir;
+	};
+
+	if (inBounds(prefer) && prefer != index) {
+		const int px = prefer % width, py = prefer / width;
+		const int sx = index % width, sy = index / width;
+		if (sx > px) add(Cave::Entity::Direction::LEFT);
+		if (sx < px) add(Cave::Entity::Direction::RIGHT);
+		if (sy > py) add(Cave::Entity::Direction::UP);
+		if (sy < py) add(Cave::Entity::Direction::DOWN);
+	}
+	for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) add(dir);
+
+	int spot = OUT_OF_BOUNDS_INDEX;
+	int bestScore = 999;
+	for (int i = 0; i < count; ++i) {
+		const int dest = getIndex(index, order[i]);
+		if (dest == OUT_OF_BOUNDS_INDEX || dest == m_jimIndex) continue;
+		if (getEntityTransitioning(dest)) continue;
+		if (!hasTrait(Cave::Entity::Trait::Empty, dest)) continue;
+		int score = 0;
+		if (inBounds(prefer)) {
+			const int dx = (dest % width) - (prefer % width);
+			const int dy = (dest / width) - (prefer / width);
+			score = (dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy);
+		}
+		if (spot == OUT_OF_BOUNDS_INDEX || score < bestScore) {
+			spot = dest;
+			bestScore = score;
+		}
+	}
+	if (spot == OUT_OF_BOUNDS_INDEX) return false;
+	return tryFusion4PlaceBombAt(index, spot);
+}
+
+bool Cave::Map::tryFusion4Flee(const int& index, const int& bomb) {
+	if (!inBounds(bomb)) return false;
+	const int ex = index % width, ey = index / width;
+	const int bx = bomb % width, by = bomb / width;
+	if (ex < bx && tryMoveEnemy(index, Cave::Entity::Trait::Empty, Cave::Entity::Direction::LEFT)) return true;
+	if (ex > bx && tryMoveEnemy(index, Cave::Entity::Trait::Empty, Cave::Entity::Direction::RIGHT)) return true;
+	if (ey < by && tryMoveEnemy(index, Cave::Entity::Trait::Empty, Cave::Entity::Direction::UP)) return true;
+	if (ey > by && tryMoveEnemy(index, Cave::Entity::Trait::Empty, Cave::Entity::Direction::DOWN)) return true;
+	return false;
+}
+
+int Cave::Map::findFusion4Objective(const int& index) const {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (index < 0 || index >= cellCount) return OUT_OF_BOUNDS_INDEX;
+
+	std::vector<char> visited(static_cast<size_t>(cellCount), 0);
+	std::queue<int> frontier;
+	visited[static_cast<size_t>(index)] = 1;
+	frontier.push(index);
+
+	while (!frontier.empty()) {
+		const int current = frontier.front();
+		frontier.pop();
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, dir);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (visited[static_cast<size_t>(next)]) continue;
+			if (isFusion4Objective(next)) {
+				if (isFusion4BombableObjective(index, next)) return next;
+				continue;
+			}
+			if (!(hasTrait(Cave::Entity::Trait::Empty, next) || isPassableGate(next) || isPathfindMonster(next)))
+				continue;
+			visited[static_cast<size_t>(next)] = 1;
+			frontier.push(next);
+		}
+	}
+	return OUT_OF_BOUNDS_INDEX;
+}
+
+Cave::Entity::Direction Cave::Map::findPathToFusion4Goal(const int& index, const int& goal) const {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (index < 0 || index >= cellCount || goal < 0 || goal >= cellCount) {
+		return Cave::Entity::Direction::NO_DIRECTION;
+	}
+	if (index == goal) return Cave::Entity::Direction::NO_DIRECTION;
+
+	auto canPlanThrough = [this, goal](int cell) {
+		if (cell == goal) return true;
+		if (hasTrait(Cave::Entity::Trait::Empty, cell) || isPassableGate(cell)) return true;
+		if (isPathfindMonster(cell)) return true;
+		return false;
+	};
+
+	std::vector<char> visited(static_cast<size_t>(cellCount), 0);
+	std::vector<int> parent(static_cast<size_t>(cellCount), OUT_OF_BOUNDS_INDEX);
+	std::vector<Cave::Entity::Direction> via(static_cast<size_t>(cellCount), Cave::Entity::Direction::NO_DIRECTION);
+	std::queue<int> frontier;
+	visited[static_cast<size_t>(index)] = 1;
+	frontier.push(index);
+
+	bool reached = false;
+	while (!frontier.empty()) {
+		const int current = frontier.front();
+		frontier.pop();
+		if (current == goal) {
+			reached = true;
+			break;
+		}
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, dir);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (visited[static_cast<size_t>(next)]) continue;
+			if (!canPlanThrough(next)) continue;
+			visited[static_cast<size_t>(next)] = 1;
+			parent[static_cast<size_t>(next)] = current;
+			via[static_cast<size_t>(next)] = dir;
+			frontier.push(next);
+		}
+	}
+
+	if (!reached) return Cave::Entity::Direction::NO_DIRECTION;
+
+	int step = goal;
+	while (parent[static_cast<size_t>(step)] != index) {
+		step = parent[static_cast<size_t>(step)];
+		if (step == OUT_OF_BOUNDS_INDEX) return Cave::Entity::Direction::NO_DIRECTION;
+	}
+	return via[static_cast<size_t>(step)];
+}
+
+Cave::Entity::Direction Cave::Map::findPathToFusion5Goal(const int& index, const int& goal) const {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (index < 0 || index >= cellCount || goal < 0 || goal >= cellCount) {
+		return Cave::Entity::Direction::NO_DIRECTION;
+	}
+	if (index == goal) return Cave::Entity::Direction::NO_DIRECTION;
+
+	auto canPlanThrough = [this, goal](int cell) {
+		if (cell == goal) return true;
+		if (hasTrait(Cave::Entity::Trait::Empty, cell) || isPassableGate(cell)) return true;
+		if (cell == m_jimIndex) return true;
+		return false;
+	};
+
+	std::vector<char> visited(static_cast<size_t>(cellCount), 0);
+	std::vector<int> parent(static_cast<size_t>(cellCount), OUT_OF_BOUNDS_INDEX);
+	std::vector<Cave::Entity::Direction> via(static_cast<size_t>(cellCount), Cave::Entity::Direction::NO_DIRECTION);
+	std::queue<int> frontier;
+	visited[static_cast<size_t>(index)] = 1;
+	frontier.push(index);
+
+	auto consider = [&](int current, Cave::Entity::Direction dir, bool occupants) {
+		const int next = getIndex(current, dir);
+		if (next == OUT_OF_BOUNDS_INDEX) return;
+		if (visited[static_cast<size_t>(next)]) return;
+		if (!canPlanThrough(next)) return;
+		const bool occupied = (next == m_jimIndex);
+		if (occupants != occupied && next != goal) return;
+		visited[static_cast<size_t>(next)] = 1;
+		parent[static_cast<size_t>(next)] = current;
+		via[static_cast<size_t>(next)] = dir;
+		frontier.push(next);
+	};
+
+	bool reached = false;
+	while (!frontier.empty()) {
+		const int current = frontier.front();
+		frontier.pop();
+		if (current == goal) {
+			reached = true;
+			break;
+		}
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS)
+			consider(current, dir, false);
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS)
+			consider(current, dir, true);
+	}
+
+	if (!reached) return Cave::Entity::Direction::NO_DIRECTION;
+
+	int step = goal;
+	while (parent[static_cast<size_t>(step)] != index) {
+		step = parent[static_cast<size_t>(step)];
+		if (step == OUT_OF_BOUNDS_INDEX) return Cave::Entity::Direction::NO_DIRECTION;
+	}
+	return via[static_cast<size_t>(step)];
+}
+
+bool Cave::Map::fusePeguls(const int& a, const int& b) {
+	if (!inBounds(a) || !inBounds(b) || a == b) return false;
+	if (!Cave::Entity::isPegul(getEntityType(a))) return false;
+	if (!Cave::Entity::isPegul(getEntityType(b))) return false;
+	if (getEntityType(a) == getEntityType(b)) return false;
+	if (getEntityTransitioning(a) || getEntityTransitioning(b)) return false;
+
+	Cave::Entity::Direction dir = Cave::Entity::Direction::NO_DIRECTION;
+	if (b == a - 1) dir = Cave::Entity::Direction::LEFT;
+	else if (b == a + 1) dir = Cave::Entity::Direction::RIGHT;
+	else if (b == a - width) dir = Cave::Entity::Direction::UP;
+	else if (b == a + width) dir = Cave::Entity::Direction::DOWN;
+
+	const int pick = Utils::randomInteger(0, static_cast<int>(sizeof(Cave::Entity::Fusion::VARIANTS) / sizeof(Cave::Entity::Fusion::VARIANTS[0])) - 1);
+	Cave::Entity::Animation awayAnim = caveEntities[a].getAnimation();
+	Cave::Entity::Fusion formed(Cave::Entity::Fusion::VARIANTS[pick].type, true);
+	Cave::Entity::Animation intoAnim = formed.getAnimation();
+
+	caveEntities[b] = std::move(formed);
+	caveEntities[a] = Cave::Entity::Space();
+	if (dir != Cave::Entity::Direction::NO_DIRECTION) {
+		caveEntities[a].applyAwayTransition(dir, awayAnim);
+		caveEntities[b].applyIntoTransition(dir, intoAnim);
+	}
+	setEntityUpdated(b, true);
+	m_game->soundManager.play(Sound::Effect::Haze);
+	return true;
+}
+
+int Cave::Map::findNearestOtherVariantPegul(const int& index) const {
+	if (!inBounds(index) || !Cave::Entity::isPegul(getEntityType(index))) return OUT_OF_BOUNDS_INDEX;
+	const Cave::Entity::Type self = getEntityType(index);
+	const int cellCount = static_cast<int>(caveEntities.size());
+
+	std::vector<char> visited(static_cast<size_t>(cellCount), 0);
+	std::queue<int> frontier;
+	visited[static_cast<size_t>(index)] = 1;
+	frontier.push(index);
+
+	while (!frontier.empty()) {
+		const int current = frontier.front();
+		frontier.pop();
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, dir);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (visited[static_cast<size_t>(next)]) continue;
+			visited[static_cast<size_t>(next)] = 1;
+
+			const Cave::Entity::Type type = getEntityType(next);
+			if (Cave::Entity::isPegul(type)) {
+				if (type != self) return next;
+				continue;
+			}
+			if (hasTrait(Cave::Entity::Trait::Empty, next) || isPassableGate(next) || isPathfindMonster(next))
+				frontier.push(next);
+		}
+	}
+	return OUT_OF_BOUNDS_INDEX;
+}
+
+Cave::Entity::Direction Cave::Map::findPathToPegulPartner(const int& index, const int& target) const {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (index < 0 || index >= cellCount || target < 0 || target >= cellCount) {
+		return Cave::Entity::Direction::NO_DIRECTION;
+	}
+	if (index == target) return Cave::Entity::Direction::NO_DIRECTION;
+
+	auto canPlanThrough = [this, target](int cell) {
+		if (cell == target) return Cave::Entity::isPegul(getEntityType(cell));
+		if (hasTrait(Cave::Entity::Trait::Empty, cell) || isPassableGate(cell)) return true;
+		if (isPathfindMonster(cell) && !Cave::Entity::isPegul(getEntityType(cell))) return true;
+		return false;
+	};
+
+	std::vector<char> visited(static_cast<size_t>(cellCount), 0);
+	std::vector<int> parent(static_cast<size_t>(cellCount), OUT_OF_BOUNDS_INDEX);
+	std::vector<Cave::Entity::Direction> via(static_cast<size_t>(cellCount), Cave::Entity::Direction::NO_DIRECTION);
+	std::queue<int> frontier;
+
+	visited[static_cast<size_t>(index)] = 1;
+	frontier.push(index);
+
+	bool reached = false;
+	while (!frontier.empty()) {
+		const int current = frontier.front();
+		frontier.pop();
+		if (current == target) {
+			reached = true;
+			break;
+		}
+
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, dir);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (visited[static_cast<size_t>(next)]) continue;
+			if (!canPlanThrough(next)) continue;
+
+			visited[static_cast<size_t>(next)] = 1;
+			parent[static_cast<size_t>(next)] = current;
+			via[static_cast<size_t>(next)] = dir;
+			frontier.push(next);
+		}
+	}
+
+	if (!reached) return Cave::Entity::Direction::NO_DIRECTION;
+
+	int step = target;
+	while (parent[static_cast<size_t>(step)] != index) {
+		step = parent[static_cast<size_t>(step)];
+		if (step == OUT_OF_BOUNDS_INDEX) return Cave::Entity::Direction::NO_DIRECTION;
+	}
+
+	if (step == target) return via[static_cast<size_t>(step)];
+	if (!isMonsterWalkable(step))
+		return Cave::Entity::Direction::NO_DIRECTION;
+	return via[static_cast<size_t>(step)];
+}
+
+bool Cave::Map::tryPegulFuseHunt(const int& index) {
+	if (!Cave::Entity::isPegul(getEntityType(index))) return false;
+
+	int partner = OUT_OF_BOUNDS_INDEX;
+	for (int offset : m_adjacentOffsets) {
+		const int neighbour = index + offset;
+		if (!inBounds(neighbour)) continue;
+		if (!Cave::Entity::isPegul(getEntityType(neighbour))) continue;
+		if (getEntityType(neighbour) == getEntityType(index)) continue;
+		if (getEntityTransitioning(neighbour)) continue;
+		partner = neighbour;
+		break;
+	}
+
+	if (partner != OUT_OF_BOUNDS_INDEX) {
+		setEntityMoving(index, false);
+		const int lo = (index < partner) ? index : partner;
+		if (index != lo) return true;
+
+		int& timer = caveEntities[index].spawnCredit;
+		if (timer <= 0) {
+			setEntityAnimation(index, Cave::Entity::Pegul::fuseAnimation(getEntityType(index)));
+			setEntityAnimation(partner, Cave::Entity::Pegul::fuseAnimation(getEntityType(partner)));
+			timer = 1;
+			caveEntities[partner].spawnCredit = 1;
+			return true;
+		}
+		updateEntityAnimation(index);
+		updateEntityAnimation(partner);
+		caveEntities[partner].spawnCredit = 1;
+		const Cave::Entity::Animation anim = caveEntities[index].getAnimation();
+		if (!anim.frames.empty() && anim.currentFrame >= static_cast<int>(anim.frames.size()) - 1)
+			fusePeguls(index, partner);
+		return true;
+	}
+
+	if (caveEntities[index].spawnCredit > 0) {
+		setEntityAnimation(index, Cave::Entity::Pegul::idleAnimation(getEntityType(index)));
+		caveEntities[index].spawnCredit = 0;
+	}
+
+	const int target = findNearestOtherVariantPegul(index);
+	if (target == OUT_OF_BOUNDS_INDEX) return false;
+
+	Cave::Entity::Direction dir = findPathToPegulPartner(index, target);
+	if (dir == Cave::Entity::Direction::NO_DIRECTION) {
+		const int ex = index % width, ey = index / width;
+		const int tx = target % width, ty = target / width;
+		if (ex > tx && tryMoveEnemy(index, Cave::Entity::Trait::Empty, Cave::Entity::Direction::LEFT)) return true;
+		if (ex < tx && tryMoveEnemy(index, Cave::Entity::Trait::Empty, Cave::Entity::Direction::RIGHT)) return true;
+		if (ey > ty && tryMoveEnemy(index, Cave::Entity::Trait::Empty, Cave::Entity::Direction::UP)) return true;
+		if (ey < ty && tryMoveEnemy(index, Cave::Entity::Trait::Empty, Cave::Entity::Direction::DOWN)) return true;
+		return true;
+	}
+
+	const int dest = getIndex(index, dir);
+	if (dest == target || (inBounds(dest) && Cave::Entity::isPegul(getEntityType(dest)) && getEntityType(dest) != getEntityType(index))) {
+		setEntityMoving(index, false);
+		return true;
+	}
+	if (tryMoveEnemy(index, Cave::Entity::Trait::Empty, dir)) return true;
+	return true;
 }
 
 static Cave::Entity::Trait warpTraitFor(const Cave::Entity::Direction& direction) {
@@ -42,7 +990,7 @@ int Cave::Map::findBlobPipeExit(const int& index, const Cave::Entity::Direction&
 
 bool Cave::Map::tryMoveBlob(const int& index, const Cave::Entity::Direction& direction) {
 	setEntityDirection(index, direction);
-	if (hasTrait(Cave::Entity::Trait::Empty, index, direction) && moveEntity(index, direction)) {
+	if (isMonsterWalkable(getIndex(index, direction)) && moveEntity(index, direction)) {
 		setEntityMoving(getIndex(index, direction), true);
 		return true;
 	}
@@ -55,6 +1003,7 @@ bool Cave::Map::tryMoveBlob(const int& index, const Cave::Entity::Direction& dir
 	caveEntities[index] = Cave::Entity::Space();
 	setEntityMoving(dest, true);
 	m_game->soundManager.play(Sound::Effect::Tube);
+	notifyFusion5Stimulus(dest);
 	return true;
 }
 
@@ -151,6 +1100,69 @@ void Cave::Map::updateCaveGull(const int& index) {
 	setEntityMoving(index, false);
 }
 
+void Cave::Map::updateGallop(const int& index) {
+	if (handleEnemyBasicUpdate(index)) return;
+
+	int& mode = caveEntities[index].spawnCredit;
+	int& target = caveEntities[index].targetIndex;
+
+	if (mode >= Cave::Entity::Gallop::MODE_COOLDOWN) {
+		if (mode - Cave::Entity::Gallop::MODE_COOLDOWN >= Cave::Entity::Gallop::COOLDOWN_TICKS) {
+			mode = Cave::Entity::Gallop::MODE_HUNT;
+			target = OUT_OF_BOUNDS_INDEX;
+		}
+		else {
+			mode++;
+			setEntityMoving(index, false);
+			return;
+		}
+	}
+
+	if (mode == Cave::Entity::Gallop::MODE_CARRY) {
+		const int nest = findNearestGallopQueenNest(index);
+		if (nest == OUT_OF_BOUNDS_INDEX) {
+			wanderClockwiseEmpty(index);
+			return;
+		}
+		if (!inGallopQueenNest(nest, index)) {
+			const Cave::Entity::Direction dir = findPathToGallopNest(index, nest);
+			if (dir != Cave::Entity::Direction::NO_DIRECTION && tryMoveGallop(index, dir, false)) return;
+			wanderClockwiseEmpty(index);
+			return;
+		}
+		if (tryDepositGallopDiamond(index, nest)) return;
+		const int spot = findGallopDepositSpot(index, nest);
+		if (spot != OUT_OF_BOUNDS_INDEX) {
+			const Cave::Entity::Direction dir = findPathForGallop(index, spot);
+			if (dir != Cave::Entity::Direction::NO_DIRECTION && tryMoveGallop(index, dir, false)) return;
+		}
+		wanderClockwiseEmpty(index);
+		return;
+	}
+
+	Cave::Entity::Direction dir = Cave::Entity::Direction::NO_DIRECTION;
+	if (isGallopDiamond(target) && !inAnyGallopQueenNest(target)) {
+		dir = findPathForGallop(index, target);
+		if (dir == Cave::Entity::Direction::NO_DIRECTION) {
+			target = OUT_OF_BOUNDS_INDEX;
+		}
+	}
+	else {
+		target = OUT_OF_BOUNDS_INDEX;
+	}
+
+	if (target == OUT_OF_BOUNDS_INDEX) {
+		target = findNearestGallopDiamond(index);
+		if (target != OUT_OF_BOUNDS_INDEX) {
+			dir = findPathForGallop(index, target);
+		}
+	}
+
+	if (dir != Cave::Entity::Direction::NO_DIRECTION && tryMoveGallop(index, dir, true)) return;
+
+	wanderClockwiseEmpty(index);
+}
+
 void Cave::Map::updateSpinner(const int& index) {
 	if (handleEnemyBasicUpdate(index)) return;
 
@@ -193,7 +1205,8 @@ void Cave::Map::updateBoulderEater(const int& index) {
 	auto arc = anticlockwiseArc(getEntityDirection(index));
 	for (int i = 0; i < 3; ++i) {
 		if (i == 1 && (tryMoveEnemy(index, Cave::Entity::Type::Boulder, arc[i])
-			|| tryMoveEnemy(index, Cave::Entity::Type::MagicBoulder, arc[i]))) {
+			|| tryMoveEnemy(index, Cave::Entity::Type::MagicBoulder, arc[i])
+			|| tryMoveEnemy(index, Cave::Entity::Type::GallopEgg, arc[i]))) {
 			m_game->soundManager.play(Sound::Effect::Drop);
 			return;
 		}
@@ -305,7 +1318,7 @@ bool Cave::Map::godTileUnsafe(const int& cell) const {
 		scan != OUT_OF_BOUNDS_INDEX;
 		scan = getIndex(scan, Cave::Entity::Direction::UP)) {
 		const Cave::Entity::Type type = getEntityType(scan);
-		if (type == Cave::Entity::Type::Boulder) return true;
+		if (type == Cave::Entity::Type::Boulder || type == Cave::Entity::Type::GallopEgg) return true;
 		if (type != Cave::Entity::Type::MagicBoulder
 			&& isFallableEntity(scan)
 			&& getEntityFalling(scan)) {
@@ -337,7 +1350,7 @@ Cave::Entity::Direction Cave::Map::findPathToGoalForGod(const int& index, const 
 	auto canPlanThrough = [this, goal](int cell) {
 		if (cell == goal) return true;
 		if (godTileUnsafe(cell)) return false;
-		if (hasTrait(Cave::Entity::Trait::Empty, cell)) return true;
+		if (hasTrait(Cave::Entity::Trait::Empty, cell) || isPassableGate(cell)) return true;
 		if (Cave::Entity::isDirtLike(getEntityType(cell))) return true;
 		return false;
 	};
@@ -451,34 +1464,36 @@ Cave::Entity::Base Cave::Map::monsterFromType(Cave::Entity::Type type) const {
 	case Cave::Entity::Type::Pyram: return Cave::Entity::Pyram();
 	case Cave::Entity::Type::Blob: return Cave::Entity::Blob();
 	case Cave::Entity::Type::Mole: return Cave::Entity::Mole();
+	case Cave::Entity::Type::Fan: return Cave::Entity::Fan();
 	case Cave::Entity::Type::God: return Cave::Entity::God();
+	case Cave::Entity::Type::GallopQueen: return Cave::Entity::GallopQueen();
+	case Cave::Entity::Type::Gallop: return Cave::Entity::Gallop();
+	case Cave::Entity::Type::PegulNormo: return Cave::Entity::Pegul(Cave::Entity::Type::PegulNormo);
+	case Cave::Entity::Type::PegulFatto: return Cave::Entity::Pegul(Cave::Entity::Type::PegulFatto);
+	case Cave::Entity::Type::PegulTallo: return Cave::Entity::Pegul(Cave::Entity::Type::PegulTallo);
+	case Cave::Entity::Type::PegulBieye: return Cave::Entity::Pegul(Cave::Entity::Type::PegulBieye);
+	case Cave::Entity::Type::PegulTrieye: return Cave::Entity::Pegul(Cave::Entity::Type::PegulTrieye);
+	case Cave::Entity::Type::Fusion1: return Cave::Entity::Fusion(Cave::Entity::Type::Fusion1);
+	case Cave::Entity::Type::Fusion2: return Cave::Entity::Fusion(Cave::Entity::Type::Fusion2);
+	case Cave::Entity::Type::Fusion3: return Cave::Entity::Fusion(Cave::Entity::Type::Fusion3);
+	case Cave::Entity::Type::Fusion4: return Cave::Entity::Fusion(Cave::Entity::Type::Fusion4);
+	case Cave::Entity::Type::Fusion5: return Cave::Entity::Fusion(Cave::Entity::Type::Fusion5);
 	default: return Cave::Entity::Protozo();
 	}
 }
 
 Cave::Entity::Base Cave::Map::randomMonsterExceptGod() const {
-	static constexpr Cave::Entity::Type kTypes[] = {
-		Cave::Entity::Type::Protozo,
-		Cave::Entity::Type::CaveGull,
-		Cave::Entity::Type::Spinner,
-		Cave::Entity::Type::Cilia,
-		Cave::Entity::Type::Eater,
-		Cave::Entity::Type::Aggressor,
-		Cave::Entity::Type::BoulderEater,
-		Cave::Entity::Type::Tetrapus,
-		Cave::Entity::Type::Binocule,
-		Cave::Entity::Type::Creep,
-		Cave::Entity::Type::Sludg,
-		Cave::Entity::Type::SaturatedSludg,
-		Cave::Entity::Type::Glutton,
-		Cave::Entity::Type::Pyram,
-		Cave::Entity::Type::Puffer,
-		Cave::Entity::Type::Blob,
-		Cave::Entity::Type::Mole,
-	};
-	const int n = static_cast<int>(sizeof(kTypes) / sizeof(kTypes[0]));
-	const Cave::Entity::Type picked = kTypes[Utils::randomInteger(0, n - 1)];
-	if (picked == Cave::Entity::Type::Puffer) return Cave::Entity::Puffer();
+	using W = Cave::Entity::Well;
+	const int n = static_cast<int>(sizeof(W::SUMMON_OPTIONS) / sizeof(W::SUMMON_OPTIONS[0]));
+	int choices[32];
+	int count = 0;
+	for (int i = 0; i < n && count < 32; ++i) {
+		const Cave::Entity::Type type = W::SUMMON_OPTIONS[i].type;
+		if (type == Cave::Entity::Type::God) continue;
+		choices[count++] = i;
+	}
+	if (count <= 0) return Cave::Entity::Protozo();
+	const Cave::Entity::Type picked = W::SUMMON_OPTIONS[choices[Utils::randomInteger(0, count - 1)]].type;
 	return monsterFromType(picked);
 }
 
@@ -513,12 +1528,20 @@ void Cave::Map::updateWell(const int& index) {
 	if (credit > W::RATE_TICK_THRESHOLD) credit = W::RATE_TICK_THRESHOLD;
 	const int dest = empties[static_cast<size_t>(Utils::randomInteger(0, static_cast<int>(empties.size()) - 1))];
 	setEntity(dest, monsterFromType(W::unpackMonster(packed)));
+	if (getEntityType(dest) == Cave::Entity::Type::GallopQueen) {
+		caveEntities[dest].targetIndex = dest;
+		caveEntities[dest].spawnCredit = Cave::Entity::GallopQueen::MODE_NEST;
+	}
 }
 
 bool Cave::Map::animateBoulderToMonster(const int& cell) {
 	if (cell == OUT_OF_BOUNDS_INDEX || !inBounds(cell)) return false;
 	if (getEntityType(cell) != Cave::Entity::Type::Boulder) return false;
 	setEntity(cell, randomMonsterExceptGod());
+	if (getEntityType(cell) == Cave::Entity::Type::GallopQueen) {
+		caveEntities[cell].targetIndex = cell;
+		caveEntities[cell].spawnCredit = Cave::Entity::GallopQueen::MODE_NEST;
+	}
 	m_game->soundManager.play(Sound::Effect::Drop);
 	return true;
 }
@@ -601,7 +1624,7 @@ bool Cave::Map::tryMoveGod(const int& index, const Cave::Entity::Direction& dire
 		return true;
 	}
 	if (godTileUnsafe(destination)) return false;
-	const bool empty = hasTrait(Cave::Entity::Trait::Empty, destination);
+	const bool empty = hasTrait(Cave::Entity::Trait::Empty, destination) || isPassableGate(destination);
 	const bool dirt = Cave::Entity::isDirtLike(getEntityType(destination));
 	if (!empty && !dirt) return false;
 	if (!moveEntity(index, direction)) return false;
@@ -1111,6 +2134,735 @@ void Cave::Map::updateGlutton(const int& index) {
 	setEntityMoving(index, false);
 }
 
+bool Cave::Map::inGallopQueenNest(const int& nest, const int& cell) const {
+	if (!inBounds(nest) || !inBounds(cell)) return false;
+	const int dx = (cell % width) - (nest % width);
+	const int dy = (cell / width) - (nest / width);
+	const int adx = dx < 0 ? -dx : dx;
+	const int ady = dy < 0 ? -dy : dy;
+	return adx <= Cave::Entity::GallopQueen::NEST_RADIUS
+		&& ady <= Cave::Entity::GallopQueen::NEST_RADIUS;
+}
+
+bool Cave::Map::inAnyGallopQueenNest(const int& cell) const {
+	if (!inBounds(cell)) return false;
+	const int cellCount = static_cast<int>(caveEntities.size());
+	for (int i = 0; i < cellCount; ++i) {
+		if (getEntityType(i) != Cave::Entity::Type::GallopQueen) continue;
+		int nest = caveEntities[i].targetIndex;
+		if (!inBounds(nest)) nest = i;
+		if (inGallopQueenNest(nest, cell)) return true;
+	}
+	return false;
+}
+
+bool Cave::Map::gallopbQueenCanEnter(const int& cell) const {
+	if (!inBounds(cell)) return false;
+	return hasTrait(Cave::Entity::Trait::Empty, cell) || isGallopDiamond(cell);
+}
+
+Cave::Entity::Direction Cave::Map::findPathForGallopQueen(const int& index, const int& goal, bool nestOnly) const {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (index < 0 || index >= cellCount || goal < 0 || goal >= cellCount) {
+		return Cave::Entity::Direction::NO_DIRECTION;
+	}
+	if (index == goal) return Cave::Entity::Direction::NO_DIRECTION;
+
+	const int nest = caveEntities[index].targetIndex;
+	auto canPlanThrough = [this, goal, nest, nestOnly](int cell) {
+		if (cell == goal) return true;
+		if (nestOnly && !inGallopQueenNest(nest, cell)) return false;
+		return gallopbQueenCanEnter(cell);
+	};
+
+	std::vector<char> visited(static_cast<size_t>(cellCount), 0);
+	std::vector<int> parent(static_cast<size_t>(cellCount), OUT_OF_BOUNDS_INDEX);
+	std::vector<Cave::Entity::Direction> via(static_cast<size_t>(cellCount), Cave::Entity::Direction::NO_DIRECTION);
+	std::queue<int> frontier;
+
+	visited[static_cast<size_t>(index)] = 1;
+	frontier.push(index);
+
+	bool reached = false;
+	while (!frontier.empty()) {
+		const int current = frontier.front();
+		frontier.pop();
+		if (current == goal) {
+			reached = true;
+			break;
+		}
+
+		for (Cave::Entity::Direction step : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, step);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (visited[static_cast<size_t>(next)]) continue;
+			if (!canPlanThrough(next)) continue;
+
+			visited[static_cast<size_t>(next)] = 1;
+			parent[static_cast<size_t>(next)] = current;
+			via[static_cast<size_t>(next)] = step;
+			frontier.push(next);
+		}
+	}
+
+	if (!reached) return Cave::Entity::Direction::NO_DIRECTION;
+
+	int step = goal;
+	while (parent[static_cast<size_t>(step)] != index) {
+		step = parent[static_cast<size_t>(step)];
+		if (step == OUT_OF_BOUNDS_INDEX) return Cave::Entity::Direction::NO_DIRECTION;
+	}
+
+	return via[static_cast<size_t>(step)];
+}
+
+int Cave::Map::findNearestGallopQueenDiamond(const int& index, const int& nest) const {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (index < 0 || index >= cellCount) return OUT_OF_BOUNDS_INDEX;
+
+	std::vector<char> visited(static_cast<size_t>(cellCount), 0);
+	std::queue<int> frontier;
+	visited[static_cast<size_t>(index)] = 1;
+	frontier.push(index);
+
+	while (!frontier.empty()) {
+		const int current = frontier.front();
+		frontier.pop();
+
+		for (Cave::Entity::Direction step : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, step);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (visited[static_cast<size_t>(next)]) continue;
+			if (!inGallopQueenNest(nest, next)) continue;
+
+			if (isGallopDiamond(next)) return next;
+
+			if (!isMonsterWalkable(next)) continue;
+			visited[static_cast<size_t>(next)] = 1;
+			frontier.push(next);
+		}
+	}
+
+	return OUT_OF_BOUNDS_INDEX;
+}
+
+int Cave::Map::findNearestReachableQueenDiamond(const int& index) const {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (index < 0 || index >= cellCount) return OUT_OF_BOUNDS_INDEX;
+
+	std::vector<char> visited(static_cast<size_t>(cellCount), 0);
+	std::queue<int> frontier;
+	visited[static_cast<size_t>(index)] = 1;
+	frontier.push(index);
+
+	while (!frontier.empty()) {
+		const int current = frontier.front();
+		frontier.pop();
+
+		for (Cave::Entity::Direction step : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, step);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (visited[static_cast<size_t>(next)]) continue;
+			if (isGallopDiamond(next)) return next;
+			if (!isMonsterWalkable(next)) continue;
+			visited[static_cast<size_t>(next)] = 1;
+			frontier.push(next);
+		}
+	}
+
+	return OUT_OF_BOUNDS_INDEX;
+}
+
+bool Cave::Map::hasGallopOffspring() const {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	for (int i = 0; i < cellCount; ++i) {
+		switch (getEntityType(i)) {
+		case Cave::Entity::Type::Gallop:
+		case Cave::Entity::Type::GallopEgg:
+		case Cave::Entity::Type::GallopEggPop:
+			return true;
+		default:
+			break;
+		}
+	}
+	return false;
+}
+
+bool Cave::Map::tryMoveGallopQueen(const int& index, const Cave::Entity::Direction& direction) {
+	setEntityDirection(index, direction);
+	const int destination = getIndex(index, direction);
+	if (destination == OUT_OF_BOUNDS_INDEX) return false;
+
+	const bool empty = hasTrait(Cave::Entity::Trait::Empty, destination) || isPassableGate(destination);
+	const bool food = isGallopDiamond(destination);
+	if (!empty && !food) return false;
+	if (!moveEntity(index, direction)) return false;
+
+	setEntityMoving(destination, true);
+	if (food) {
+		m_game->soundManager.play(Sound::Effect::Collect);
+		const int nest = caveEntities[destination].targetIndex;
+		caveEntities[destination].spawnCredit = inGallopQueenNest(nest, destination)
+			? Cave::Entity::GallopQueen::MODE_LAY
+			: Cave::Entity::GallopQueen::MODE_RETURN;
+	}
+	return true;
+}
+
+void Cave::Map::wanderGallopQueen(const int& index, const int& nest, bool nestOnly) {
+	wanderStraightThenFollow(index, nest, nestOnly);
+}
+
+bool Cave::Map::tryLayGallopEgg(const int& index) {
+	if (getEntityType(index) != Cave::Entity::Type::GallopQueen) return false;
+
+	const int nest = caveEntities[index].targetIndex;
+	const Cave::Entity::Direction sides[3] = {
+		Cave::Entity::Direction::DOWN,
+		Cave::Entity::Direction::LEFT,
+		Cave::Entity::Direction::RIGHT,
+	};
+
+	for (Cave::Entity::Direction dir : sides) {
+		const int dest = getIndex(index, dir);
+		if (dest == OUT_OF_BOUNDS_INDEX) continue;
+		if (inBounds(nest) && !inGallopQueenNest(nest, dest)) continue;
+		if (!hasTrait(Cave::Entity::Trait::Empty, dest) || getEntityTransitioning(dest)) continue;
+		const int floor = getIndex(dest, Cave::Entity::Direction::DOWN);
+		if (floor == OUT_OF_BOUNDS_INDEX || hasTrait(Cave::Entity::Trait::Empty, floor)) continue;
+
+		setEntity(dest, Cave::Entity::GallopEgg());
+		caveEntities[index].spawnCredit = Cave::Entity::GallopQueen::MODE_NEST;
+		m_game->soundManager.play(Sound::Effect::Drop);
+		return true;
+	}
+
+	return false;
+}
+
+void Cave::Map::updateGallopQueen(const int& index) {
+	updateEntityAnimation(index);
+	if (m_editorPreview) return;
+	if (handleEnemyDeath(index)) return;
+	if (getEntityTransitioning(index)) return;
+
+	int& nest = caveEntities[index].targetIndex;
+	if (!inBounds(nest)) nest = index;
+
+	int& mode = caveEntities[index].spawnCredit;
+	const bool jimInNest = inBounds(m_jimIndex)
+		&& getEntityType(m_jimIndex) == Cave::Entity::Type::Jim
+		&& inGallopQueenNest(nest, m_jimIndex);
+	if (jimInNest) mode = Cave::Entity::GallopQueen::MODE_CHASE;
+
+	if (mode == Cave::Entity::GallopQueen::MODE_CHASE) {
+		if (m_jimIndex == OUT_OF_BOUNDS_INDEX) return;
+
+		const Cave::Entity::Direction dir = findPathToJim(index);
+		if (dir != Cave::Entity::Direction::NO_DIRECTION) {
+			tryMoveEnemy(index, Cave::Entity::Trait::Empty, dir);
+			return;
+		}
+
+		int ex = index % width, ey = index / width;
+		int jx = m_jimIndex % width, jy = m_jimIndex / width;
+
+		if (ex > jx && tryMoveEnemy(index, Cave::Entity::Trait::Empty, Cave::Entity::Direction::LEFT)) return;
+		if (ex < jx && tryMoveEnemy(index, Cave::Entity::Trait::Empty, Cave::Entity::Direction::RIGHT)) return;
+		if (ey > jy && tryMoveEnemy(index, Cave::Entity::Trait::Empty, Cave::Entity::Direction::UP)) return;
+		if (ey < jy && tryMoveEnemy(index, Cave::Entity::Trait::Empty, Cave::Entity::Direction::DOWN)) return;
+		return;
+	}
+	if (mode >= Cave::Entity::GallopQueen::MODE_LAY) {
+		if (mode - Cave::Entity::GallopQueen::MODE_LAY >= Cave::Entity::GallopQueen::LAY_TICKS) {
+			if (!tryLayGallopEgg(index)) {
+				if (!inGallopQueenNest(nest, index)) {
+					const Cave::Entity::Direction home = findPathToGallopNest(index, nest);
+					if (home != Cave::Entity::Direction::NO_DIRECTION)
+						tryMoveEnemy(index, Cave::Entity::Trait::Empty, home);
+					else
+						wanderGallopQueen(index, nest, false);
+				}
+				else {
+					wanderGallopQueen(index, nest, true);
+				}
+			}
+		}
+		else {
+			mode++;
+		}
+		return;
+	}
+
+	if (mode == Cave::Entity::GallopQueen::MODE_RETURN) {
+		if (inGallopQueenNest(nest, index)) {
+			mode = Cave::Entity::GallopQueen::MODE_LAY;
+			return;
+		}
+		const Cave::Entity::Direction home = findPathToGallopNest(index, nest);
+		if (home != Cave::Entity::Direction::NO_DIRECTION) {
+			tryMoveEnemy(index, Cave::Entity::Trait::Empty, home);
+			return;
+		}
+		wanderGallopQueen(index, nest, false);
+		return;
+	}
+
+	if (hasGallopOffspring()) {
+		if (!inGallopQueenNest(nest, index)) {
+			const Cave::Entity::Direction home = findPathToGallopNest(index, nest);
+			if (home != Cave::Entity::Direction::NO_DIRECTION) {
+				tryMoveEnemy(index, Cave::Entity::Trait::Empty, home);
+				return;
+			}
+		}
+		const int nestDiamond = findNearestGallopQueenDiamond(index, nest);
+		if (nestDiamond != OUT_OF_BOUNDS_INDEX) {
+			const Cave::Entity::Direction dir = findPathForGallopQueen(index, nestDiamond, true);
+			if (dir != Cave::Entity::Direction::NO_DIRECTION) {
+				tryMoveGallopQueen(index, dir);
+				return;
+			}
+		}
+		wanderGallopQueen(index, nest, true);
+		return;
+	}
+
+	const int diamond = findNearestReachableQueenDiamond(index);
+	if (diamond != OUT_OF_BOUNDS_INDEX) {
+		const Cave::Entity::Direction dir = findPathForGallopQueen(index, diamond, false);
+		if (dir != Cave::Entity::Direction::NO_DIRECTION) {
+			tryMoveGallopQueen(index, dir);
+			return;
+		}
+	}
+
+	wanderGallopQueen(index, nest, false);
+}
+
+bool Cave::Map::gallopCanTraverse(const int& cell) const {
+	return inBounds(cell) && hasTrait(Cave::Entity::Trait::Empty, cell);
+}
+
+bool Cave::Map::gallopDepositSupported(const int& cell) const {
+	if (!inBounds(cell) || !hasTrait(Cave::Entity::Trait::Empty, cell)) return false;
+	const int below = getIndex(cell, Cave::Entity::Direction::DOWN);
+	if (below == OUT_OF_BOUNDS_INDEX) return false;
+	if (hasTrait(Cave::Entity::Trait::Empty, below)) return false;
+	if (hasTrait(Cave::Entity::Trait::Slippery, below)) return false;
+	if (hasTrait(Cave::Entity::Trait::Crushable, below)) return false;
+	return true;
+}
+
+int Cave::Map::findNearestGallopDiamond(const int& index) const {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (index < 0 || index >= cellCount) return OUT_OF_BOUNDS_INDEX;
+
+	std::vector<char> visited(static_cast<size_t>(cellCount), 0);
+	std::queue<int> frontier;
+	visited[static_cast<size_t>(index)] = 1;
+	frontier.push(index);
+
+	while (!frontier.empty()) {
+		const int current = frontier.front();
+		frontier.pop();
+
+		for (Cave::Entity::Direction step : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, step);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (visited[static_cast<size_t>(next)]) continue;
+			if (isGallopDiamond(next)) {
+				if (!inAnyGallopQueenNest(next)) return next;
+				visited[static_cast<size_t>(next)] = 1;
+				continue;
+			}
+			if (!gallopCanTraverse(next)) continue;
+			visited[static_cast<size_t>(next)] = 1;
+			frontier.push(next);
+		}
+	}
+
+	return OUT_OF_BOUNDS_INDEX;
+}
+
+Cave::Entity::Direction Cave::Map::findPathForGallop(const int& index, const int& goal) const {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (index < 0 || index >= cellCount || goal < 0 || goal >= cellCount) {
+		return Cave::Entity::Direction::NO_DIRECTION;
+	}
+	if (index == goal) return Cave::Entity::Direction::NO_DIRECTION;
+
+	auto canPlanThrough = [this, goal](int cell) {
+		if (cell == goal) return true;
+		return gallopCanTraverse(cell);
+	};
+
+	std::vector<char> visited(static_cast<size_t>(cellCount), 0);
+	std::vector<int> parent(static_cast<size_t>(cellCount), OUT_OF_BOUNDS_INDEX);
+	std::vector<Cave::Entity::Direction> via(static_cast<size_t>(cellCount), Cave::Entity::Direction::NO_DIRECTION);
+	std::queue<int> frontier;
+
+	visited[static_cast<size_t>(index)] = 1;
+	frontier.push(index);
+
+	bool reached = false;
+	while (!frontier.empty()) {
+		const int current = frontier.front();
+		frontier.pop();
+		if (current == goal) {
+			reached = true;
+			break;
+		}
+
+		for (Cave::Entity::Direction step : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, step);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (visited[static_cast<size_t>(next)]) continue;
+			if (!canPlanThrough(next)) continue;
+
+			visited[static_cast<size_t>(next)] = 1;
+			parent[static_cast<size_t>(next)] = current;
+			via[static_cast<size_t>(next)] = step;
+			frontier.push(next);
+		}
+	}
+
+	if (!reached) return Cave::Entity::Direction::NO_DIRECTION;
+
+	int step = goal;
+	while (parent[static_cast<size_t>(step)] != index) {
+		step = parent[static_cast<size_t>(step)];
+		if (step == OUT_OF_BOUNDS_INDEX) return Cave::Entity::Direction::NO_DIRECTION;
+	}
+
+	return via[static_cast<size_t>(step)];
+}
+
+int Cave::Map::findNearestGallopQueenNest(const int& index) const {
+	if (!inBounds(index)) return OUT_OF_BOUNDS_INDEX;
+
+	const int ix = index % width;
+	const int iy = index / width;
+	int best = OUT_OF_BOUNDS_INDEX;
+	int bestDist = 0x7fffffff;
+	const int cellCount = static_cast<int>(caveEntities.size());
+	for (int i = 0; i < cellCount; ++i) {
+		if (getEntityType(i) != Cave::Entity::Type::GallopQueen) continue;
+		int nest = caveEntities[i].targetIndex;
+		if (!inBounds(nest)) nest = i;
+		const int dx = (nest % width) - ix;
+		const int dy = (nest / width) - iy;
+		const int adx = dx < 0 ? -dx : dx;
+		const int ady = dy < 0 ? -dy : dy;
+		const int dist = adx > ady ? adx : ady;
+		if (dist < bestDist) {
+			bestDist = dist;
+			best = nest;
+		}
+	}
+	return best;
+}
+
+Cave::Entity::Direction Cave::Map::findPathToGallopNest(const int& index, const int& nest) const {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (index < 0 || index >= cellCount || !inBounds(nest)) {
+		return Cave::Entity::Direction::NO_DIRECTION;
+	}
+	if (inGallopQueenNest(nest, index)) return Cave::Entity::Direction::NO_DIRECTION;
+
+	std::vector<char> visited(static_cast<size_t>(cellCount), 0);
+	std::vector<int> parent(static_cast<size_t>(cellCount), OUT_OF_BOUNDS_INDEX);
+	std::vector<Cave::Entity::Direction> via(static_cast<size_t>(cellCount), Cave::Entity::Direction::NO_DIRECTION);
+	std::queue<int> frontier;
+
+	visited[static_cast<size_t>(index)] = 1;
+	frontier.push(index);
+
+	int goal = OUT_OF_BOUNDS_INDEX;
+	while (!frontier.empty()) {
+		const int current = frontier.front();
+		frontier.pop();
+		if (current != index && inGallopQueenNest(nest, current)) {
+			goal = current;
+			break;
+		}
+
+		for (Cave::Entity::Direction step : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, step);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (visited[static_cast<size_t>(next)]) continue;
+			if (!gallopCanTraverse(next)) continue;
+
+			visited[static_cast<size_t>(next)] = 1;
+			parent[static_cast<size_t>(next)] = current;
+			via[static_cast<size_t>(next)] = step;
+			frontier.push(next);
+		}
+	}
+
+	if (goal == OUT_OF_BOUNDS_INDEX) return Cave::Entity::Direction::NO_DIRECTION;
+
+	int step = goal;
+	while (parent[static_cast<size_t>(step)] != index) {
+		step = parent[static_cast<size_t>(step)];
+		if (step == OUT_OF_BOUNDS_INDEX) return Cave::Entity::Direction::NO_DIRECTION;
+	}
+
+	return via[static_cast<size_t>(step)];
+}
+
+int Cave::Map::findGallopDepositSpot(const int& index, const int& nest) const {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (index < 0 || index >= cellCount) return OUT_OF_BOUNDS_INDEX;
+
+	std::vector<char> visited(static_cast<size_t>(cellCount), 0);
+	std::queue<int> frontier;
+	visited[static_cast<size_t>(index)] = 1;
+	frontier.push(index);
+
+	while (!frontier.empty()) {
+		const int current = frontier.front();
+		frontier.pop();
+
+		for (Cave::Entity::Direction step : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, step);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (visited[static_cast<size_t>(next)]) continue;
+			if (!gallopCanTraverse(next)) continue;
+			visited[static_cast<size_t>(next)] = 1;
+			if (inGallopQueenNest(nest, next) && gallopDepositSupported(next)) return next;
+			frontier.push(next);
+		}
+	}
+
+	return OUT_OF_BOUNDS_INDEX;
+}
+
+bool Cave::Map::tryMoveGallop(const int& index, const Cave::Entity::Direction& direction, bool allowDiamond) {
+	setEntityDirection(index, direction);
+	const int destination = getIndex(index, direction);
+	if (destination == OUT_OF_BOUNDS_INDEX) return false;
+
+	const bool empty = hasTrait(Cave::Entity::Trait::Empty, destination) || isPassableGate(destination);
+	const bool gem = allowDiamond && isGallopDiamond(destination) && !inAnyGallopQueenNest(destination);
+	if (!empty && !gem) return false;
+	if (!moveEntity(index, direction)) return false;
+
+	setEntityMoving(destination, true);
+	if (gem) {
+		m_game->soundManager.play(Sound::Effect::Collect);
+		caveEntities[destination].spawnCredit = Cave::Entity::Gallop::MODE_CARRY;
+		caveEntities[destination].targetIndex = OUT_OF_BOUNDS_INDEX;
+	}
+	return true;
+}
+
+bool Cave::Map::tryDepositGallopDiamond(const int& index, const int& nest) {
+	if (getEntityType(index) != Cave::Entity::Type::Gallop) return false;
+	if (!inGallopQueenNest(nest, index)) return false;
+
+	const Cave::Entity::Direction sides[4] = {
+		Cave::Entity::Direction::LEFT,
+		Cave::Entity::Direction::RIGHT,
+		Cave::Entity::Direction::DOWN,
+		Cave::Entity::Direction::UP,
+	};
+
+	for (Cave::Entity::Direction dir : sides) {
+		const int dest = getIndex(index, dir);
+		if (dest == OUT_OF_BOUNDS_INDEX) continue;
+		if (!inGallopQueenNest(nest, dest)) continue;
+		if (!gallopDepositSupported(dest)) continue;
+		setEntity(dest, Cave::Entity::Diamond());
+		caveEntities[index].spawnCredit = Cave::Entity::Gallop::MODE_COOLDOWN;
+		caveEntities[index].targetIndex = OUT_OF_BOUNDS_INDEX;
+		m_game->soundManager.play(Sound::Effect::Drop);
+		return true;
+	}
+
+	const int below = getIndex(index, Cave::Entity::Direction::DOWN);
+	const bool standingOnGround = below != OUT_OF_BOUNDS_INDEX
+		&& !hasTrait(Cave::Entity::Trait::Empty, below)
+		&& !hasTrait(Cave::Entity::Trait::Slippery, below)
+		&& !hasTrait(Cave::Entity::Trait::Crushable, below);
+	if (!standingOnGround) return false;
+
+	for (Cave::Entity::Direction dir : sides) {
+		const int dest = getIndex(index, dir);
+		if (dest == OUT_OF_BOUNDS_INDEX) continue;
+		if (!hasTrait(Cave::Entity::Trait::Empty, dest)) continue;
+		if (!moveEntity(index, dir)) continue;
+		setEntityMoving(dest, true);
+		caveEntities[dest].spawnCredit = Cave::Entity::Gallop::MODE_COOLDOWN;
+		caveEntities[dest].targetIndex = OUT_OF_BOUNDS_INDEX;
+		setEntity(index, Cave::Entity::Diamond());
+		m_game->soundManager.play(Sound::Effect::Drop);
+		return true;
+	}
+
+	return false;
+}
+
+void Cave::Map::wanderClockwiseEmpty(const int& index) {
+	wanderStraightThenFollow(index, OUT_OF_BOUNDS_INDEX, false);
+}
+
+bool Cave::Map::tryWanderEmpty(const int& index, Cave::Entity::Direction direction, const int& nest, bool nestOnly) {
+	const int dest = getIndex(index, direction);
+	if (dest == OUT_OF_BOUNDS_INDEX) return false;
+	if (nestOnly && inBounds(nest) && !inGallopQueenNest(nest, dest)) return false;
+	if (!hasTrait(Cave::Entity::Trait::Empty, dest)) return false;
+	return tryMoveEnemy(index, Cave::Entity::Trait::Empty, direction);
+}
+
+static bool isWanderMonster(Cave::Entity::Type type) {
+	switch (type) {
+	case Cave::Entity::Type::Eater:
+	case Cave::Entity::Type::Protozo:
+	case Cave::Entity::Type::Cilia:
+	case Cave::Entity::Type::Aggressor:
+	case Cave::Entity::Type::CaveGull:
+	case Cave::Entity::Type::Spinner:
+	case Cave::Entity::Type::BoulderEater:
+	case Cave::Entity::Type::Tetrapus:
+	case Cave::Entity::Type::Binocule:
+	case Cave::Entity::Type::Creep:
+	case Cave::Entity::Type::Sludg:
+	case Cave::Entity::Type::SaturatedSludg:
+	case Cave::Entity::Type::Glutton:
+	case Cave::Entity::Type::Pyram:
+	case Cave::Entity::Type::Puffer:
+	case Cave::Entity::Type::PufferBody:
+	case Cave::Entity::Type::Blob:
+	case Cave::Entity::Type::Mole:
+	case Cave::Entity::Type::Fan:
+	case Cave::Entity::Type::God:
+	case Cave::Entity::Type::Charger:
+	case Cave::Entity::Type::ChargerBody:
+	case Cave::Entity::Type::GallopQueen:
+	case Cave::Entity::Type::GallopEgg:
+	case Cave::Entity::Type::GallopEggPop:
+	case Cave::Entity::Type::Gallop:
+	case Cave::Entity::Type::Jim:
+	case Cave::Entity::Type::PegulNormo:
+	case Cave::Entity::Type::PegulFatto:
+	case Cave::Entity::Type::PegulTallo:
+	case Cave::Entity::Type::PegulBieye:
+	case Cave::Entity::Type::PegulTrieye:
+	case Cave::Entity::Type::Fusion1:
+	case Cave::Entity::Type::Fusion2:
+	case Cave::Entity::Type::Fusion3:
+	case Cave::Entity::Type::Fusion4:
+	case Cave::Entity::Type::Fusion5:
+		return true;
+	default:
+		return false;
+	}
+}
+
+bool Cave::Map::wanderCellIsWall(const int& cell, const int& nest, bool nestOnly) const {
+	if (cell == OUT_OF_BOUNDS_INDEX || !inBounds(cell)) return true;
+	if (nestOnly && inBounds(nest) && !inGallopQueenNest(nest, cell)) return true;
+	if (hasTrait(Cave::Entity::Trait::Empty, cell) || isPassableGate(cell)) return false;
+	if (isWanderMonster(getEntityType(cell))) return false;
+	return true;
+}
+
+bool Cave::Map::wanderHasTerrainWallIn3x3(const int& index, const int& nest, bool nestOnly) const {
+	if (!inBounds(index) || width <= 0) return false;
+	const int x = index % width;
+	const int y = index / width;
+	for (int dy = -1; dy <= 1; ++dy) {
+		for (int dx = -1; dx <= 1; ++dx) {
+			if (dx == 0 && dy == 0) continue;
+			const int nx = x + dx;
+			const int ny = y + dy;
+			if (nx < 0 || ny < 0 || nx >= width || ny >= height) return true;
+			if (wanderCellIsWall(ny * width + nx, nest, nestOnly)) return true;
+		}
+	}
+	return false;
+}
+
+bool Cave::Map::wanderHasMonsterIn3x3(const int& index) const {
+	if (!inBounds(index) || width <= 0) return false;
+	const int x = index % width;
+	const int y = index / width;
+	for (int dy = -1; dy <= 1; ++dy) {
+		for (int dx = -1; dx <= 1; ++dx) {
+			if (dx == 0 && dy == 0) continue;
+			const int nx = x + dx;
+			const int ny = y + dy;
+			if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+			if (isWanderMonster(getEntityType(ny * width + nx))) return true;
+		}
+	}
+	return false;
+}
+
+bool Cave::Map::wanderIsTwoByTwoSpiral(const int& index, const int& nest, bool nestOnly) const {
+	if (!inBounds(index)) return false;
+	Cave::Entity::Direction dir = caveEntities[index].direction;
+	if (dir == Cave::Entity::Direction::NO_DIRECTION) dir = Cave::Entity::Direction::DOWN;
+
+	int cells[4] = { OUT_OF_BOUNDS_INDEX, OUT_OF_BOUNDS_INDEX, OUT_OF_BOUNDS_INDEX, OUT_OF_BOUNDS_INDEX };
+	int cell = index;
+	for (int i = 0; i < 4; ++i) {
+		const auto arc = clockwiseArc(dir);
+		const int next = getIndex(cell, arc[0]);
+		if (wanderCellIsWall(next, nest, nestOnly)) return false;
+		cells[i] = next;
+		cell = next;
+		dir = arc[0];
+	}
+	if (cell != index) return false;
+
+	for (int i = 0; i < 4; ++i) {
+		for (Cave::Entity::Direction side : Cave::Entity::ALL_DIRECTIONS) {
+			if (wanderCellIsWall(getIndex(cells[i], side), nest, nestOnly)) return false;
+		}
+	}
+	return true;
+}
+
+void Cave::Map::wanderLikeCaveGull(const int& index, const int& nest, bool nestOnly) {
+	Cave::Entity::Direction facing = caveEntities[index].direction;
+	if (facing == Cave::Entity::Direction::NO_DIRECTION) {
+		facing = Cave::Entity::Direction::RIGHT;
+		setEntityDirection(index, facing);
+	}
+
+	const auto arc = clockwiseArc(facing);
+	for (int i = 0; i < 3; ++i) {
+		if (tryWanderEmpty(index, arc[i], nest, nestOnly)) return;
+	}
+	if (!getEntityMoving(index) && tryWanderEmpty(index, arc[3], nest, nestOnly)) return;
+	setEntityMoving(index, false);
+}
+
+void Cave::Map::wanderDropThenFollow(const int& index, const int& nest, bool nestOnly) {
+	setEntityDirection(index, Cave::Entity::Direction::DOWN);
+	if (tryWanderEmpty(index, Cave::Entity::Direction::DOWN, nest, nestOnly)) return;
+	setEntityDirection(index, Cave::Entity::Direction::RIGHT);
+	wanderLikeCaveGull(index, nest, nestOnly);
+}
+
+void Cave::Map::wanderStraightThenFollow(const int& index, const int& nest, bool nestOnly) {
+	const bool stranded = !wanderHasTerrainWallIn3x3(index, nest, nestOnly)
+		&& !wanderHasMonsterIn3x3(index);
+	if (stranded || wanderIsTwoByTwoSpiral(index, nest, nestOnly)) {
+		wanderDropThenFollow(index, nest, nestOnly);
+		return;
+	}
+
+	if (caveEntities[index].direction == Cave::Entity::Direction::DOWN
+		&& wanderCellIsWall(getIndex(index, Cave::Entity::Direction::DOWN), nest, nestOnly)) {
+		setEntityDirection(index, Cave::Entity::Direction::RIGHT);
+	}
+
+	wanderLikeCaveGull(index, nest, nestOnly);
+}
+
 bool Cave::Map::isGluttonFood(const int& index) const {
 	if (index < 0 || index >= static_cast<int>(caveEntities.size())) return false;
 	switch (getEntityType(index)) {
@@ -1120,6 +2872,9 @@ bool Cave::Map::isGluttonFood(const int& index) const {
 	case Cave::Entity::Type::Ore:
 	case Cave::Entity::Type::Amoeba:
 	case Cave::Entity::Type::CaveGull:
+	case Cave::Entity::Type::GallopQueen:
+	case Cave::Entity::Type::GallopEgg:
+	case Cave::Entity::Type::Gallop:
 		return true;
 	default:
 		return false;
@@ -1148,7 +2903,7 @@ int Cave::Map::findNearestReachableGluttonFood(const int& index) const {
 				return next;
 			}
 
-			if (!hasTrait(Cave::Entity::Trait::Empty, next)) continue;
+			if (!isMonsterWalkable(next)) continue;
 
 			visited[static_cast<size_t>(next)] = 1;
 			frontier.push(next);
@@ -1167,7 +2922,7 @@ Cave::Entity::Direction Cave::Map::findPathToGluttonFood(const int& index, const
 
 	auto canPlanThrough = [this, target](int cell) {
 		if (cell == target) return isGluttonFood(cell);
-		return hasTrait(Cave::Entity::Trait::Empty, cell);
+		return isMonsterWalkable(cell);
 	};
 
 	std::vector<char> visited(static_cast<size_t>(cellCount), 0);
@@ -1216,7 +2971,7 @@ bool Cave::Map::tryMoveGlutton(const int& index, const Cave::Entity::Direction& 
 	const int destination = getIndex(index, direction);
 	if (destination == OUT_OF_BOUNDS_INDEX) return false;
 
-	const bool empty = hasTrait(Cave::Entity::Trait::Empty, destination);
+	const bool empty = hasTrait(Cave::Entity::Trait::Empty, destination) || isPassableGate(destination);
 	const Cave::Entity::Type foodType = getEntityType(destination);
 	const bool food = isGluttonFood(destination);
 	if (!empty && !food) return false;
@@ -1236,6 +2991,9 @@ bool Cave::Map::tryMoveGlutton(const int& index, const Cave::Entity::Direction& 
 			break;
 		case Cave::Entity::Type::Ore:
 		case Cave::Entity::Type::CaveGull:
+		case Cave::Entity::Type::GallopQueen:
+		case Cave::Entity::Type::GallopEgg:
+		case Cave::Entity::Type::Gallop:
 			m_game->soundManager.play(Sound::Effect::Drop);
 			break;
 		default:
@@ -1267,7 +3025,7 @@ int Cave::Map::findNearestReachablePlasma(const int& index) const {
 				return next;
 			}
 
-			if (!hasTrait(Cave::Entity::Trait::Empty, next)) continue;
+			if (!isMonsterWalkable(next)) continue;
 
 			visited[static_cast<size_t>(next)] = 1;
 			frontier.push(next);
@@ -1286,7 +3044,7 @@ Cave::Entity::Direction Cave::Map::findPathToPlasma(const int& index, const int&
 
 	auto canPlanThrough = [this, target](int cell) {
 		if (cell == target) return getEntityType(cell) == Cave::Entity::Type::Plasma;
-		return hasTrait(Cave::Entity::Trait::Empty, cell);
+		return isMonsterWalkable(cell);
 	};
 
 	std::vector<char> visited(static_cast<size_t>(cellCount), 0);
@@ -1335,7 +3093,7 @@ bool Cave::Map::tryMoveSludg(const int& index, const Cave::Entity::Direction& di
 	const int destination = getIndex(index, direction);
 	if (destination == OUT_OF_BOUNDS_INDEX) return false;
 
-	const bool empty = hasTrait(Cave::Entity::Trait::Empty, destination);
+	const bool empty = hasTrait(Cave::Entity::Trait::Empty, destination) || isPassableGate(destination);
 	const bool plasma = getEntityType(destination) == Cave::Entity::Type::Plasma;
 	if (!empty && !plasma) return false;
 	if (!moveEntity(index, direction)) return false;
@@ -1363,6 +3121,10 @@ bool Cave::Map::isDiamond(const int& index) const {
 	}
 }
 
+bool Cave::Map::isGallopDiamond(const int& index) const {
+	return inBounds(index) && getEntityType(index) == Cave::Entity::Type::Diamond;
+}
+
 int Cave::Map::findNearestReachableDiamond(const int& index) const {
 	const int cellCount = static_cast<int>(caveEntities.size());
 	if (index < 0 || index >= cellCount) return OUT_OF_BOUNDS_INDEX;
@@ -1386,6 +3148,7 @@ int Cave::Map::findNearestReachableDiamond(const int& index) const {
 			}
 
 			const bool open = hasTrait(Cave::Entity::Trait::Empty, next)
+				|| isPassableGate(next)
 				|| Cave::Entity::isDirtLike(getEntityType(next));
 			if (!open) continue;
 
@@ -1406,7 +3169,7 @@ Cave::Entity::Direction Cave::Map::findPathToDiamond(const int& index, const int
 
 	auto canPlanThrough = [this, target](int cell) {
 		if (cell == target) return isDiamond(cell);
-		if (hasTrait(Cave::Entity::Trait::Empty, cell)) return true;
+		if (hasTrait(Cave::Entity::Trait::Empty, cell) || isPassableGate(cell)) return true;
 		if (Cave::Entity::isDirtLike(getEntityType(cell))) return true;
 		return false;
 	};
@@ -1457,7 +3220,7 @@ bool Cave::Map::tryMoveBinocule(const int& index, const Cave::Entity::Direction&
 	const int destination = getIndex(index, direction);
 	if (destination == OUT_OF_BOUNDS_INDEX) return false;
 
-	const bool empty = hasTrait(Cave::Entity::Trait::Empty, destination);
+	const bool empty = hasTrait(Cave::Entity::Trait::Empty, destination) || isPassableGate(destination);
 	const bool dirt = Cave::Entity::isDirtLike(getEntityType(destination));
 	const bool gem = allowDiamond && isDiamond(destination);
 	if (!empty && !dirt && !gem) return false;
@@ -1470,6 +3233,7 @@ bool Cave::Map::tryMoveBinocule(const int& index, const Cave::Entity::Direction&
 	if (gem) {
 		m_game->soundManager.play(Sound::Effect::Collect);
 		caveEntities[destination].targetIndex = OUT_OF_BOUNDS_INDEX;
+		notifyFusion5Stimulus(destination);
 	}
 	return true;
 }
@@ -1491,6 +3255,17 @@ bool Cave::Map::isPathfindMonster(const int& index) const {
 	case Cave::Entity::Type::Glutton:
 	case Cave::Entity::Type::Pyram:
 	case Cave::Entity::Type::God:
+	case Cave::Entity::Type::Gallop:
+	case Cave::Entity::Type::PegulNormo:
+	case Cave::Entity::Type::PegulFatto:
+	case Cave::Entity::Type::PegulTallo:
+	case Cave::Entity::Type::PegulBieye:
+	case Cave::Entity::Type::PegulTrieye:
+	case Cave::Entity::Type::Fusion1:
+	case Cave::Entity::Type::Fusion2:
+	case Cave::Entity::Type::Fusion3:
+	case Cave::Entity::Type::Fusion4:
+	case Cave::Entity::Type::Fusion5:
 		return true;
 	default:
 		return false;
@@ -1508,7 +3283,7 @@ Cave::Entity::Direction Cave::Map::findPathToJim(const int& index) {
 
 	auto canPlanThrough = [this](int cell) {
 		if (cell == m_jimIndex) return true;
-		if (hasTrait(Cave::Entity::Trait::Empty, cell)) return true;
+		if (hasTrait(Cave::Entity::Trait::Empty, cell) || isPassableGate(cell)) return true;
 		if (isPathfindMonster(cell)) return true;
 		return false;
 	};
@@ -1551,7 +3326,7 @@ Cave::Entity::Direction Cave::Map::findPathToJim(const int& index) {
 		if (step == OUT_OF_BOUNDS_INDEX) return Cave::Entity::Direction::NO_DIRECTION;
 	}
 
-	if (!hasTrait(Cave::Entity::Trait::Empty, step))
+	if (!isMonsterWalkable(step) && step != m_jimIndex)
 		return Cave::Entity::Direction::NO_DIRECTION;
 
 	return via[static_cast<size_t>(step)];
@@ -1568,6 +3343,7 @@ bool Cave::Map::isFallableEntity(const int& index) const {
 	case Cave::Entity::Type::Bomb:
 	case Cave::Entity::Type::TimeBomb:
 	case Cave::Entity::Type::Ruby:
+	case Cave::Entity::Type::GallopEgg:
 		return true;
 	default:
 		return false;
@@ -1649,6 +3425,22 @@ bool Cave::Map::handleEnemyDeath(const int& index) {
 		|| type == Cave::Entity::Type::ChargerBody) {
 		return false;
 	}
+	if (Cave::Entity::isPegul(type)) {
+		if (isAdjacentTo(index, Cave::Entity::Type::Amoeba)) {
+			createExplosion(index);
+			return true;
+		}
+		return false;
+	}
+	if (type == Cave::Entity::Type::Fusion1
+		&& (Cave::Entity::Fusion::isTeleportOut(caveEntities[index].spawnCredit)
+			|| Cave::Entity::Fusion::isTeleportIn(caveEntities[index].spawnCredit))) {
+		if (isAdjacentTo(index, Cave::Entity::Type::Amoeba)) {
+			createExplosion(index);
+			return true;
+		}
+		return false;
+	}
 	if (isAdjacentTo(index, Cave::Entity::Trait::Reactive)) {
 		if (pufferCenter != OUT_OF_BOUNDS_INDEX) {
 			bool amoebaTouch = false;
@@ -1673,10 +3465,14 @@ bool Cave::Map::handleEnemyDeath(const int& index) {
 	return false;
 }
 
-bool Cave::Map::tryMoveEnemy(const int& index, const Cave::Entity::Trait& trait, const Cave::Entity::Direction& direction) {
+bool Cave::Map::tryMoveEnemy(const int& index, const Cave::Entity::Trait& trait, const Cave::Entity::Direction& direction, int slideInc) {
 	setEntityDirection(index, direction);
-	if (hasTrait(trait, index, direction) && moveEntity(index, direction)) {
-		setEntityMoving(getIndex(index, direction), true);
+	const int destination = getIndex(index, direction);
+	if (destination == OUT_OF_BOUNDS_INDEX) return false;
+	const bool match = hasTrait(trait, destination)
+		|| (trait == Cave::Entity::Trait::Empty && isPassableGate(destination));
+	if (match && moveEntity(index, direction, slideInc)) {
+		setEntityMoving(destination, true);
 		return true;
 	}
 	return false;

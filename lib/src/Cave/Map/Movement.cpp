@@ -1,6 +1,6 @@
 #include "Cave/Map/Map.h"
 
-bool Cave::Map::moveEntity(const int& sourceIndex, const Cave::Entity::Direction& direction) {
+bool Cave::Map::moveEntity(const int& sourceIndex, const Cave::Entity::Direction& direction, int slideInc) {
 	// Cannot push entity if no direction is specified
 	if (direction == Cave::Entity::Direction::NO_DIRECTION) {
 		return false;
@@ -20,14 +20,21 @@ bool Cave::Map::moveEntity(const int& sourceIndex, const Cave::Entity::Direction
 	// Roll if entity is a boulder
 	handleBoulderRoll(sourceIndex, direction);
 
+	const bool dug = Cave::Entity::isDirtLike(getEntityType(destinationIndex));
+
 	Cave::Entity::Animation sourceAnimation = caveEntities[sourceIndex].getAnimation();
 	Cave::Entity::Animation destinationAnimation = caveEntities[destinationIndex].getAnimation();
 
+	coverPassableGate(destinationIndex);
 	caveEntities[destinationIndex] = std::move(caveEntities[sourceIndex]);
-	caveEntities[sourceIndex] = Cave::Entity::Space();
+	if (!restoreCoveredGate(sourceIndex)) {
+		caveEntities[sourceIndex] = Cave::Entity::Space();
+	}
 
-	caveEntities[sourceIndex].applyAwayTransition(direction, sourceAnimation);
-	caveEntities[destinationIndex].applyIntoTransition(direction, destinationAnimation);
+	if (slideInc < 1) slideInc = 4;
+	caveEntities[sourceIndex].applyAwayTransition(direction, sourceAnimation, slideInc);
+	caveEntities[destinationIndex].applyIntoTransition(direction, destinationAnimation, slideInc);
+	if (dug) notifyFusion5Stimulus(destinationIndex);
 
 	return true;
 }
@@ -49,9 +56,11 @@ bool Cave::Map::warpEntity(const int& sourceIndex, const Cave::Entity::Direction
 		return false;
 	}
 
-	// Move/set entities to new locations
+	coverPassableGate(destinationIndex);
 	caveEntities[destinationIndex] = std::move(caveEntities[sourceIndex]);
-	caveEntities[sourceIndex] = Cave::Entity::Space();
+	if (!restoreCoveredGate(sourceIndex)) {
+		caveEntities[sourceIndex] = Cave::Entity::Space();
+	}
 
 	return true;
 }
@@ -88,9 +97,12 @@ bool Cave::Map::pushEntity(const int& sourceIndex, const Cave::Entity::Direction
 	Cave::Entity::Animation destinationAmination = caveEntities[destinationIndex].getAnimation();
 
 	// Move/set entities to new locations
+	coverPassableGate(destinationIndex);
 	caveEntities[destinationIndex] = std::move(caveEntities[pushedIndex]);
 	caveEntities[pushedIndex] = std::move(caveEntities[sourceIndex]);
-	caveEntities[sourceIndex] = Cave::Entity::Space();
+	if (!restoreCoveredGate(sourceIndex)) {
+		caveEntities[sourceIndex] = Cave::Entity::Space();
+	}
 
 	caveEntities[sourceIndex].applyAwayTransition(direction, sourceAmination);
 	caveEntities[pushedIndex].applyPushTransition(direction, pushedAmination);

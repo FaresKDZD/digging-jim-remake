@@ -59,7 +59,8 @@ static bool customEditorPopupOpen()
 {
     return ImGui::IsPopupOpen("##well_props")
         || ImGui::IsPopupOpen("##portal_props")
-        || ImGui::IsPopupOpen("##tools_ctx");
+        || ImGui::IsPopupOpen("##tools_ctx")
+        || ImGui::IsPopupOpen("##caves_list_ctx");
 }
 
 static ImGuiHoveredFlags menuBarHoverFlags()
@@ -155,7 +156,8 @@ void HUD::Editor::Toolbar::drawEditMenu()
         ImGui::PushStyleColor(ImGuiCol_HeaderHovered, m_clrNavy);
         ImGui::PushStyleColor(ImGuiCol_HeaderActive,  m_clrNavy);
         ImGui::Indent(m_menuIndent);
-        if (ImGui::MenuItem("Undo", "Ctrl+U")) m_editor->actionUndo();
+        if (ImGui::MenuItem("Undo", "Ctrl+Z", false, m_editor->canUndo())) m_editor->actionUndo();
+        if (ImGui::MenuItem("Redo", "Ctrl+Y", false, m_editor->canRedo())) m_editor->actionRedo();
         ImGui::Separator();
         if (ImGui::MenuItem("Copy",  "Ctrl+C")) m_editor->actionCopySelection();
         if (ImGui::MenuItem("Paste", "Ctrl+V")) m_editor->actionPasteSelection();
@@ -168,6 +170,7 @@ void HUD::Editor::Toolbar::drawEditMenu()
         if (ImGui::MenuItem("Remove Level", "Delete")) m_editor->actionDeleteLevel();
         ImGui::Separator();
         if (ImGui::MenuItem("Cave Properties...", "Ctrl+P")) m_editor->actionShowCaveProperties();
+        if (ImGui::MenuItem("Caves List")) m_editor->actionShowCavesList();
         ImGui::Separator();
         if (ImGui::MenuItem("Random Distribution", "Ctrl+R")) m_editor->actionRandomDist();
         ImGui::Unindent(m_menuIndent);
@@ -207,7 +210,9 @@ void HUD::Editor::Toolbar::drawToolItems(HUD::Editor::Panel* editorPanel)
     {
         if (ImGui::MenuItem(label, shortcut))
             editorPanel->selectType(px, py);
-        if (type == selType)
+        if (type == selType
+            || (Cave::Entity::isPegul(type) && Cave::Entity::isPegul(selType))
+            || (Cave::Entity::isFusion(type) && Cave::Entity::isFusion(selType)))
         {
             ImVec2 rmin = ImGui::GetItemRectMin();
             ImVec2 rmax = ImGui::GetItemRectMax();
@@ -269,6 +274,12 @@ void HUD::Editor::Toolbar::drawToolItems(HUD::Editor::Panel* editorPanel)
     tool("Charger",                  "",  0, 16, Cave::Entity::Type::Charger);
     tool("Well",                     "",  1, 16, Cave::Entity::Type::Well);
     tool("Chum",                     "",  2, 16, Cave::Entity::Type::Chum);
+    tool("Gallop Queen",            "",  0, 17, Cave::Entity::Type::GallopQueen);
+    tool("Gallop Egg",              "",  1, 17, Cave::Entity::Type::GallopEgg);
+    tool("Gallop",                  "",  2, 17, Cave::Entity::Type::Gallop);
+    tool("Pegul",                   "",  0, 18, Cave::Entity::Type::PegulNormo);
+    tool("Fusion",                  "",  1, 18, Cave::Entity::Type::Fusion1);
+    tool("Gate",                    "",  2, 18, Cave::Entity::Type::Gate);
 }
 
 void HUD::Editor::Toolbar::drawToolsMenu(HUD::Editor::Panel* editorPanel)

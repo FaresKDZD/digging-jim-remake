@@ -1,6 +1,7 @@
 #pragma once
 #include <algorithm>
 #include <optional>
+#include <type_traits>
 #include <vector>
 #include "Cave/Entity/Animation.h"
 #include "Cave/Entity/Facing.h"
@@ -54,6 +55,12 @@ namespace Cave::Entity {
 
         /// @brief Add a trait to the entity (e.g., pushable, crushable).
         void addTrait(Trait trait) { m_traits |= trait; }
+
+        /// @brief Remove a trait from the entity.
+        void removeTrait(Trait trait) {
+            using U = std::underlying_type_t<Trait>;
+            m_traits = static_cast<Trait>(static_cast<U>(m_traits) & ~static_cast<U>(trait));
+        }
 
         /**
          * @brief Check if the entity has a specific trait.
@@ -114,12 +121,12 @@ namespace Cave::Entity {
          * @param direction Direction of movement.
          * @param animation Animation to apply during transition.
          */
-        void applyAwayTransition(const Cave::Entity::Direction& direction, Animation& animation) {
+        void applyAwayTransition(const Cave::Entity::Direction& direction, Animation& animation, int slideInc = 4) {
             if (direction == Cave::Entity::Direction::NO_DIRECTION) {
                 return;
             }
             int i = static_cast<int>(direction);
-            m_transition = Transition(awayTransitions[i], animation);
+            m_transition = Transition(awayTransitions[i], animation, slideInc);
         }
 
         /**
@@ -127,12 +134,12 @@ namespace Cave::Entity {
          * @param direction Direction of movement.
          * @param animation Animation to apply during transition.
          */
-        void applyPushTransition(const Cave::Entity::Direction& direction, Animation& animation) {
+        void applyPushTransition(const Cave::Entity::Direction& direction, Animation& animation, int slideInc = 4) {
             if (direction == Cave::Entity::Direction::NO_DIRECTION) {
                 return;
             }
             int i = static_cast<int>(direction);
-            m_transition = Transition(pushTransitions[i], animation);
+            m_transition = Transition(pushTransitions[i], animation, slideInc);
         }
 
         /**
@@ -140,12 +147,12 @@ namespace Cave::Entity {
          * @param direction Direction of movement.
          * @param animation Animation to apply during transition.
          */
-        void applyIntoTransition(const Cave::Entity::Direction& direction, Animation& animation) {
+        void applyIntoTransition(const Cave::Entity::Direction& direction, Animation& animation, int slideInc = 4) {
             if (direction == Cave::Entity::Direction::NO_DIRECTION) {
                 return;
             }
             int i = static_cast<int>(direction);
-            m_transition = Transition(intoTransitions[i], animation);
+            m_transition = Transition(intoTransitions[i], animation, slideInc);
         }
 
         /**

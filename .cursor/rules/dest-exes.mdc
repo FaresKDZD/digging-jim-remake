@@ -1,0 +1,13 @@
+---
+description: Copy built game/editor EXEs to the Digjim dest folder
+alwaysApply: true
+---
+
+# Dest EXEs
+
+After every DiggingJim / DiggingJimBuilder rebuild, the EXEs must end up at:
+
+- `D:\OneDrive\Desktop\games\Digjim\DiggingJim.exe`
+- `D:\OneDrive\Desktop\games\Digjim\DiggingJimBuilder.exe`
+
+CMake POST_BUILD already copies them there. If that copy fails because an EXE is running, close those processes and copy again. Also copy updated assets (`tiles.png`, `mini_tiles.png`, sounds) into dest `assets` when those files changed and dest has that folder.

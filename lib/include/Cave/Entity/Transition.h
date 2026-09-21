@@ -80,7 +80,8 @@ namespace Cave::Entity {
 	  */
 	struct Transition {
 
-		Transition(TransitionType type, Animation animation) : m_type(type), m_animation(animation) {};
+		Transition(TransitionType type, Animation animation, int inc = 4)
+			: m_animation(animation), m_type(type), m_inc(inc > 0 ? inc : 4), m_displacement(m_inc) {};
 
 		/// @brief Get the transition type.
 		/// @return TransitionType the transition type.
@@ -141,6 +142,9 @@ namespace Cave::Entity {
 		void updateDisplacement() {
 			if (m_displacement < 32) {
 				m_displacement += m_inc;
+				if (m_displacement > 32) {
+					m_displacement = 32;
+				}
 			}
 		}
 

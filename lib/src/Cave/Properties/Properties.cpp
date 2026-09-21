@@ -18,18 +18,16 @@ void ensureWxInit()
 class PropertiesDialog : public wxDialog
 {
 public:
-    PropertiesDialog(Cave::Properties& props, int diamondCount, bool developerMode, std::function<void()> onTest)
+    PropertiesDialog(Cave::Properties& props, int diamondCount, bool /*developerMode*/, std::function<void()> onTest)
         : wxDialog(nullptr, wxID_ANY, "Cave Properties",
                    wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE)
         , m_props(props)
         , m_diamondCount(diamondCount)
-        , m_developerMode(developerMode)
         , m_onTest(std::move(onTest))
     {
         auto* outer = new wxBoxSizer(wxVERTICAL);
 
         // ── Size: Width / Height ──────────────────────────────────────────────
-        if (developerMode)
         {
             auto* box  = new wxStaticBoxSizer(wxVERTICAL, this, "Size");
             wxWindow* p = box->GetStaticBox();
@@ -182,7 +180,7 @@ public:
             return (uint32_t)std::clamp(s->GetValue(), (int)lo, (int)hi);
         };
 
-        if (m_developerMode && m_width && m_height) {
+        if (m_width && m_height) {
             m_props.width  = (uint32_t)std::clamp(m_width->GetValue(),  20, 255);
             m_props.height = (uint32_t)std::clamp(m_height->GetValue(), 13, 255);
         }
@@ -231,7 +229,6 @@ private:
 
     Cave::Properties&       m_props;
     int                     m_diamondCount;
-    bool                    m_developerMode;
     std::function<void()>   m_onTest;
 
     wxSpinCtrl*    m_width           = nullptr;

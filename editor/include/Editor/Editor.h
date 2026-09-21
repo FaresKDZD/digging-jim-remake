@@ -110,6 +110,10 @@ public:
     /// @brief Open the cave properties dialog for the current cave.
     void actionShowCaveProperties();
 
+    /// @brief Open the caves list window for the current file.
+    void actionShowCavesList();
+
+
     // ----------------------------------------------------------------------------------
     // View
     // ----------------------------------------------------------------------------------
@@ -145,15 +149,24 @@ public:
     /// @brief Request an undo of the last edit.
     void actionUndo();
 
+    /// @brief Request a redo of the last undone edit.
+    void actionRedo();
+
+    /// @brief True when an undo snapshot is available.
+    bool canUndo() const { return !m_undoStack.empty(); }
+
+    /// @brief True when a redo snapshot is available.
+    bool canRedo() const { return !m_redoStack.empty(); }
+
     /**
-     * @brief Snapshot the current map tile state before an edit is applied.
+     * @brief Snapshot the current file and map state before an edit is applied.
      *
      * Must be called immediately before any destructive edit so that
-     * actionUndo() can restore the map to this state. Also sets m_isDirty.
+     * actionUndo() can restore this state. Also sets m_isDirty and clears redo.
      *
      * @param map The current cave map.
      */
-    void saveUndoSnapshot(const Cave::Map& map);
+    void saveUndoSnapshot(Cave::Map& map);
 
     // ----------------------------------------------------------------------------------
     // Implementation helpers
@@ -291,24 +304,46 @@ private:
     /// @brief Set by actionShowCaveProperties(); handled each frame in run().
     bool m_doShowCaveProps = false;
 
+    /// @brief Set by actionShowCavesList(); opens the caves list window.
+    bool m_showCavesList = false;
+
     /// @brief Whether small (16px) block mode is active.
     bool m_smallBlocks     = false;
 
     /// @brief Set by actionUndo(); handled each frame in run().
     bool m_doUndo          = false;
 
+    /// @brief Set by actionRedo(); handled each frame in run().
+    bool m_doRedo          = false;
+
     /// @brief Set by actionTest(); handled each frame in run().
     bool m_doTest          = false;
 
     // ----------------------------------------------------------------------------------
-    // Undo state
+    // Undo / redo state
     // ----------------------------------------------------------------------------------
 
-    /// @brief Tile data snapshot taken before the last edit, used to restore on undo.
-    std::vector<char> m_undoTileData;
+    struct EditorSnapshot {
+        std::vector<Cave::Data> caves;
+        int currentCaveIndex = 0;
+    };
 
-    /// @brief True when an undo snapshot is available to apply; cleared after use.
-    bool m_undoAvailable = false;
+    std::vector<EditorSnapshot> m_undoStack;
+    std::vector<EditorSnapshot> m_redoStack;
+
+    Cave::File* m_activeFile = nullptr;
+    int* m_activeCaveIndex = nullptr;
+
+    int m_cavesListGoTo = -1;
+    int m_cavesListDup = -1;
+    int m_cavesListDel = -1;
+    int m_cavesListMoveFrom = -1;
+    int m_cavesListMoveTo = -1;
+
+    void clearUndoHistory();
+    void applyEditorSnapshot(const EditorSnapshot& snap, Cave::Map& map, Cave::File& loadedFile, int& currentCaveIndex);
+    void drawCavesListWindow(int currentCaveIndex, int caveCount);
+    void reorderCaves(Cave::File& loadedFile, int& currentCaveIndex, int from, int to);
 
     // ----------------------------------------------------------------------------------
     // File state

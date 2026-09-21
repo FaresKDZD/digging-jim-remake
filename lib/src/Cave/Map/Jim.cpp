@@ -9,21 +9,39 @@ void Cave::Map::updateJim(const int& index) {
 	}
 	updateEntityAnimation(index);
 
+	const bool collect = m_game->inputSystem.isPressed(Input::Action::Collect);
+	Cave::Entity::Direction moveDir = Cave::Entity::Direction::NO_DIRECTION;
+	if (m_game->inputSystem.isPressed(Input::Action::MoveUp))
+		moveDir = Cave::Entity::Direction::UP;
+	else if (m_game->inputSystem.isPressed(Input::Action::MoveDown))
+		moveDir = Cave::Entity::Direction::DOWN;
+	else if (m_game->inputSystem.isPressed(Input::Action::MoveRight))
+		moveDir = Cave::Entity::Direction::RIGHT;
+	else if (m_game->inputSystem.isPressed(Input::Action::MoveLeft))
+		moveDir = Cave::Entity::Direction::LEFT;
+
+	bool comboActive = false;
+	if (collect && moveDir != Cave::Entity::Direction::NO_DIRECTION) {
+		const int inFront = getIndex(index, moveDir);
+		comboActive = getEntityType(inFront) == Cave::Entity::Type::Gate;
+	}
+	if (!comboActive) m_jimGateComboHeld = false;
+
 	if (m_game->isFreeCamera()) {
 		updateJimIdle(index);
 		return;
 	}
 
-	if (m_game->inputSystem.isPressed(Input::Action::MoveUp)) {
+	if (moveDir == Cave::Entity::Direction::UP) {
 		updateJimMovement(index, Cave::Entity::Facing::NEUTRAL, Cave::Entity::Direction::UP, Cave::Entity::Trait::WarpableUp);
 	}
-	else if (m_game->inputSystem.isPressed(Input::Action::MoveDown)) {
+	else if (moveDir == Cave::Entity::Direction::DOWN) {
 		updateJimMovement(index, Cave::Entity::Facing::NEUTRAL, Cave::Entity::Direction::DOWN, Cave::Entity::Trait::WarpableDown);
 	}
-	else if (m_game->inputSystem.isPressed(Input::Action::MoveRight)) {
+	else if (moveDir == Cave::Entity::Direction::RIGHT) {
 		updateJimMovement(index, Cave::Entity::Facing::RIGHT, Cave::Entity::Direction::RIGHT, Cave::Entity::Trait::WarpableRight);
 	}
-	else if (m_game->inputSystem.isPressed(Input::Action::MoveLeft)) {
+	else if (moveDir == Cave::Entity::Direction::LEFT) {
 		updateJimMovement(index, Cave::Entity::Facing::LEFT, Cave::Entity::Direction::LEFT, Cave::Entity::Trait::WarpableLeft);
 	}
 	else {
@@ -59,6 +77,8 @@ void Cave::Map::updateJimMovement(const int& index, const Cave::Entity::Facing& 
 
 	if (handleJimPushDetonator(index, inFront)) return;
 
+	if (handleJimUseGate(index, inFront, collectMode)) return;
+
 	if (handleJimPush(index, inFront, collectMode, direction)) return;
 
 	if (handleJimTraverse(index, inFront, collectMode, facing, direction)) return;
@@ -92,6 +112,7 @@ bool Cave::Map::handleJimTraverse(const int& index, const int& inFront, const bo
 			if (collectable) {
 				m_game->soundManager.play(Sound::Effect::Collect);
 				m_game->sendSignal(GameSignal::CollectDiamond);
+				notifyFusion5Stimulus(inFront);
 			}
 			else if (ruby) {
 				m_jimInvincibleFrames = Cave::Entity::Ruby::INVINCIBLE_FRAMES;
@@ -132,6 +153,7 @@ bool Cave::Map::handleJimTraverse(const int& index, const int& inFront, const bo
 		if (collectable) {
 			m_game->soundManager.play(Sound::Effect::Collect);
 			m_game->sendSignal(GameSignal::CollectDiamond);
+			notifyFusion5Stimulus(inFront);
 		}
 		else if (ruby) {
 			m_jimInvincibleFrames = Cave::Entity::Ruby::INVINCIBLE_FRAMES;
@@ -173,9 +195,19 @@ bool Cave::Map::handleJimPush(const int& index, const int& inFront, const bool& 
 		m_jimIndex = inFront;
 		m_jimMovedThisTick = true;
 		m_game->soundManager.play(Sound::Effect::Drop);
+		notifyFusion5Stimulus(inFront);
 		return true;
 	}
 	return false;
+}
+
+bool Cave::Map::handleJimUseGate(const int& index, const int& inFront, const bool& collectMode) {
+	if (getEntityType(inFront) != Cave::Entity::Type::Gate) return false;
+	if (!collectMode) return false;
+	if (!m_jimGateComboHeld) toggleGate(inFront);
+	m_jimGateComboHeld = true;
+	setJimMoveAmination(index);
+	return true;
 }
 
 bool Cave::Map::handleJimPushDetonator(const int& index, const int& inFront) {
@@ -212,6 +244,7 @@ bool Cave::Map::handleJimTubeWarp(const int& index, const int& inFront, const bo
 		m_jimIndex = getIndex(inFront, direction);
 		m_jimMovedThisTick = true;
 		m_game->soundManager.play(Sound::Effect::Tube);
+		notifyFusion5Stimulus(m_jimIndex);
 		return true;
 	}
 	return false;
@@ -286,6 +319,7 @@ bool Cave::Map::handleJimPortal(const int& index, const int& inFront, const Cave
 	m_jimIndex = landing;
 	m_jimMovedThisTick = true;
 	m_snapCameraToJim = true;
+	m_game->soundManager.play(Sound::Effect::Haze);
 	return true;
 }
 

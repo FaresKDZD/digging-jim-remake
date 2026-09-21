@@ -54,6 +54,27 @@ namespace HUD::Editor {
          */
         void selectType(const int& x, const int& y);
 
+        /// @brief True if this palette cell is the shared Pegul slot.
+        bool isPegulSlot(const int& x, const int& y) const;
+
+        /// @brief Current Pegul variant painted by the shared palette slot.
+        Cave::Entity::Type getPegulType() const { return m_pegulType; }
+
+        /// @brief Switch the Pegul palette slot to a variant and select it.
+        void setPegulType(Cave::Entity::Type type);
+
+        /// @brief True if this palette cell is the shared Fusion slot.
+        bool isFusionSlot(const int& x, const int& y) const;
+
+        /// @brief Current Fusion variant painted by the shared palette slot.
+        Cave::Entity::Type getFusionType() const { return m_fusionType; }
+
+        /// @brief Switch the Fusion palette slot to a variant and select it.
+        void setFusionType(Cave::Entity::Type type);
+
+        /// @brief Right-click: if over a variant palette slot, select it and return true.
+        bool handleRightClick(sf::Vector2f vp, float panelX, float toolbarH);
+
         /// @brief Return a fresh instance of the currently selected entity.
         Cave::Entity::Base getSelectedEntity();
 
@@ -188,13 +209,15 @@ namespace HUD::Editor {
 
         /// @brief The currently selected entity type.
         Cave::Entity::Type        m_selectedType = Cave::Entity::Type::Space;
+        Cave::Entity::Type        m_pegulType    = Cave::Entity::Type::PegulNormo;
+        Cave::Entity::Type        m_fusionType   = Cave::Entity::Type::Fusion1;
 
         /// @brief Tick counter that drives palette entity animation.
         Utils::TickCounter        m_TickCounter  = Utils::TickCounter();
 
         /// @brief Current scroll row offset for the entity palette.
         int                       m_scrollRow    = 0;
-        static constexpr int      TOTAL_PALETTE_ROWS   = 17;
+        static constexpr int      TOTAL_PALETTE_ROWS   = 19;
         static constexpr int      VISIBLE_PALETTE_ROWS = 10;
         static constexpr int      MAX_SCROLL_ROW       = TOTAL_PALETTE_ROWS - VISIBLE_PALETTE_ROWS;
 

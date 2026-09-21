@@ -33,6 +33,10 @@ HUD::Editor::Panel::Panel(::Editor* editor) : m_editor(editor), m_tileRenderer(&
                 m_entities[type] = getNewEntity(type);
         }
     }
+    for (const auto& variant : Cave::Entity::Pegul::VARIANTS)
+        m_entities[variant.type] = getNewEntity(variant.type);
+    for (const auto& variant : Cave::Entity::Fusion::VARIANTS)
+        m_entities[variant.type] = getNewEntity(variant.type);
 
     m_builderMenu.setSize(sf::Vector2f(PANEL_W, 496.f - PALETTE_H));
     m_builderMenu.setFillColor(sf::Color(128, 128, 128));
@@ -146,6 +150,20 @@ int HUD::Editor::Panel::miniTileIndex(Cave::Entity::Type type)
     case T::ChargerBody:     return 48;
     case T::Well:            return 49;
     case T::Chum:            return 50;
+    case T::GallopQueen:    return 51;
+    case T::GallopEgg:       return 52;
+    case T::Gallop:          return 53;
+    case T::PegulNormo:      return 54;
+    case T::PegulFatto:      return 55;
+    case T::PegulTallo:      return 56;
+    case T::PegulBieye:      return 57;
+    case T::PegulTrieye:     return 58;
+    case T::Fusion1:         return 59;
+    case T::Fusion2:         return 60;
+    case T::Fusion3:         return 61;
+    case T::Fusion4:         return 62;
+    case T::Fusion5:         return 64;
+    case T::Gate:             return 63;
     default:                 return 0;
     }
 }
@@ -505,6 +523,44 @@ void HUD::Editor::Panel::selectType(const int& x, const int& y) {
         m_scrollRow = y - VISIBLE_PALETTE_ROWS + 1;
 }
 
+bool HUD::Editor::Panel::isPegulSlot(const int& x, const int& y) const {
+    return x == 0 && y == 18;
+}
+
+void HUD::Editor::Panel::setPegulType(Cave::Entity::Type type) {
+    if (!Cave::Entity::isPegul(type)) return;
+    m_pegulType = type;
+    selectType(0, 18);
+}
+
+bool HUD::Editor::Panel::isFusionSlot(const int& x, const int& y) const {
+    return x == 1 && y == 18;
+}
+
+void HUD::Editor::Panel::setFusionType(Cave::Entity::Type type) {
+    if (!Cave::Entity::isFusion(type)) return;
+    m_fusionType = type;
+    selectType(1, 18);
+}
+
+bool HUD::Editor::Panel::handleRightClick(sf::Vector2f vp, float panelX, float toolbarH) {
+    float lx = vp.x - panelX;
+    float ly = vp.y - toolbarH;
+    int px = static_cast<int>(lx) / 34;
+    int py = static_cast<int>(ly) / 34;
+    if (px >= 0 && px < 3 && py >= 0 && py < VISIBLE_PALETTE_ROWS && lx < SB_X)
+    {
+        const int row = py + m_scrollRow;
+        if (isPegulSlot(px, row) || isFusionSlot(px, row))
+        {
+            selectType(px, row);
+            if (m_fillSelected == 3) m_fillSelected = 0;
+            return true;
+        }
+    }
+    return false;
+}
+
 Cave::Entity::Base HUD::Editor::Panel::getSelectedEntity() {
     return getNewEntity(m_selectedType);
 }
@@ -575,6 +631,12 @@ Cave::Entity::Type HUD::Editor::Panel::getType(const int& x, const int& y) {
     case 48: return Cave::Entity::Type::Charger;
     case 49: return Cave::Entity::Type::Well;
     case 50: return Cave::Entity::Type::Chum;
+    case 51: return Cave::Entity::Type::GallopQueen;
+    case 52: return Cave::Entity::Type::GallopEgg;
+    case 53: return Cave::Entity::Type::Gallop;
+    case 54: return m_pegulType;
+    case 55: return m_fusionType;
+    case 56: return Cave::Entity::Type::Gate;
     default: return Cave::Entity::Type::NoType;
     }
 }
@@ -637,6 +699,20 @@ Cave::Entity::Base HUD::Editor::Panel::getNewEntity(Cave::Entity::Type type) {
     }
     case Cave::Entity::Type::Well:            return Cave::Entity::Well();
     case Cave::Entity::Type::Chum:            return Cave::Entity::Chum();
+    case Cave::Entity::Type::GallopQueen:    return Cave::Entity::GallopQueen();
+    case Cave::Entity::Type::GallopEgg:       return Cave::Entity::GallopEgg();
+    case Cave::Entity::Type::Gallop:          return Cave::Entity::Gallop();
+    case Cave::Entity::Type::PegulNormo:      return Cave::Entity::Pegul(Cave::Entity::Type::PegulNormo);
+    case Cave::Entity::Type::PegulFatto:      return Cave::Entity::Pegul(Cave::Entity::Type::PegulFatto);
+    case Cave::Entity::Type::PegulTallo:      return Cave::Entity::Pegul(Cave::Entity::Type::PegulTallo);
+    case Cave::Entity::Type::PegulBieye:      return Cave::Entity::Pegul(Cave::Entity::Type::PegulBieye);
+    case Cave::Entity::Type::PegulTrieye:     return Cave::Entity::Pegul(Cave::Entity::Type::PegulTrieye);
+    case Cave::Entity::Type::Fusion1:         return Cave::Entity::Fusion(Cave::Entity::Type::Fusion1);
+    case Cave::Entity::Type::Fusion2:         return Cave::Entity::Fusion(Cave::Entity::Type::Fusion2);
+    case Cave::Entity::Type::Fusion3:         return Cave::Entity::Fusion(Cave::Entity::Type::Fusion3);
+    case Cave::Entity::Type::Fusion4:         return Cave::Entity::Fusion(Cave::Entity::Type::Fusion4);
+    case Cave::Entity::Type::Fusion5:         return Cave::Entity::Fusion(Cave::Entity::Type::Fusion5);
+    case Cave::Entity::Type::Gate:            return Cave::Entity::Gate();
     default:                                  return Cave::Entity::Base();
     }
 }

@@ -54,6 +54,21 @@ Cave::Entity::Base Cave::Data::getTileEntity(const char& tile) {
 	case 53: return Cave::Entity::Charger();
 	case 54: return Cave::Entity::Well();
 	case 55: return Cave::Entity::Chum();
+	case 56: return Cave::Entity::GallopQueen();
+	case 57: return Cave::Entity::GallopEgg();
+	case 58: return Cave::Entity::Gallop();
+	case 59: return Cave::Entity::Pegul(Cave::Entity::Type::PegulNormo);
+	case 60: return Cave::Entity::Pegul(Cave::Entity::Type::PegulFatto);
+	case 61: return Cave::Entity::Pegul(Cave::Entity::Type::PegulTallo);
+	case 62: return Cave::Entity::Pegul(Cave::Entity::Type::PegulBieye);
+	case 63: return Cave::Entity::Pegul(Cave::Entity::Type::PegulTrieye);
+	case 64: return Cave::Entity::Fusion(Cave::Entity::Type::Fusion1);
+	case 65: return Cave::Entity::Fusion(Cave::Entity::Type::Fusion2);
+	case 66: return Cave::Entity::Fusion(Cave::Entity::Type::Fusion3);
+	case 67: return Cave::Entity::Fusion(Cave::Entity::Type::Fusion4);
+	case 70: return Cave::Entity::Fusion(Cave::Entity::Type::Fusion5);
+	case 68: return Cave::Entity::Gate();
+	case 69: return Cave::Entity::Gate(true);
 	default:
 		return Cave::Entity::Space();
 	}

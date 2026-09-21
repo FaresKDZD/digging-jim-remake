@@ -8,7 +8,8 @@ namespace Cave::Entity {
     /**
      * @class Glutton
      * @brief Moves like a Protozo (turning left). Hunts and eats diamond sources:
-     * diamonds, fragile diamonds, granite ore, amoeba, and Cave Gulls.
+     * diamonds, fragile diamonds, granite ore, amoeba, Cave Gulls, Gallops,
+     * Gallop Queens, and Gallop Eggs.
      * Immune to amoeba contact.
      */
     class Glutton : public Base {

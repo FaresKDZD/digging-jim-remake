@@ -56,6 +56,9 @@ namespace Sound {
         /// @brief Charger enrage / charge windup.
         Enrage,
 
+        /// @brief Fusion 1 teleport / Pegul fusion (slowed diamond collect).
+        Haze,
+
         /// @brief Puffer expanding to 3x3.
         Inflate,
 

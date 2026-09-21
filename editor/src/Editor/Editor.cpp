@@ -222,8 +222,30 @@ static char entityTypeToTile(Cave::Entity::Type type)
     case Cave::Entity::Type::Charger:             return 53;
     case Cave::Entity::Type::Well:                return 54;
     case Cave::Entity::Type::Chum:                return 55;
+    case Cave::Entity::Type::GallopQueen:        return 56;
+    case Cave::Entity::Type::GallopEgg:           return 57;
+    case Cave::Entity::Type::Gallop:              return 58;
+    case Cave::Entity::Type::PegulNormo:          return 59;
+    case Cave::Entity::Type::PegulFatto:          return 60;
+    case Cave::Entity::Type::PegulTallo:          return 61;
+    case Cave::Entity::Type::PegulBieye:          return 62;
+    case Cave::Entity::Type::PegulTrieye:         return 63;
+    case Cave::Entity::Type::Fusion1:             return 64;
+    case Cave::Entity::Type::Fusion2:             return 65;
+    case Cave::Entity::Type::Fusion3:             return 66;
+    case Cave::Entity::Type::Fusion4:             return 67;
+    case Cave::Entity::Type::Fusion5:             return 70;
+    case Cave::Entity::Type::Gate:                return 68;
     default:                                      return 0;
     }
+}
+
+static char entityToTile(const Cave::Entity::Base& entity)
+{
+    if (entity.getType() == Cave::Entity::Type::Gate
+        && entity.spawnCredit == Cave::Entity::Gate::MODE_OPEN)
+        return 69;
+    return entityTypeToTile(entity.getType());
 }
 
 Editor::Editor() {}
@@ -244,7 +266,7 @@ void Editor::copyLevel(const Cave::Map& map)
 {
     m_clipboardTileData.resize(map.caveEntities.size());
     for (size_t i = 0; i < map.caveEntities.size(); ++i)
-        m_clipboardTileData[i] = entityTypeToTile(map.caveEntities[i].getType());
+        m_clipboardTileData[i] = entityToTile(map.caveEntities[i]);
     map.collectWellRecords(m_clipboardWells);
     map.collectPortalRecords(m_clipboardPortals);
 }
@@ -271,7 +293,7 @@ void Editor::copySelection(const Cave::Map& map)
         for (int x = x0; x <= x1; ++x) {
             const int i = (y - y0) * m_clipW + (x - x0);
             const auto& e = map.caveEntities[y * map.width + x];
-            m_selectionClipboard[i] = entityTypeToTile(e.getType());
+            m_selectionClipboard[i] = entityToTile(e);
             if (e.getType() == Cave::Entity::Type::Well)
                 m_selectionWellPacked[i] = e.targetIndex;
             if (e.getType() == Cave::Entity::Type::Portal)
@@ -321,7 +343,7 @@ void Editor::syncCurrentCave(Cave::Map& map, Cave::File& loadedFile, int current
     cave.properties = game.getCaveProperties();
     cave.tileData.resize(map.caveEntities.size());
     for (size_t i = 0; i < map.caveEntities.size(); ++i)
-        cave.tileData[i] = entityTypeToTile(map.caveEntities[i].getType());
+        cave.tileData[i] = entityToTile(map.caveEntities[i]);
     map.collectWellRecords(cave.wells);
     map.collectPortalRecords(cave.portals);
 }
@@ -470,17 +492,138 @@ void Editor::actionPasteSelection()     { m_doPasteSelection = true; }
 void Editor::actionRandomDist()         { m_doRandomDist    = true; }
 void Editor::actionShowSettings()       { m_doShowSettings  = true; }
 void Editor::actionShowCaveProperties() { m_doShowCaveProps = true; }
+void Editor::actionShowCavesList()      { m_showCavesList = true; }
 void Editor::actionSetSmallBlocks(bool small_blocks) { m_smallBlocks = small_blocks; }
 void Editor::actionTest()               { m_doTest = true; }
 void Editor::actionUndo()               { m_doUndo = true; }
+void Editor::actionRedo()               { m_doRedo = true; }
 
-void Editor::saveUndoSnapshot(const Cave::Map& map)
+void Editor::clearUndoHistory()
 {
-    m_undoTileData.resize(map.caveEntities.size());
-    for (size_t i = 0; i < map.caveEntities.size(); ++i)
-        m_undoTileData[i] = entityTypeToTile(map.caveEntities[i].getType());
-    m_isDirty      = true;
-    m_undoAvailable = true;
+    m_undoStack.clear();
+    m_redoStack.clear();
+}
+
+void Editor::saveUndoSnapshot(Cave::Map& map)
+{
+    m_isDirty = true;
+    if (!m_activeFile || !m_activeCaveIndex) return;
+    syncCurrentCave(map, *m_activeFile, *m_activeCaveIndex);
+    m_undoStack.push_back({ m_activeFile->caves, *m_activeCaveIndex });
+    m_redoStack.clear();
+}
+
+void Editor::applyEditorSnapshot(const EditorSnapshot& snap, Cave::Map& map, Cave::File& loadedFile, int& currentCaveIndex)
+{
+    loadedFile.caves = snap.caves;
+    if (loadedFile.caves.empty()) return;
+    currentCaveIndex = std::clamp(snap.currentCaveIndex, 0, (int)loadedFile.caves.size() - 1);
+    const Cave::Data& cave = loadedFile.caves[currentCaveIndex];
+    game.setCaveProperties(cave.properties);
+    auto p = game.getCaveProperties();
+    map.generateMap(&p, cave.tileData, cave.wells, cave.portals);
+    map.setEditorMode();
+}
+
+void Editor::reorderCaves(Cave::File& loadedFile, int& currentCaveIndex, int from, int to)
+{
+    const int n = (int)loadedFile.caves.size();
+    if (from < 0 || to < 0 || from >= n || to >= n || from == to) return;
+    if (from < to)
+        std::rotate(loadedFile.caves.begin() + from, loadedFile.caves.begin() + from + 1, loadedFile.caves.begin() + to + 1);
+    else
+        std::rotate(loadedFile.caves.begin() + to, loadedFile.caves.begin() + from, loadedFile.caves.begin() + from + 1);
+
+    if (currentCaveIndex == from)
+        currentCaveIndex = to;
+    else if (from < to)
+    {
+        if (currentCaveIndex > from && currentCaveIndex <= to)
+            --currentCaveIndex;
+    }
+    else if (currentCaveIndex >= to && currentCaveIndex < from)
+        ++currentCaveIndex;
+}
+
+void Editor::drawCavesListWindow(int currentCaveIndex, int caveCount)
+{
+    if (!m_showCavesList) return;
+
+    const ImVec4 beige = { 212 / 255.f, 208 / 255.f, 200 / 255.f, 1.f };
+    const ImVec4 navy  = { 150 / 255.f, 190 / 255.f, 235 / 255.f, 1.f };
+    const ImVec4 black = { 0.f, 0.f, 0.f, 1.f };
+
+    ImGui::SetNextWindowSize(ImVec2(220.f, 280.f), ImGuiCond_FirstUseEver);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, beige);
+    ImGui::PushStyleColor(ImGuiCol_TitleBg, beige);
+    ImGui::PushStyleColor(ImGuiCol_TitleBgActive, beige);
+    ImGui::PushStyleColor(ImGuiCol_TitleBgCollapsed, beige);
+    ImGui::PushStyleColor(ImGuiCol_Text, black);
+    ImGui::PushStyleColor(ImGuiCol_Border, black);
+    ImGui::PushStyleColor(ImGuiCol_Header, navy);
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, navy);
+    ImGui::PushStyleColor(ImGuiCol_HeaderActive, navy);
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, beige);
+    ImGui::PushStyleColor(ImGuiCol_ScrollbarBg, beige);
+    ImGui::PushStyleColor(ImGuiCol_ScrollbarGrab, ImVec4(160 / 255.f, 160 / 255.f, 160 / 255.f, 1.f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6.f, 6.f));
+
+    if (ImGui::Begin("Caves List", &m_showCavesList, ImGuiWindowFlags_NoCollapse))
+    {
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, navy);
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive, navy);
+        for (int i = 0; i < caveCount; ++i)
+        {
+            char label[32];
+            std::snprintf(label, sizeof(label), "Level %03d", i + 1);
+            const bool selected = (i == currentCaveIndex);
+            ImGui::PushID(i);
+            if (ImGui::Selectable(label, selected))
+            {
+                if (!ImGui::IsMouseDragging(ImGuiMouseButton_Left))
+                    m_cavesListGoTo = i;
+            }
+            if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceNoDisableHover))
+            {
+                ImGui::SetDragDropPayload("CAVE_LIST_IDX", &i, sizeof(int));
+                ImGui::TextUnformatted(label);
+                ImGui::EndDragDropSource();
+            }
+            if (ImGui::BeginDragDropTarget())
+            {
+                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CAVE_LIST_IDX"))
+                {
+                    if (payload->DataSize == sizeof(int))
+                    {
+                        m_cavesListMoveFrom = *static_cast<const int*>(payload->Data);
+                        m_cavesListMoveTo = i;
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
+            if (ImGui::BeginPopupContextItem("##caves_list_ctx"))
+            {
+                ImGui::PushStyleColor(ImGuiCol_PopupBg, beige);
+                ImGui::PushStyleColor(ImGuiCol_HeaderHovered, navy);
+                ImGui::PushStyleColor(ImGuiCol_HeaderActive, navy);
+                ImGui::Indent(20.f);
+                if (ImGui::MenuItem("Duplicate"))
+                    m_cavesListDup = i;
+                const bool canDelete = caveCount > 1;
+                if (ImGui::MenuItem("Delete", nullptr, false, canDelete))
+                    m_cavesListDel = i;
+                ImGui::Unindent(20.f);
+                ImGui::PopStyleColor(3);
+                ImGui::EndPopup();
+            }
+            ImGui::PopID();
+        }
+        ImGui::PopStyleColor(2);
+    }
+    ImGui::End();
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor(12);
 }
 
 void Editor::actionChangeCursor(sf::Cursor::Type type)
@@ -492,10 +635,13 @@ void Editor::actionChangeCursor(sf::Cursor::Type type)
 
 void Editor::handleShortcuts(const sf::Event::KeyPressed& e, HUD::Editor::Panel* editorPanel)
 {
-    if (ImGui::GetIO().WantCaptureKeyboard) return;
-
     using Key = sf::Keyboard::Key;
     const bool ctrl = e.control;
+
+    if (ctrl && !e.shift && e.code == Key::Z) { actionUndo(); return; }
+    if (ctrl && !e.shift && e.code == Key::Y) { actionRedo(); return; }
+
+    if (ImGui::GetIO().WantCaptureKeyboard) return;
 
     if (ctrl)
     {
@@ -517,6 +663,8 @@ void Editor::handleShortcuts(const sf::Event::KeyPressed& e, HUD::Editor::Panel*
             case Key::S: actionSaveFile();           break;
             case Key::A: actionSaveFileAs();         break;
             case Key::T: actionTest();               break;
+            case Key::Z: actionUndo();               break;
+            case Key::Y: actionRedo();               break;
             case Key::U: actionUndo();               break;
             case Key::C: actionCopySelection();      break;
             case Key::V: actionPasteSelection();     break;
@@ -772,6 +920,8 @@ bool Editor::run()
 
     Cave::File   loadedFile;
     int          currentCaveIndex = 0;
+    m_activeFile = &loadedFile;
+    m_activeCaveIndex = &currentCaveIndex;
 
     // Seed loadedFile with the initial blank cave so insert/delete always have an entry
     {
@@ -779,7 +929,7 @@ bool Editor::run()
         initialCave.properties = game.getCaveProperties();
         initialCave.tileData.resize(map.caveEntities.size());
         for (size_t i = 0; i < map.caveEntities.size(); ++i)
-            initialCave.tileData[i] = entityTypeToTile(map.caveEntities[i].getType());
+            initialCave.tileData[i] = entityToTile(map.caveEntities[i]);
         loadedFile.caves.push_back(std::move(initialCave));
     }
 
@@ -839,6 +989,8 @@ bool Editor::run()
     bool         openTilePicker   = false;
     bool         openWellProps    = false;
     bool         openPortalProps  = false;
+    bool         openPegulPicker  = false;
+    bool         openFusionPicker = false;
     int          wellPropsIndex   = -1;
     ImVec2       tilePickerPos    = { 0.f, 0.f };
     float        vsbDragStartY    = 0.f;
@@ -906,7 +1058,18 @@ bool Editor::run()
                     bool overPanel   = vp.x >= PANEL_X;
                     bool overVsb     = vp.x >= VSB_X;
                     bool overHsb     = vp.y >= HSB_Y;
-                    if (!overToolbar && !overPanel && !overVsb && !overHsb)
+                    if (overPanel)
+                    {
+                        if (editorPanel.handleRightClick(vp, PANEL_X, TOOLBAR_H))
+                        {
+                            tilePickerPos = ImVec2((float)e->position.x, (float)e->position.y);
+                            if (Cave::Entity::isFusion(editorPanel.getSelectedType()))
+                                openFusionPicker = true;
+                            else
+                                openPegulPicker = true;
+                        }
+                    }
+                    else if (!overToolbar && !overVsb && !overHsb)
                     {
                         sf::View caveView = caveCamera.view();
                         caveView.setViewport(sf::FloatRect(sf::Vector2f(CAVE_VP_X, CAVE_VP_Y),
@@ -1207,6 +1370,7 @@ bool Editor::run()
 
         toolbar.draw(&editorPanel, m_developerMode);
         drawEditorPopupClickBlocker();
+        drawCavesListWindow(currentCaveIndex, (int)loadedFile.caves.size());
 
         // Right-click tile picker popup
         {
@@ -1217,6 +1381,44 @@ bool Editor::run()
                 openTilePicker = false;
             }
             toolbar.drawToolsContextPopup(&editorPanel);
+        }
+
+        {
+            if (openPegulPicker)
+            {
+                ImGui::SetNextWindowPos(tilePickerPos, ImGuiCond_Always, ImVec2(0.f, 0.f));
+                ImGui::OpenPopup("##pegul_variant");
+                openPegulPicker = false;
+            }
+            if (ImGui::BeginPopup("##pegul_variant"))
+            {
+                for (const auto& variant : Cave::Entity::Pegul::VARIANTS)
+                {
+                    const bool selected = editorPanel.getPegulType() == variant.type;
+                    if (ImGui::MenuItem(variant.label, nullptr, selected))
+                        editorPanel.setPegulType(variant.type);
+                }
+                ImGui::EndPopup();
+            }
+        }
+
+        {
+            if (openFusionPicker)
+            {
+                ImGui::SetNextWindowPos(tilePickerPos, ImGuiCond_Always, ImVec2(0.f, 0.f));
+                ImGui::OpenPopup("##fusion_variant");
+                openFusionPicker = false;
+            }
+            if (ImGui::BeginPopup("##fusion_variant"))
+            {
+                for (const auto& variant : Cave::Entity::Fusion::VARIANTS)
+                {
+                    const bool selected = editorPanel.getFusionType() == variant.type;
+                    if (ImGui::MenuItem(variant.label, nullptr, selected))
+                        editorPanel.setFusionType(variant.type);
+                }
+                ImGui::EndPopup();
+            }
         }
 
         {
@@ -1525,6 +1727,25 @@ bool Editor::run()
 
         rt.display();
 
+        auto loadCaveAt = [&](int newIndex)
+        {
+            if (newIndex < 0 || newIndex >= (int)loadedFile.caves.size()) return;
+            if (newIndex != currentCaveIndex)
+                syncCurrentCave(map, loadedFile, currentCaveIndex);
+            currentCaveIndex = newIndex;
+            const Cave::Data& caveData = loadedFile.caves[currentCaveIndex];
+            game.setCaveProperties(caveData.properties);
+            originalProps = caveData.properties;
+            auto p = game.getCaveProperties();
+            map.generateMap(&p, caveData.tileData, caveData.wells, caveData.portals);
+            map.setEditorMode();
+            syncCaveBounds();
+            caveCamera.setCentre(sf::Vector2f(viewSize.x / 2.f, viewSize.y / 2.f));
+            lastPlacedX = -1; lastPlacedY = -1;
+            m_hasSelection = false;
+            updateTitle();
+        };
+
         if (m_doNewFile)
         {
             m_doNewFile = false;
@@ -1549,9 +1770,8 @@ bool Editor::run()
             map.generateMap(&p, loadedFile.caves[0].tileData);
             map.setEditorMode();
             syncCaveBounds();
-            m_undoTileData.clear();
+            clearUndoHistory();
             m_isDirty       = false;
-            m_undoAvailable = false;
             m_hasSelection  = false;
             caveCamera.setCentre(sf::Vector2f(viewSize.x / 2.f, viewSize.y / 2.f));
             lastPlacedX = -1; lastPlacedY = -1;
@@ -1578,6 +1798,7 @@ bool Editor::run()
                     loadedFile       = Cave::File::loadFromFile(dir, name);
                     m_savedFilePath  = fullPath;
                     m_isDirty        = false;
+                    clearUndoHistory();
                     currentCaveIndex = 0;
 
                     if (!loadedFile.caves.empty())
@@ -1610,28 +1831,87 @@ bool Editor::run()
                 int n = (int)loadedFile.caves.size();
                 int newIndex = std::clamp(currentCaveIndex + delta, 0, n - 1);
                 if (newIndex != currentCaveIndex)
+                    loadCaveAt(newIndex);
+            }
+        }
+
+        if (m_cavesListGoTo >= 0)
+        {
+            const int dest = m_cavesListGoTo;
+            m_cavesListGoTo = -1;
+            if (dest != currentCaveIndex)
+                loadCaveAt(dest);
+        }
+        if (m_cavesListDup >= 0)
+        {
+            const int src = m_cavesListDup;
+            m_cavesListDup = -1;
+            if (src >= 0 && src < (int)loadedFile.caves.size())
+            {
+                saveUndoSnapshot(map);
+                Cave::Data copy = loadedFile.caves[src];
+                loadedFile.caves.insert(loadedFile.caves.begin() + src + 1, std::move(copy));
+                if (currentCaveIndex > src)
+                    ++currentCaveIndex;
+                updateTitle();
+            }
+        }
+        if (m_cavesListDel >= 0)
+        {
+            const int src = m_cavesListDel;
+            m_cavesListDel = -1;
+            if ((int)loadedFile.caves.size() <= 1)
+            {
+                tinyfd_messageBox("Remove Level",
+                    "Cannot remove the last remaining level.",
+                    "ok", "info", 1);
+            }
+            else if (src >= 0 && src < (int)loadedFile.caves.size())
+            {
+                char msg[96];
+                std::snprintf(msg, sizeof(msg),
+                    "Remove level %03d from this cave file?",
+                    src + 1);
+                if (tinyfd_messageBox("Remove Level", msg, "okcancel", "warning", 0) == 1)
                 {
-                    syncCurrentCave(map, loadedFile, currentCaveIndex);
-                    m_undoTileData.clear();
-                    currentCaveIndex = newIndex;
-                    const Cave::Data& caveData = loadedFile.caves[currentCaveIndex];
-                    game.setCaveProperties(caveData.properties);
-                    originalProps = caveData.properties;
-                    auto p = game.getCaveProperties();
-                    map.generateMap(&p, caveData.tileData, caveData.wells, caveData.portals);
-                    map.setEditorMode();
-                    syncCaveBounds();
-                    caveCamera.setCentre(sf::Vector2f(viewSize.x / 2.f, viewSize.y / 2.f));
+                    saveUndoSnapshot(map);
+                    if (src == currentCaveIndex)
+                    {
+                        deleteLevel(map, loadedFile, currentCaveIndex);
+                        originalProps = game.getCaveProperties();
+                        m_hasSelection = false;
+                        syncCaveBounds();
+                        caveCamera.setCentre(sf::Vector2f(viewSize.x / 2.f, viewSize.y / 2.f));
+                    }
+                    else
+                    {
+                        loadedFile.caves.erase(loadedFile.caves.begin() + src);
+                        if (src < currentCaveIndex)
+                            --currentCaveIndex;
+                    }
                     lastPlacedX = -1; lastPlacedY = -1;
-                    m_hasSelection = false;
                     updateTitle();
                 }
+            }
+        }
+        if (m_cavesListMoveFrom >= 0 && m_cavesListMoveTo >= 0)
+        {
+            const int from = m_cavesListMoveFrom;
+            const int to = m_cavesListMoveTo;
+            m_cavesListMoveFrom = m_cavesListMoveTo = -1;
+            if (from != to)
+            {
+                saveUndoSnapshot(map);
+                reorderCaves(loadedFile, currentCaveIndex, from, to);
+                updateTitle();
             }
         }
 
         if (m_doShowCaveProps)
         {
             m_doShowCaveProps = false;
+            syncCurrentCave(map, loadedFile, currentCaveIndex);
+            EditorSnapshot preProps{ loadedFile.caves, currentCaveIndex };
             bool trigger = false;
             Cave::Properties p = game.getCaveProperties();
             Cave::Properties oldP = p;
@@ -1684,12 +1964,27 @@ bool Editor::run()
             });
             {
                 game.setCaveProperties(p);
+                if (p.width != oldP.width || p.height != oldP.height
+                    || p.plasmaGrowthSpeed != oldP.plasmaGrowthSpeed
+                    || p.time != oldP.time || p.quota != oldP.quota
+                    || p.diamondValue != oldP.diamondValue
+                    || p.extraDiamondValue != oldP.extraDiamondValue
+                    || p.amoebaGrowthSpeed != oldP.amoebaGrowthSpeed
+                    || p.amoebaGrowthMax != oldP.amoebaGrowthMax
+                    || p.magicWallTime != oldP.magicWallTime
+                    || p.hue != oldP.hue || p.sat != oldP.sat || p.lum != oldP.lum
+                    || p.chumGrowthSpeed != oldP.chumGrowthSpeed)
+                {
+                    m_undoStack.push_back(std::move(preProps));
+                    m_redoStack.clear();
+                    m_isDirty = true;
+                }
                 //if (p.width != oldP.width || p.height != oldP.height)
                 //{
                 //    // Snapshot current tiles
                 //    std::vector<char> oldTiles(map.caveEntities.size());
                 //    for (size_t i = 0; i < map.caveEntities.size(); ++i)
-                //        oldTiles[i] = entityTypeToTile(map.caveEntities[i].getType());
+                //        oldTiles[i] = entityToTile(map.caveEntities[i]);
 
                 //    int oW = (int)oldP.width,  oH = (int)oldP.height;
                 //    int nW = (int)p.width,      nH = (int)p.height;
@@ -1773,7 +2068,7 @@ bool Editor::run()
                         for (int cx = 0; cx < copyW; cx++) {
                             int srcIdx = (srcY0 + cy + 1) * (int)oldP.width + (srcX0 + cx + 1);
                             int dstIdx = (dstY0 + cy + 1) * (int)p.width    + (dstX0 + cx + 1);
-                            newTiles[dstIdx] = entityTypeToTile(map.caveEntities[srcIdx].getType());
+                            newTiles[dstIdx] = entityToTile(map.caveEntities[srcIdx]);
                             if (map.caveEntities[srcIdx].getType() == Cave::Entity::Type::Well) {
                                 Cave::WellRecord rec;
                                 rec.index = static_cast<uint16_t>(dstIdx);
@@ -1806,26 +2101,37 @@ bool Editor::run()
         if (m_doUndo)
         {
             m_doUndo = false;
-            if (m_undoAvailable && !m_undoTileData.empty())
+            if (!m_undoStack.empty())
             {
-                // Snapshot current state so a re-edit can undo again
-                std::vector<char> current(map.caveEntities.size());
-                for (size_t i = 0; i < map.caveEntities.size(); ++i)
-                    current[i] = entityTypeToTile(map.caveEntities[i].getType());
-
-                // Replace only changed cells so unaffected entities keep their animation frame
-                for (size_t i = 0; i < map.caveEntities.size(); ++i)
-                {
-                    if (m_undoTileData[i] != current[i])
-                    {
-                        Cave::Entity::Base e = Cave::Data::getTileEntity(m_undoTileData[i]);
-                        map.placeEntity((int)i, e);
-                    }
-                }
-                map.setEditorMode();
-                m_undoTileData  = std::move(current);
-                m_undoAvailable = false;
+                syncCurrentCave(map, loadedFile, currentCaveIndex);
+                m_redoStack.push_back({ loadedFile.caves, currentCaveIndex });
+                EditorSnapshot snap = std::move(m_undoStack.back());
+                m_undoStack.pop_back();
+                applyEditorSnapshot(snap, map, loadedFile, currentCaveIndex);
+                originalProps = game.getCaveProperties();
+                syncCaveBounds();
+                caveCamera.setCentre(sf::Vector2f(viewSize.x / 2.f, viewSize.y / 2.f));
                 lastPlacedX = -1; lastPlacedY = -1;
+                m_hasSelection = false;
+                updateTitle();
+            }
+        }
+        if (m_doRedo)
+        {
+            m_doRedo = false;
+            if (!m_redoStack.empty())
+            {
+                syncCurrentCave(map, loadedFile, currentCaveIndex);
+                m_undoStack.push_back({ loadedFile.caves, currentCaveIndex });
+                EditorSnapshot snap = std::move(m_redoStack.back());
+                m_redoStack.pop_back();
+                applyEditorSnapshot(snap, map, loadedFile, currentCaveIndex);
+                originalProps = game.getCaveProperties();
+                syncCaveBounds();
+                caveCamera.setCentre(sf::Vector2f(viewSize.x / 2.f, viewSize.y / 2.f));
+                lastPlacedX = -1; lastPlacedY = -1;
+                m_hasSelection = false;
+                updateTitle();
             }
         }
         if (m_doClearLevel)
@@ -1850,7 +2156,15 @@ bool Editor::run()
             m_doPasteSelection = false;
             pasteSelection(map, editorPanel.getMouseTileX(), editorPanel.getMouseTileY());
         }
-        if (m_doInsertLevel)  { m_doInsertLevel  = false; insertLevel(map, loadedFile, currentCaveIndex); m_hasSelection = false; updateTitle(); syncCaveBounds(); }
+        if (m_doInsertLevel)
+        {
+            m_doInsertLevel = false;
+            saveUndoSnapshot(map);
+            insertLevel(map, loadedFile, currentCaveIndex);
+            m_hasSelection = false;
+            updateTitle();
+            syncCaveBounds();
+        }
         if (m_doDeleteLevel)
         {
             m_doDeleteLevel = false;
@@ -1864,11 +2178,13 @@ bool Editor::run()
             {
                 char msg[96];
                 std::snprintf(msg, sizeof(msg),
-                    "Remove level %03d from this cave file?\nThis cannot be undone.",
+                    "Remove level %03d from this cave file?",
                     currentCaveIndex + 1);
                 if (tinyfd_messageBox("Remove Level", msg, "okcancel", "warning", 0) == 1)
                 {
+                    saveUndoSnapshot(map);
                     deleteLevel(map, loadedFile, currentCaveIndex);
+                    originalProps = game.getCaveProperties();
                     m_hasSelection = false;
                     updateTitle();
                     syncCaveBounds();

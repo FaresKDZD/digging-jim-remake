@@ -504,7 +504,7 @@ namespace Cave {
          * - The source or destination is out of bounds.
          * - The source or destination entity is transitioning.
          */
-        bool moveEntity(const int& sourceIndex, const Cave::Entity::Direction& direction);
+        bool moveEntity(const int& sourceIndex, const Cave::Entity::Direction& direction, int slideInc = 4);
         
         /**
          * @brief Warps an entity two tiles forward in the specified direction.
@@ -701,6 +701,14 @@ namespace Cave {
          * @return True if Jim interacted with a detonator, false otherwise.
          */
         bool handleJimPushDetonator(const int& index, const int& inFront);
+
+        /**
+         * @brief Handles Jim opening or closing an adjacent gate with Space.
+         *
+         * Collect/Space together with a direction into the gate toggles it once
+         * when that combination becomes held, even if one key was already down.
+         */
+        bool handleJimUseGate(const int& index, const int& inFront, const bool& collectMode);
         
         /**
          * @brief Handles Jim warping through tubes.
@@ -796,6 +804,40 @@ namespace Cave {
          * @param index The entity index of the Protozo.
          */
         void updateProtoza(const int& index);
+        void updatePegul(const int& index);
+        bool tryPegulFuseHunt(const int& index);
+        int findNearestOtherVariantPegul(const int& index) const;
+        Cave::Entity::Direction findPathToPegulPartner(const int& index, const int& target) const;
+        bool fusePeguls(const int& a, const int& b);
+        void updateFusion(const int& index);
+        void updateFusion1Hunt(const int& index);
+        bool tryFusion1HuntMove(const int& index);
+        bool isFusion1TeleportBlock(const int& index) const;
+        bool warpFusion1ThroughWall(const int& index, const int& dest);
+        void updateFusion4Hunt(const int& index);
+        bool tryFusion4PlaceBomb(const int& index, const int& prefer);
+        bool tryFusion4PlaceBombAt(const int& index, const int& spot);
+        bool tryFusion4Flee(const int& index, const int& bomb);
+        int findFusion4Objective(const int& index) const;
+        Cave::Entity::Direction findPathToFusion4Goal(const int& index, const int& goal) const;
+        Cave::Entity::Direction findPathToFusion5Goal(const int& index, const int& goal) const;
+        bool isFusion4Objective(const int& index) const;
+        bool isFusion4ExitDoor(const int& index) const;
+        bool isFusion4BombableObjective(const int& hunter, const int& objective) const;
+        bool fusion4BombWouldRest(const int& spot) const;
+        bool isAdjacentCell(const int& a, const int& b) const;
+        void collectFusion4BombSpots(const int& hunter, const int& objective, std::vector<int>& spots) const;
+        int findNearestFusion4BombSpot(const int& index, const int& objective) const;
+        bool isFusion3Armored(const int& index) const;
+        void damageFusion3(const int& index);
+        void updateFusion5Hunt(const int& index);
+        void notifyFusion5Stimulus(const int& cell);
+        void updateGate(const int& index);
+        void toggleGate(const int& index);
+        bool isPassableGate(const int& index) const;
+        bool isMonsterWalkable(const int& index) const;
+        void coverPassableGate(const int& index);
+        bool restoreCoveredGate(const int& index);
 
         /// @brief Protozo wander, but pipes in the facing direction count as a path.
         void updateBlob(const int& index);
@@ -955,6 +997,24 @@ namespace Cave {
         void updateGlutton(const int& index);
 
         /**
+         * @brief Updates the Gallop Queen.
+         *
+         * If Gallops or eggs are present she stays in her 5x5 nest, eats nest
+         * diamonds, waits three seconds, and lays. If none remain she leaves to
+         * fetch one diamond, returns home, waits, then lays. After Jim enters the
+         * nest she ignores the rest and chases exactly like a Tetrapus forever.
+         *
+         * @param index The entity index of the Gallop Queen.
+         */
+        void updateGallopQueen(const int& index);
+
+        /// @brief Boulder physics plus a hatch timer that plays the pop animation, then a Gallop.
+        void updateGallopEgg(const int& index);
+
+        /// @brief Fetches accessible diamonds to the nearest Queen nest, else Cave-Gull wander.
+        void updateGallop(const int& index);
+
+        /**
          * @brief Updates the Pyram enemy's behavior.
          *
          * Without orthogonal empty-space line of sight to Jim, wanders like a Protozo
@@ -1003,7 +1063,7 @@ namespace Cave {
         Cave::Entity::Animation chargerMoveOne(const int& src, const Cave::Entity::Direction& dir, Cave::Entity::Animation* vacatedPrev = nullptr);
         Cave::Entity::Direction chargerSenseJim(const int& index) const;
 
-        /// @brief True if this tile is a diamond source the Glutton will hunt.
+        /// @brief True if this tile is something the Glutton will hunt and eat.
         bool isGluttonFood(const int& index) const;
 
         /// @brief Nearest Glutton food reachable through empty space, or OUT_OF_BOUNDS_INDEX.
@@ -1015,6 +1075,36 @@ namespace Cave {
         /// @brief Step onto empty space, or eat Glutton food.
         bool tryMoveGlutton(const int& index, const Cave::Entity::Direction& direction);
 
+        bool inGallopQueenNest(const int& nest, const int& cell) const;
+        bool inAnyGallopQueenNest(const int& cell) const;
+        bool gallopbQueenCanEnter(const int& cell) const;
+        Cave::Entity::Direction findPathForGallopQueen(const int& index, const int& goal, bool nestOnly) const;
+        int findNearestGallopQueenDiamond(const int& index, const int& nest) const;
+        int findNearestReachableQueenDiamond(const int& index) const;
+        bool hasGallopOffspring() const;
+        bool tryMoveGallopQueen(const int& index, const Cave::Entity::Direction& direction);
+        void wanderGallopQueen(const int& index, const int& nest, bool nestOnly);
+        bool tryLayGallopEgg(const int& index);
+
+        bool gallopCanTraverse(const int& cell) const;
+        bool gallopDepositSupported(const int& cell) const;
+        int findNearestGallopDiamond(const int& index) const;
+        Cave::Entity::Direction findPathForGallop(const int& index, const int& goal) const;
+        int findNearestGallopQueenNest(const int& index) const;
+        Cave::Entity::Direction findPathToGallopNest(const int& index, const int& nest) const;
+        int findGallopDepositSpot(const int& index, const int& nest) const;
+        bool tryMoveGallop(const int& index, const Cave::Entity::Direction& direction, bool allowDiamond);
+        bool tryDepositGallopDiamond(const int& index, const int& nest);
+        void wanderClockwiseEmpty(const int& index);
+        bool tryWanderEmpty(const int& index, Cave::Entity::Direction direction, const int& nest, bool nestOnly);
+        bool wanderCellIsWall(const int& cell, const int& nest, bool nestOnly) const;
+        bool wanderHasTerrainWallIn3x3(const int& index, const int& nest, bool nestOnly) const;
+        bool wanderHasMonsterIn3x3(const int& index) const;
+        bool wanderIsTwoByTwoSpiral(const int& index, const int& nest, bool nestOnly) const;
+        void wanderLikeCaveGull(const int& index, const int& nest, bool nestOnly);
+        void wanderDropThenFollow(const int& index, const int& nest, bool nestOnly);
+        void wanderStraightThenFollow(const int& index, const int& nest, bool nestOnly);
+
         /// @brief Nearest plasma reachable through empty space, or OUT_OF_BOUNDS_INDEX.
         int findNearestReachablePlasma(const int& index) const;
 
@@ -1024,8 +1114,11 @@ namespace Cave {
         /// @brief Step onto empty space, or onto plasma (eating it and saturating).
         bool tryMoveSludg(const int& index, const Cave::Entity::Direction& direction);
 
-        /// @brief True for Diamond or Fragile Diamond tiles.
+        /// @brief True for Diamond, Fragile Diamond, or Hollow Diamond tiles.
         bool isDiamond(const int& index) const;
+
+        /// @brief True only for a normal Diamond (not fragile or hollow).
+        bool isGallopDiamond(const int& index) const;
 
         /// @brief Nearest diamond reachable through empty space or dirt, or OUT_OF_BOUNDS_INDEX.
         int findNearestReachableDiamond(const int& index) const;
@@ -1087,7 +1180,7 @@ namespace Cave {
          * @param direction The direction to attempt movement.
          * @return true if the movement succeeded, false otherwise.
          */
-        bool tryMoveEnemy(const int& index, const Cave::Entity::Trait& trait, const Cave::Entity::Direction& direction);
+        bool tryMoveEnemy(const int& index, const Cave::Entity::Trait& trait, const Cave::Entity::Direction& direction, int slideInc = 4);
 
         /**
          * @brief Attempts to move an enemy onto a destination of a specific entity type.
@@ -1320,6 +1413,8 @@ namespace Cave {
          * @param caveGullExplosion True if the explosion is caused by a Cave Gull (changes sound/effects).
          */
         void createExplosion(const int& index, bool triggerBomb);
+        void createHorizontalExplosion(const int& index);
+        void detonateCells(const int& origin, const std::vector<int>& cells, bool caveGullExplosion);
         
         /**
          * @brief Updates the texture (animation) of a tube entity based on adjacent walls.
@@ -1407,6 +1502,12 @@ namespace Cave {
         /// @brief Remaining frames of ruby invincibility.
         int m_jimInvincibleFrames = 0;
 
+        /// @brief Space and a direction into a gate were both held on the previous Jim tick.
+        bool m_jimGateComboHeld = false;
+
+        /// @brief Open gates hidden under an occupant, indexed like caveEntities.
+        std::vector<Cave::Entity::Base> m_coveredGate;
+
         /// @brief Whether the magic wall has been activated.
         bool m_magicWallStarted = false;
 
@@ -1457,6 +1558,9 @@ namespace Cave {
 
         /// @brief True when this map is the editor cave preview.
         bool m_editorPreview = false;
+
+        /// @brief After a Pegul is crushed, remaining Peguls hunt other variants to fuse.
+        bool m_pegulFuseHunt = false;
 
         /// @brief Whether the cave needs to be reset
         bool m_reset = false;

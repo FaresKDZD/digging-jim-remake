@@ -62,7 +62,20 @@ namespace Cave::Entity {
             case Type::Pyram:
             case Type::Blob:
             case Type::Mole:
+            case Type::Fan:
             case Type::God:
+            case Type::GallopQueen:
+            case Type::Gallop:
+            case Type::PegulNormo:
+            case Type::PegulFatto:
+            case Type::PegulTallo:
+            case Type::PegulBieye:
+            case Type::PegulTrieye:
+            case Type::Fusion1:
+            case Type::Fusion2:
+            case Type::Fusion3:
+            case Type::Fusion4:
+            case Type::Fusion5:
                 return true;
             default:
                 return false;
@@ -91,7 +104,20 @@ namespace Cave::Entity {
             { "Pyram", Type::Pyram },
             { "Blob", Type::Blob },
             { "Mole", Type::Mole },
+            { "Fan", Type::Fan },
             { "God", Type::God },
+            { "Gallop Queen", Type::GallopQueen },
+            { "Gallop", Type::Gallop },
+            { "Pegul Normo", Type::PegulNormo },
+            { "Pegul Fatto", Type::PegulFatto },
+            { "Pegul Tallo", Type::PegulTallo },
+            { "Pegul Bieye", Type::PegulBieye },
+            { "Pegul Trieye", Type::PegulTrieye },
+            { "Fusion 1", Type::Fusion1 },
+            { "Fusion 2", Type::Fusion2 },
+            { "Fusion 3", Type::Fusion3 },
+            { "Fusion 4", Type::Fusion4 },
+            { "Fusion 5", Type::Fusion5 },
         };
 
     private:
