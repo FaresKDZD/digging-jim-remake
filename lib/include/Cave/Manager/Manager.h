@@ -82,6 +82,9 @@ namespace Cave {
          */
         std::vector<std::string> getCaveFiles();
 
+        struct DoorCount { int start = 0; int exit = 0; };
+        DoorCount countDoors(int fileIndex, int caveNumber) const;
+
     private:
 
         /// @brief Game instance.

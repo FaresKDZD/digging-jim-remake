@@ -19,6 +19,7 @@ namespace Cave {
         bool             animation        = true;
         Cave::ResizeAnchor resizeAnchor   = Cave::ResizeAnchor::NW;
         FillMode         fillMode         = FillMode::Rectangle;
+        bool             editableBorders  = false;
     };
 
     /**

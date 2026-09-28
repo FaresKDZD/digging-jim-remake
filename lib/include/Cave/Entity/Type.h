@@ -99,6 +99,31 @@ namespace Cave::Entity {
         DetonatorTriggered,
         DetonatorUsed,
         Space,
+        Chaos,
+        ChaosExplosion,
+        JimlinShipInactive,
+        JimlinShipActive,
+        Jimlin1,
+        Jimlin2,
+        Jimlin3,
+        JimlinBlock,
+        Jimlin4,
+        JimlinKing,
+        PrivateGate,
+        VaultButton,
+        KingShipInactive,
+        KingShipActive,
+        Singularity,
+        Ostia,
+        Murus,
+        Tera,
+        Vitus,
+        Adama,
+        Terminus,
+        Initia,
+        Nihilus,
+        SingularityExplosion,
+        JimlinDock,
     };
 
     inline bool isDirtLike(Type type) {
@@ -133,5 +158,149 @@ namespace Cave::Entity {
 
     inline bool isGate(Type type) {
         return type == Type::Gate;
+    }
+
+    inline bool isGateVariant(Type type) {
+        return type == Type::Gate || type == Type::PrivateGate;
+    }
+
+    inline bool isJimlinBlockVariant(Type type) {
+        return type == Type::JimlinBlock || type == Type::VaultButton || type == Type::JimlinDock;
+    }
+
+    inline bool isGodVariant(Type type) {
+        return type == Type::God || type == Type::Chaos;
+    }
+
+    inline bool isCosmic(Type type) {
+        switch (type) {
+        case Type::Singularity:
+        case Type::Ostia:
+        case Type::Murus:
+        case Type::Tera:
+        case Type::Vitus:
+        case Type::Adama:
+        case Type::Terminus:
+        case Type::Initia:
+        case Type::Nihilus:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    inline bool isSpaceSlotType(Type type) {
+        return type == Type::Space || isCosmic(type);
+    }
+
+    inline bool isMonster(Type type) {
+        switch (type) {
+        case Type::Eater:
+        case Type::Protozo:
+        case Type::Cilia:
+        case Type::Aggressor:
+        case Type::CaveGull:
+        case Type::Spinner:
+        case Type::BoulderEater:
+        case Type::Tetrapus:
+        case Type::Binocule:
+        case Type::Creep:
+        case Type::Sludg:
+        case Type::SaturatedSludg:
+        case Type::Glutton:
+        case Type::Pyram:
+        case Type::Puffer:
+        case Type::PufferBody:
+        case Type::Blob:
+        case Type::Mole:
+        case Type::God:
+        case Type::Charger:
+        case Type::ChargerBody:
+        case Type::GallopQueen:
+        case Type::Gallop:
+        case Type::PegulNormo:
+        case Type::PegulFatto:
+        case Type::PegulTallo:
+        case Type::PegulBieye:
+        case Type::PegulTrieye:
+        case Type::Fusion1:
+        case Type::Fusion2:
+        case Type::Fusion3:
+        case Type::Fusion4:
+        case Type::Fusion5:
+        case Type::Chaos:
+        case Type::Singularity:
+        case Type::Ostia:
+        case Type::Murus:
+        case Type::Tera:
+        case Type::Vitus:
+        case Type::Adama:
+        case Type::Terminus:
+        case Type::Initia:
+        case Type::Nihilus:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    inline bool isMagicWall(Type type) {
+        switch (type) {
+        case Type::MagicWallInactive:
+        case Type::MagicWallActive:
+        case Type::MagicWallUsed:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    inline bool isJimlinShip(Type type) {
+        return type == Type::JimlinShipInactive || type == Type::JimlinShipActive
+            || type == Type::KingShipInactive || type == Type::KingShipActive;
+    }
+
+    inline bool isParkedJimlinShip(Type type) {
+        return type == Type::JimlinShipInactive || type == Type::KingShipInactive;
+    }
+
+    inline bool isActiveJimlinShip(Type type) {
+        return type == Type::JimlinShipActive || type == Type::KingShipActive;
+    }
+
+    inline bool isJimlinShipVariant(Type type) {
+        return type == Type::JimlinShipInactive || type == Type::KingShipInactive;
+    }
+
+    inline bool isJimlin(Type type) {
+        return type == Type::Jimlin1 || type == Type::Jimlin2 || type == Type::Jimlin3
+            || type == Type::Jimlin4 || type == Type::JimlinKing;
+    }
+
+    inline bool isDiamondTile(Type type) {
+        return type == Type::Diamond
+            || type == Type::FragileDiamond
+            || type == Type::HollowDiamond;
+    }
+
+    inline bool isPlayer(Type type) {
+        return type == Type::Jim || isActiveJimlinShip(type);
+    }
+
+    inline bool isHuntTarget(Type type) {
+        return isPlayer(type) || isJimlin(type);
+    }
+
+    inline bool isExitDoor(Type type) {
+        switch (type) {
+        case Type::ExitDoor:
+        case Type::ExitDoorOpen:
+        case Type::ExitDoorOpening:
+        case Type::ExitDoorComplete:
+        case Type::ExitDoorFinished:
+            return true;
+        default:
+            return false;
+        }
     }
 }

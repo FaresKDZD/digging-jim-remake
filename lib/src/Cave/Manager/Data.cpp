@@ -67,8 +67,29 @@ Cave::Entity::Base Cave::Data::getTileEntity(const char& tile) {
 	case 66: return Cave::Entity::Fusion(Cave::Entity::Type::Fusion3);
 	case 67: return Cave::Entity::Fusion(Cave::Entity::Type::Fusion4);
 	case 70: return Cave::Entity::Fusion(Cave::Entity::Type::Fusion5);
+	case 71: return Cave::Entity::Chaos();
 	case 68: return Cave::Entity::Gate();
 	case 69: return Cave::Entity::Gate(true);
+	case 72: return Cave::Entity::JimlinShipInactive();
+	case 73: return Cave::Entity::Jimlin(Cave::Entity::Type::Jimlin1);
+	case 74: return Cave::Entity::Jimlin(Cave::Entity::Type::Jimlin2);
+	case 75: return Cave::Entity::Jimlin(Cave::Entity::Type::Jimlin3);
+	case 76: return Cave::Entity::JimlinBlock();
+	case 77: return Cave::Entity::Jimlin(Cave::Entity::Type::Jimlin4);
+	case 78: return Cave::Entity::Jimlin(Cave::Entity::Type::JimlinKing);
+	case 79: return Cave::Entity::PrivateGate();
+	case 80: return Cave::Entity::VaultButton();
+	case 81: return Cave::Entity::KingShipInactive();
+	case 82: return Cave::Entity::Cosmic(Cave::Entity::Type::Singularity);
+	case 83: return Cave::Entity::Cosmic(Cave::Entity::Type::Ostia);
+	case 84: return Cave::Entity::Cosmic(Cave::Entity::Type::Murus);
+	case 85: return Cave::Entity::Cosmic(Cave::Entity::Type::Tera);
+	case 86: return Cave::Entity::Cosmic(Cave::Entity::Type::Vitus);
+	case 87: return Cave::Entity::Cosmic(Cave::Entity::Type::Adama);
+	case 88: return Cave::Entity::Cosmic(Cave::Entity::Type::Terminus);
+	case 89: return Cave::Entity::Cosmic(Cave::Entity::Type::Initia);
+	case 90: return Cave::Entity::Cosmic(Cave::Entity::Type::Nihilus);
+	case 91: return Cave::Entity::JimlinDock();
 	default:
 		return Cave::Entity::Space();
 	}

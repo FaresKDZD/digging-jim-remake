@@ -72,6 +72,60 @@ namespace HUD::Editor {
         /// @brief Switch the Fusion palette slot to a variant and select it.
         void setFusionType(Cave::Entity::Type type);
 
+        /// @brief True if this palette cell is the shared God/Chaos slot.
+        bool isGodSlot(const int& x, const int& y) const;
+
+        /// @brief Current God-slot monster painted by the shared palette cell.
+        Cave::Entity::Type getGodType() const { return m_godType; }
+
+        /// @brief Switch the God palette slot to God or Chaos and select it.
+        void setGodType(Cave::Entity::Type type);
+
+        /// @brief True if this palette cell is the shared Jimlin slot.
+        bool isJimlinSlot(const int& x, const int& y) const;
+
+        /// @brief Current Jimlin variant painted by the shared palette slot.
+        Cave::Entity::Type getJimlinType() const { return m_jimlinType; }
+
+        /// @brief Switch the Jimlin palette slot to a variant and select it.
+        void setJimlinType(Cave::Entity::Type type);
+
+        /// @brief True if this palette cell is the shared Gate/Private Gate slot.
+        bool isGateSlot(const int& x, const int& y) const;
+
+        /// @brief Current gate variant painted by the shared palette slot.
+        Cave::Entity::Type getGateType() const { return m_gateType; }
+
+        /// @brief Switch the Gate palette slot to a variant and select it.
+        void setGateType(Cave::Entity::Type type);
+
+        /// @brief True if this palette cell is the shared Jimlin Block/Vault Button/Dock slot.
+        bool isJimlinBlockSlot(const int& x, const int& y) const;
+
+        /// @brief Current block-slot variant painted by the shared palette cell.
+        Cave::Entity::Type getJimlinBlockType() const { return m_jimlinBlockType; }
+
+        /// @brief Switch the Jimlin Block palette slot to a variant and select it.
+        void setJimlinBlockType(Cave::Entity::Type type);
+
+        /// @brief True if this palette cell is the shared Jimlin Ship/King Ship slot.
+        bool isJimlinShipSlot(const int& x, const int& y) const;
+
+        /// @brief Current ship variant painted by the shared palette slot.
+        Cave::Entity::Type getJimlinShipType() const { return m_jimlinShipType; }
+
+        /// @brief Switch the Jimlin Ship palette slot to a variant and select it.
+        void setJimlinShipType(Cave::Entity::Type type);
+
+        /// @brief True if this palette cell is the shared Space/cosmic slot.
+        bool isSpaceSlot(const int& x, const int& y) const;
+
+        /// @brief Current Space-slot tile painted by the shared palette cell.
+        Cave::Entity::Type getSpaceSlotType() const { return m_spaceSlotType; }
+
+        /// @brief Switch the Space palette slot to empty space or a cosmic.
+        void setSpaceSlotType(Cave::Entity::Type type);
+
         /// @brief Right-click: if over a variant palette slot, select it and return true.
         bool handleRightClick(sf::Vector2f vp, float panelX, float toolbarH);
 
@@ -209,15 +263,21 @@ namespace HUD::Editor {
 
         /// @brief The currently selected entity type.
         Cave::Entity::Type        m_selectedType = Cave::Entity::Type::Space;
+        Cave::Entity::Type        m_spaceSlotType = Cave::Entity::Type::Space;
         Cave::Entity::Type        m_pegulType    = Cave::Entity::Type::PegulNormo;
         Cave::Entity::Type        m_fusionType   = Cave::Entity::Type::Fusion1;
+        Cave::Entity::Type        m_godType      = Cave::Entity::Type::God;
+        Cave::Entity::Type        m_jimlinType   = Cave::Entity::Type::Jimlin1;
+        Cave::Entity::Type        m_gateType     = Cave::Entity::Type::Gate;
+        Cave::Entity::Type        m_jimlinBlockType = Cave::Entity::Type::JimlinBlock;
+        Cave::Entity::Type        m_jimlinShipType = Cave::Entity::Type::JimlinShipInactive;
 
         /// @brief Tick counter that drives palette entity animation.
         Utils::TickCounter        m_TickCounter  = Utils::TickCounter();
 
         /// @brief Current scroll row offset for the entity palette.
         int                       m_scrollRow    = 0;
-        static constexpr int      TOTAL_PALETTE_ROWS   = 19;
+        static constexpr int      TOTAL_PALETTE_ROWS   = 20;
         static constexpr int      VISIBLE_PALETTE_ROWS = 10;
         static constexpr int      MAX_SCROLL_ROW       = TOTAL_PALETTE_ROWS - VISIBLE_PALETTE_ROWS;
 

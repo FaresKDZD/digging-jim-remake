@@ -76,6 +76,9 @@ namespace Cave::Entity {
         /// @brief Get the current animation for the entity.
         Animation getAnimation() const { return m_animation; }
 
+        /// @brief Current animation without copying the frame list.
+        const Animation& animation() const { return m_animation; }
+
         /**
          * @brief Replace the entity's animation.
          * @param animation The new animation sequence.
@@ -92,6 +95,11 @@ namespace Cave::Entity {
             if (m_transition) {
                 m_transition->updateAnimation();
             }
+        }
+
+        /// @brief Play the current animation forwards or backwards.
+        void setAnimationReverse(bool playReverse) {
+            m_animation.reverse = playReverse;
         }
 
         /// @brief Jump to a frame in the current animation without replacing it.
@@ -240,6 +248,11 @@ namespace Cave::Entity {
             return m_transition.has_value();
         }
 
+        /// @brief True when the entity draws fully in its cell (no slide, or slide complete).
+        bool isFullyInTile() const {
+            return !m_transition || m_transition->isFinished();
+        }
+
         /// @brief Copy the away-slide animation if this tile is vacating in `direction`.
         std::optional<Animation> copyAwayAnimation(const Direction& direction) const {
             if (!m_transition || direction == Direction::NO_DIRECTION) return std::nullopt;
@@ -315,6 +328,13 @@ namespace Cave::Entity {
         /// @brief Flag to be used if the entity is falling
         bool falling = false;
 
+        /// @brief One-tick delay after losing support before a fall actually starts.
+        bool fallPending = false;
+
+        /// @brief True only after an actual gravity/slip move this drop. Prevents
+        /// standstill crush/explode while resting on another fallable.
+        bool airborne = false;
+
         /// @brief Flag to be used if the entity is currently moving.
         bool moving = false;
 
@@ -335,6 +355,15 @@ namespace Cave::Entity {
 
         /// @brief Extra per-entity counter (Well spawn credit, unused elsewhere).
         int spawnCredit = 0;
+
+        /// @brief Extra per-entity payload (Chaos craze option and counters).
+        int extra = 0;
+
+        /// @brief Spawn cell a Jimlin returns to after a duty cycle, or -1.
+        int homeIndex = -1;
+
+        /// @brief Ticks a Jimlin has been active since last rest.
+        int dutyTicks = 0;
 
     protected:
 

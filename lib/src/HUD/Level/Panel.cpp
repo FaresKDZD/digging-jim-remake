@@ -143,5 +143,6 @@ void HUD::Level::Panel::draw(sf::RenderTarget& target, sf::RenderStates states) 
     target.draw(m_vertices, states);
 
     m_textRenderer.render(target, states);
-    if (m_game->isGamePaused() && !m_game->onMainMenu()) m_pauseTextRenderer.render(target, states);
+    if (m_game->isGamePaused() && !m_game->onMainMenu() && !m_game->isQuitConfirmOpen())
+        m_pauseTextRenderer.render(target, states);
 }

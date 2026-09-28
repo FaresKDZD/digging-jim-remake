@@ -24,6 +24,7 @@ sf::Vector2f Cave::Map::updateCameraLocation(Camera& camera, const sf::Vector2f&
 
 	sf::Vector2f location = camera.getCenter();
 
+	if (width <= 0 || !inBounds(m_jimIndex)) return location;
 	int targetX = (m_jimIndex % width) * 32 + offset.x;
 	int targetY = (m_jimIndex / width) * 32 + offset.y + 32 / 2;
 

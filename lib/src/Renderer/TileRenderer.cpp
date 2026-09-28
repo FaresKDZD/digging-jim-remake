@@ -3,6 +3,35 @@
 #include "Renderer/TileRenderer.h"
 #include "Cave/Entity/Base.h"
 
+namespace {
+
+static void clearTileVerts(sf::Vertex* tri, int count) {
+    for (int v = 0; v < count; ++v) {
+        tri[v].position = { 0.f, 0.f };
+        tri[v].texCoords = { 0.f, 0.f };
+        tri[v].color = sf::Color::Transparent;
+    }
+}
+
+static void writeTileQuad(sf::Vertex* tri, float px1, float py1, float px2, float py2,
+    float tx1, float ty1, float tx2, float ty2, sf::Color tint) {
+    tri[0].texCoords = { tx1, ty1 };
+    tri[1].texCoords = { tx2, ty1 };
+    tri[2].texCoords = { tx2, ty2 };
+    tri[3].texCoords = { tx1, ty1 };
+    tri[4].texCoords = { tx2, ty2 };
+    tri[5].texCoords = { tx1, ty2 };
+    tri[0].position = { px1, py1 };
+    tri[1].position = { px2, py1 };
+    tri[2].position = { px2, py2 };
+    tri[3].position = { px1, py1 };
+    tri[4].position = { px2, py2 };
+    tri[5].position = { px1, py2 };
+    for (int v = 0; v < 6; ++v) tri[v].color = tint;
+}
+
+}
+
 Renderer::TileRenderer::TileRenderer(Image::Manager* imageManager): m_imageManager(imageManager) {}
 
 bool Renderer::TileRenderer::load(const Image::Texture& texture, const sf::Vector2u& tileSize) {
@@ -20,128 +49,55 @@ void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>
     m_vertices.resize(gridRange.size.x * gridRange.size.y * 12);
     for (int y = gridRange.position.y; y < gridRange.position.y + gridRange.size.y; ++y) {
         for (int x = gridRange.position.x; x < gridRange.position.x + gridRange.size.x; ++x) {
-
             const Cave::Entity::Base& entity = entities[index];
+            sf::Vertex* tri = &m_vertices[index * 12];
+
+            const float baseX = (gap == 0)
+                ? (float)(x * (int)m_tilesize.x + position.x)
+                : (float)((x - gridRange.position.x) * ((int)m_tilesize.x + gap) + gap + position.x);
+            const float baseY = (gap == 0)
+                ? (float)(y * (int)m_tilesize.y + position.y)
+                : (float)((y - gridRange.position.y) * ((int)m_tilesize.y + gap) + gap + position.y);
+            const sf::Color tint = (entity.getType() == Cave::Entity::Type::Jim) ? jimTint : sf::Color::White;
 
             int tileIndex = entity.getCurrentTextureIndex();
             if (tileIndex == Cave::Entity::NO_TEXTURE_INDEX) {
-                index++;
-                continue;
+                clearTileVerts(tri, 6);
             }
-            sf::Vector2i textureCoords = { tileIndex % m_tilesetCols, tileIndex / m_tilesetCols };
-
-            sf::IntRect ep = entity.getCurrentPosition();
-            sf::IntRect tp = entity.getCurrentTextureCoords();
-
-            float baseX = (gap == 0)
-                ? (float)(x * (int)m_tilesize.x + position.x)
-                : (float)((x - gridRange.position.x) * ((int)m_tilesize.x + gap) + gap + position.x);
-            float baseY = (gap == 0)
-                ? (float)(y * (int)m_tilesize.y + position.y)
-                : (float)((y - gridRange.position.y) * ((int)m_tilesize.y + gap) + gap + position.y);
-
-            float px1 = baseX + ep.position.x;
-            float py1 = baseY + ep.position.y;
-            float px2 = baseX + ep.position.x + ep.size.x;
-            float py2 = baseY + ep.position.y + ep.size.y;
-            float tx1 = textureCoords.x * m_tilesize.x + tp.position.x;
-            float ty1 = textureCoords.y * m_tilesize.y + tp.position.y;
-            float tx2 = textureCoords.x * m_tilesize.x + tp.position.x + tp.size.x;
-            float ty2 = textureCoords.y * m_tilesize.y + tp.position.y + tp.size.y;
-            
-            // Pointer to the 6 vertices for this tile
-            sf::Vertex* tri = &m_vertices[index * 12];
-
-            // First triangle
-            tri[0].texCoords = { tx1, ty1 };
-            tri[1].texCoords = { tx2, ty1 };
-            tri[2].texCoords = { tx2, ty2 };
-
-            // Second triangle
-            tri[3].texCoords = { tx1, ty1 };
-            tri[4].texCoords = { tx2, ty2 };
-            tri[5].texCoords = { tx1, ty2 };
-
-            // First triangle
-            tri[0].position = { px1, py1 };
-            tri[1].position = { px2, py1 };
-            tri[2].position = { px2, py2 };
-
-            // Second triangle
-            tri[3].position = { px1, py1 };
-            tri[4].position = { px2, py2 };
-            tri[5].position = { px1, py2 };
-
-            const sf::Color tint = (entity.getType() == Cave::Entity::Type::Jim) ? jimTint : sf::Color::White;
-            for (int v = 0; v < 6; ++v) tri[v].color = tint;
+            else {
+                const sf::Vector2i textureCoords = { tileIndex % m_tilesetCols, tileIndex / m_tilesetCols };
+                const sf::IntRect ep = entity.getCurrentPosition();
+                const sf::IntRect tp = entity.getCurrentTextureCoords();
+                const float px1 = baseX + ep.position.x;
+                const float py1 = baseY + ep.position.y;
+                const float px2 = baseX + ep.position.x + ep.size.x;
+                const float py2 = baseY + ep.position.y + ep.size.y;
+                const float tx1 = textureCoords.x * m_tilesize.x + tp.position.x;
+                const float ty1 = textureCoords.y * m_tilesize.y + tp.position.y;
+                const float tx2 = textureCoords.x * m_tilesize.x + tp.position.x + tp.size.x;
+                const float ty2 = textureCoords.y * m_tilesize.y + tp.position.y + tp.size.y;
+                writeTileQuad(tri, px1, py1, px2, py2, tx1, ty1, tx2, ty2, tint);
+            }
 
             tileIndex = entity.getPreviousTextureIndex();
-            if (tileIndex == Cave::Entity::NO_TEXTURE_INDEX) {
-                // Pointer to the 6 vertices for this tile
-                sf::Vertex* tri2 = &m_vertices[index * 12 + 6];
-
-                // First triangle
-                tri2[0].texCoords = { 0, 0 };
-                tri2[1].texCoords = { 0, 0 };
-                tri2[2].texCoords = { 0, 0 };
-
-                // Second triangle
-                tri2[3].texCoords = { 0, 0 };
-                tri2[4].texCoords = { 0, 0 };
-                tri2[5].texCoords = { 0, 0 };
-
-                // First triangle
-                tri2[0].position = { 0, 0 };
-                tri2[1].position = { 0, 0 };
-                tri2[2].position = { 0, 0 };
-
-                // Second triangle
-                tri2[3].position = { 0, 0 };
-                tri2[4].position = { 0, 0 };
-                tri2[5].position = { 0, 0 };
-
-                index++;
-                continue;
-            }
-            textureCoords = { tileIndex % m_tilesetCols, tileIndex / m_tilesetCols };
-
-            ep = entity.getPreviousPosition();
-            tp = entity.getPreviousTextureCoords();
-
-            px1 = baseX + ep.position.x;
-            py1 = baseY + ep.position.y;
-            px2 = baseX + ep.position.x + ep.size.x;
-            py2 = baseY + ep.position.y + ep.size.y;
-            tx1 = textureCoords.x * m_tilesize.x + tp.position.x;
-            ty1 = textureCoords.y * m_tilesize.y + tp.position.y;
-            tx2 = textureCoords.x * m_tilesize.x + tp.position.x + tp.size.x;
-            ty2 = textureCoords.y * m_tilesize.y + tp.position.y + tp.size.y;
-
-            // Pointer to the 6 vertices for this tile
             sf::Vertex* tri2 = &m_vertices[index * 12 + 6];
-
-            // First triangle
-            tri2[0].texCoords = { tx1, ty1 };
-            tri2[1].texCoords = { tx2, ty1 };
-            tri2[2].texCoords = { tx2, ty2 };
-
-            // Second triangle
-            tri2[3].texCoords = { tx1, ty1 };
-            tri2[4].texCoords = { tx2, ty2 };
-            tri2[5].texCoords = { tx1, ty2 };
-
-            // First triangle
-            tri2[0].position = { px1, py1 };
-            tri2[1].position = { px2, py1 };
-            tri2[2].position = { px2, py2 };
-
-            // Second triangle
-            tri2[3].position = { px1, py1 };
-            tri2[4].position = { px2, py2 };
-            tri2[5].position = { px1, py2 };
-
-            const sf::Color prevTint = (entity.getType() == Cave::Entity::Type::Jim) ? jimTint : sf::Color::White;
-            for (int v = 0; v < 6; ++v) tri2[v].color = prevTint;
+            if (tileIndex == Cave::Entity::NO_TEXTURE_INDEX) {
+                clearTileVerts(tri2, 6);
+            }
+            else {
+                const sf::Vector2i textureCoords = { tileIndex % m_tilesetCols, tileIndex / m_tilesetCols };
+                const sf::IntRect ep = entity.getPreviousPosition();
+                const sf::IntRect tp = entity.getPreviousTextureCoords();
+                const float px1 = baseX + ep.position.x;
+                const float py1 = baseY + ep.position.y;
+                const float px2 = baseX + ep.position.x + ep.size.x;
+                const float py2 = baseY + ep.position.y + ep.size.y;
+                const float tx1 = textureCoords.x * m_tilesize.x + tp.position.x;
+                const float ty1 = textureCoords.y * m_tilesize.y + tp.position.y;
+                const float tx2 = textureCoords.x * m_tilesize.x + tp.position.x + tp.size.x;
+                const float ty2 = textureCoords.y * m_tilesize.y + tp.position.y + tp.size.y;
+                writeTileQuad(tri2, px1, py1, px2, py2, tx1, ty1, tx2, ty2, tint);
+            }
 
             index++;
         }

@@ -46,5 +46,15 @@ namespace Cave::Entity {
             if (startFrame >= FRAME_COUNT) startFrame = FRAME_COUNT - 1;
             return Animation{ std::move(frames), startFrame };
         }
+
+        struct VariantOption {
+            const char* label;
+            Type type;
+        };
+
+        static constexpr VariantOption VARIANTS[] = {
+            { "Gate", Type::Gate },
+            { "Private", Type::PrivateGate },
+        };
     };
 }

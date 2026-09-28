@@ -2,6 +2,7 @@
 
 void Cave::Map::updateAmoeba(const int& index) {
 	updateEntityAnimation(index);
+	if (m_editorPreview) return;
 
 	// Amoeba will turn into boulders if amoeba grwoth surpasses max growth limit
 	if (m_amoebaSurpassedMaxGrowth) {
@@ -63,6 +64,7 @@ bool Cave::Map::handleTrappedAmoeba(const int& index) {
 
 void Cave::Map::updatePlasma(const int& index) {
 	updateEntityAnimation(index);
+	if (m_editorPreview) return;
 
 	// Random chance to create a new plasma in each direction
 	for (auto& direction : Cave::Entity::ALL_DIRECTIONS) {
@@ -76,6 +78,7 @@ void Cave::Map::updatePlasma(const int& index) {
 }
 
 void Cave::Map::updateChum(const int& index) {
+	if (m_editorPreview) return;
 	for (auto& direction : Cave::Entity::ALL_DIRECTIONS) {
 		int dest = getIndex(index, direction);
 		if (hasTrait(Cave::Entity::Trait::Empty, dest) && Utils::randomInteger(0, 1000) <= m_chumGrowthSpeed) {
@@ -133,14 +136,29 @@ void Cave::Map::updateTransientEntity(const int& index, Cave::Entity::Base becom
 }
 
 void Cave::Map::updateGate(const int& index) {
+	const Cave::Entity::Type type = getEntityType(index);
+	const bool priv = type == Cave::Entity::Type::PrivateGate;
+	if (type != Cave::Entity::Type::Gate && !priv) return;
+
 	auto& gate = caveEntities[index];
 	const int mode = gate.spawnCredit;
+	const int last = (priv ? Cave::Entity::PrivateGate::FRAME_COUNT
+		: Cave::Entity::Gate::FRAME_COUNT) - 1;
+
+	if (priv && mode == Cave::Entity::Gate::MODE_OPEN) {
+		if (m_editorPreview) return;
+		if (gate.extra > 0)
+			--gate.extra;
+		if (gate.extra <= 0)
+			beginPrivateGateClose(gate);
+		return;
+	}
+
 	if (mode != Cave::Entity::Gate::MODE_OPENING && mode != Cave::Entity::Gate::MODE_CLOSING) {
 		return;
 	}
 
 	int frame = gate.getAnimation().currentFrame;
-	const int last = Cave::Entity::Gate::FRAME_COUNT - 1;
 	if (mode == Cave::Entity::Gate::MODE_OPENING) {
 		if (frame < last) {
 			gate.setAnimationFrame(frame + 1);
@@ -148,8 +166,12 @@ void Cave::Map::updateGate(const int& index) {
 		}
 		if (frame >= last) {
 			gate.spawnCredit = Cave::Entity::Gate::MODE_OPEN;
-			gate.setAnimation(Cave::Entity::Gate::openAnimation());
+			gate.setAnimation(priv
+				? Cave::Entity::PrivateGate::openAnimation()
+				: Cave::Entity::Gate::openAnimation());
 			gate.addTrait(Cave::Entity::Trait::Traversable);
+			if (priv)
+				gate.extra = Cave::Entity::PrivateGate::OPEN_TICKS;
 		}
 		return;
 	}
@@ -160,7 +182,10 @@ void Cave::Map::updateGate(const int& index) {
 	}
 	if (frame <= 0) {
 		gate.spawnCredit = Cave::Entity::Gate::MODE_CLOSED;
-		gate.setAnimation(Cave::Entity::Gate::closedAnimation());
+		gate.extra = 0;
+		gate.setAnimation(priv
+			? Cave::Entity::PrivateGate::closedAnimation()
+			: Cave::Entity::Gate::closedAnimation());
 	}
 }
 
@@ -187,8 +212,10 @@ void Cave::Map::toggleGate(const int& index) {
 
 bool Cave::Map::isPassableGate(const int& index) const {
 	if (!inBounds(index)) return false;
-	return getEntityType(index) == Cave::Entity::Type::Gate
-		&& caveEntities[index].spawnCredit == Cave::Entity::Gate::MODE_OPEN;
+	const Cave::Entity::Type type = getEntityType(index);
+	if (type != Cave::Entity::Type::Gate && type != Cave::Entity::Type::PrivateGate)
+		return false;
+	return caveEntities[index].spawnCredit == Cave::Entity::Gate::MODE_OPEN;
 }
 
 bool Cave::Map::isMonsterWalkable(const int& index) const {
@@ -206,10 +233,139 @@ void Cave::Map::coverPassableGate(const int& index) {
 bool Cave::Map::restoreCoveredGate(const int& index) {
 	if (!inBounds(index)) return false;
 	if (index >= static_cast<int>(m_coveredGate.size())) return false;
-	if (m_coveredGate[static_cast<size_t>(index)].getType() != Cave::Entity::Type::Gate) {
+	const Cave::Entity::Type covered = m_coveredGate[static_cast<size_t>(index)].getType();
+	if (covered != Cave::Entity::Type::Gate && covered != Cave::Entity::Type::PrivateGate) {
 		return false;
 	}
 	caveEntities[index] = m_coveredGate[static_cast<size_t>(index)];
 	m_coveredGate[static_cast<size_t>(index)] = Cave::Entity::Base();
+	return true;
+}
+
+void Cave::Map::beginPrivateGateOpen(Cave::Entity::Base& gate) {
+	m_jimlinPrivateGatesCached = false;
+	if (gate.getType() != Cave::Entity::Type::PrivateGate) return;
+	const int mode = gate.spawnCredit;
+	if (mode == Cave::Entity::Gate::MODE_OPEN) {
+		gate.extra = Cave::Entity::PrivateGate::OPEN_TICKS;
+		return;
+	}
+	if (mode == Cave::Entity::Gate::MODE_OPENING) return;
+
+	int start = 0;
+	if (mode == Cave::Entity::Gate::MODE_CLOSING)
+		start = gate.getAnimation().currentFrame;
+	gate.removeTrait(Cave::Entity::Trait::Traversable);
+	gate.spawnCredit = Cave::Entity::Gate::MODE_OPENING;
+	gate.extra = 0;
+	gate.setAnimation(Cave::Entity::PrivateGate::sheetAnimation(start));
+}
+
+void Cave::Map::beginPrivateGateClose(Cave::Entity::Base& gate) {
+	m_jimlinPrivateGatesCached = false;
+	if (gate.getType() != Cave::Entity::Type::PrivateGate) return;
+	const int mode = gate.spawnCredit;
+	if (mode == Cave::Entity::Gate::MODE_CLOSING || mode == Cave::Entity::Gate::MODE_CLOSED)
+		return;
+	int start = Cave::Entity::PrivateGate::FRAME_COUNT - 1;
+	if (mode == Cave::Entity::Gate::MODE_OPENING)
+		start = gate.getAnimation().currentFrame;
+	gate.removeTrait(Cave::Entity::Trait::Traversable);
+	gate.spawnCredit = Cave::Entity::Gate::MODE_CLOSING;
+	gate.extra = 0;
+	gate.setAnimation(Cave::Entity::PrivateGate::sheetAnimation(start));
+}
+
+void Cave::Map::openPrivateGates() {
+	m_jimlinPrivateGatesCached = false;
+	const int cellCount = width * height;
+	for (int i = 0; i < cellCount; ++i) {
+		if (getEntityType(i) == Cave::Entity::Type::PrivateGate)
+			beginPrivateGateOpen(caveEntities[i]);
+		if (i < static_cast<int>(m_coveredGate.size())
+			&& m_coveredGate[static_cast<size_t>(i)].getType() == Cave::Entity::Type::PrivateGate)
+			beginPrivateGateOpen(m_coveredGate[static_cast<size_t>(i)]);
+	}
+}
+
+void Cave::Map::tickCoveredPrivateGates() {
+	if (static_cast<int>(m_coveredGate.size()) != width * height) return;
+	for (int i = 0; i < width * height; ++i) {
+		auto& gate = m_coveredGate[static_cast<size_t>(i)];
+		if (gate.getType() != Cave::Entity::Type::PrivateGate) continue;
+		if (gate.spawnCredit != Cave::Entity::Gate::MODE_OPEN) continue;
+		if (gate.extra > 0)
+			--gate.extra;
+		if (gate.extra <= 0)
+			beginPrivateGateClose(gate);
+	}
+}
+
+void Cave::Map::updateVaultButton(const int& index) {
+	if (getEntityType(index) != Cave::Entity::Type::VaultButton) return;
+	if (m_editorPreview) return;
+
+	auto& button = caveEntities[index];
+	const int mode = button.spawnCredit;
+	const int last = Cave::Entity::VaultButton::FRAME_COUNT - 1;
+	if (mode == Cave::Entity::VaultButton::MODE_IDLE)
+		return;
+
+	if (mode == Cave::Entity::VaultButton::MODE_PRESSING) {
+		int frame = button.getAnimation().currentFrame;
+		if (frame < last) {
+			button.setAnimationFrame(frame + 1);
+			frame += 1;
+		}
+		if (frame >= last) {
+			button.spawnCredit = Cave::Entity::VaultButton::MODE_HELD;
+			button.extra = Cave::Entity::VaultButton::HOLD_TICKS;
+			button.setAnimation(Cave::Entity::VaultButton::heldAnimation());
+		}
+		return;
+	}
+
+	if (mode == Cave::Entity::VaultButton::MODE_HELD) {
+		if (button.extra > 0)
+			--button.extra;
+		if (button.extra <= 0) {
+			button.spawnCredit = Cave::Entity::VaultButton::MODE_RELEASING;
+			button.setAnimation(Cave::Entity::VaultButton::sheetAnimation(last));
+		}
+		return;
+	}
+
+	if (mode == Cave::Entity::VaultButton::MODE_RELEASING) {
+		int frame = button.getAnimation().currentFrame;
+		if (frame > 0) {
+			button.setAnimationFrame(frame - 1);
+			frame -= 1;
+		}
+		if (frame <= 0) {
+			button.spawnCredit = Cave::Entity::VaultButton::MODE_IDLE;
+			button.extra = 0;
+			button.setAnimation(Cave::Entity::VaultButton::idleAnimation());
+		}
+	}
+}
+
+bool Cave::Map::tryPressVaultButton(const int& index) {
+	if (!inBounds(index) || getEntityType(index) != Cave::Entity::Type::VaultButton)
+		return false;
+	auto& button = caveEntities[index];
+	const int mode = button.spawnCredit;
+	if (mode == Cave::Entity::VaultButton::MODE_PRESSING
+		|| mode == Cave::Entity::VaultButton::MODE_HELD)
+		return false;
+
+	int start = 0;
+	if (mode == Cave::Entity::VaultButton::MODE_RELEASING)
+		start = button.getAnimation().currentFrame;
+	button.spawnCredit = Cave::Entity::VaultButton::MODE_PRESSING;
+	button.extra = 0;
+	button.setAnimation(Cave::Entity::VaultButton::sheetAnimation(start));
+	openPrivateGates();
+	m_game->soundManager.play(Sound::Effect::Drop);
+	notifyFusion5Stimulus(index);
 	return true;
 }

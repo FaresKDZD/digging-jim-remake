@@ -13,10 +13,12 @@ namespace Cave::Entity {
      * variants fuse; the resulting look is random.
      * Fusion 1 pathfinds to Jim, treating one-tile walls as hops, including
      * around a tile from one side to an adjacent side.
-     * Fusion 2 dies in a 5-tile horizontal blast.
+     * Fusion 2 dies in a 5-wide horizontal blast with a 3-tile vertical arm at the center.
      * Fusion 3 survives one explosion and then uses a damaged look.
-     * Fusion 4 hunts diamonds or the exit with primed time bombs, or
-     * blocks Jim's path, otherwise wanders like a Cave Gull.
+     * Fusion 4 plants timed bombs on bombable tiles in the 3x3 around a
+     * diamond variant or exit, then waits outside the blast. It never steps
+     * into the 3x3 of any primed time bomb. If those plant targets are
+     * unreachable and there is no open path to Jim, it wanders like a Protozo.
      * Fusion 5 idles like a half-speed Protozo and aggro-pathfinds to cave events.
      */
     class Fusion : public Base {
@@ -59,7 +61,7 @@ namespace Cave::Entity {
             : Base(canonical(variant), forming ? formAnimation(canonical(variant)) : idleAnimation(canonical(variant))) {
             addTrait(Trait::Crushable);
             if (forming) spawnCredit = MODE_FORMING;
-            if (canonical(variant) == Type::Fusion5)
+            if (canonical(variant) == Type::Fusion4 || canonical(variant) == Type::Fusion5)
                 direction = Cave::Entity::getRandomDirection();
         }
 

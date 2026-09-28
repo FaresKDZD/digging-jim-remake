@@ -24,6 +24,16 @@ namespace Cave::Entity {
             targetIndex = -SEEK_TICKS;
         }
 
+        struct VariantOption {
+            const char* label;
+            Type type;
+        };
+
+        static constexpr VariantOption VARIANTS[] = {
+            { "God", Type::God },
+            { "Chaos", Type::Chaos },
+        };
+
     private:
         static std::vector<int> getFrames() {
             std::vector<int> frames;

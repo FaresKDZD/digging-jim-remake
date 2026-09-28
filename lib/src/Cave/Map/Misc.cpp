@@ -10,6 +10,10 @@ void Cave::Map::handleBoulderRoll(const int& index, const Cave::Entity::Directio
 }
 
 void Cave::Map::createExplosion(const int& index) {
+	if (getEntityType(index) == Cave::Entity::Type::Singularity) {
+		createSingularityExplosion(index);
+		return;
+	}
 	if (getEntityType(index) == Cave::Entity::Type::Fusion2) {
 		createHorizontalExplosion(index);
 		return;
@@ -30,6 +34,15 @@ void Cave::Map::createExplosion(const int& index, bool caveGullExplosion) {
 	detonateCells(index, cells, caveGullExplosion);
 }
 
+void Cave::Map::createRubyExplosion(const int& index) {
+	std::vector<int> cells;
+	cells.reserve(m_explosionOffsets.size());
+	for (int offset : m_explosionOffsets) {
+		cells.push_back(index + offset);
+	}
+	detonateCells(index, cells, false, true);
+}
+
 void Cave::Map::createHorizontalExplosion(const int& index) {
 	if (!inBounds(index)) return;
 	std::vector<int> cells;
@@ -40,21 +53,98 @@ void Cave::Map::createHorizontalExplosion(const int& index) {
 		if (nx < 0 || nx >= width) continue;
 		cells.push_back(y * width + nx);
 	}
+	for (int dy : { -1, 1 }) {
+		const int ny = y + dy;
+		if (ny < 0 || ny >= height) continue;
+		cells.push_back(ny * width + x);
+	}
 	detonateCells(index, cells, false);
 }
 
-void Cave::Map::detonateCells(const int& origin, const std::vector<int>& cells, bool caveGullExplosion) {
+void Cave::Map::createSingularityExplosion(const int& origin) {
+	if (!inBounds(origin) || width <= 0) return;
+
+	std::vector<int> bombIndices;
+	std::vector<int> fusion2Indices;
+	const int ox = origin % width;
+	const int oy = origin / width;
+
+	for (int dy = -1; dy <= 1; ++dy) {
+		for (int dx = -1; dx <= 1; ++dx) {
+			const int nx = ox + dx;
+			const int ny = oy + dy;
+			if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+			const int explosionIndex = ny * width + nx;
+
+			if (explosionIndex != origin && hasTrait(Cave::Entity::Trait::Indestructible, explosionIndex))
+				continue;
+
+			if (getEntityType(explosionIndex) == Cave::Entity::Type::Jim && isJimInvincible(explosionIndex))
+				continue;
+
+			if (isFusion3Armored(explosionIndex)) {
+				int previousIndex = getIndex(explosionIndex, caveEntities[explosionIndex].getPreviousDirection());
+				if (previousIndex != OUT_OF_BOUNDS_INDEX)
+					caveEntities[previousIndex].terminatePreviousTransition();
+				caveEntities[explosionIndex].terminateCurrentTransition();
+				damageFusion3(explosionIndex);
+				continue;
+			}
+
+			int previousIndex = getIndex(explosionIndex, caveEntities[explosionIndex].getPreviousDirection());
+			if (previousIndex != OUT_OF_BOUNDS_INDEX)
+				caveEntities[previousIndex].terminatePreviousTransition();
+			caveEntities[explosionIndex].terminateCurrentTransition();
+
+			const Cave::Entity::Type type = getEntityType(explosionIndex);
+			const bool playerPilotShip = Cave::Entity::isActiveJimlinShip(type)
+				&& !isJimlinPilotShip(explosionIndex);
+			if (explosionIndex != origin && type == Cave::Entity::Type::Bomb)
+				bombIndices.push_back(explosionIndex);
+			if (explosionIndex != origin && type == Cave::Entity::Type::Fusion2)
+				fusion2Indices.push_back(explosionIndex);
+
+			setEntity(explosionIndex, Cave::Entity::SingularityExplosion(
+				Cave::Entity::Cosmic::burstSpawnAt(dx, dy)));
+
+			if (type == Cave::Entity::Type::Jim || playerPilotShip) {
+				m_game->sendSignal(GameSignal::CaveFail);
+				m_state = Cave::State::Fail;
+				m_resetCameraPosition = false;
+			}
+		}
+	}
+
+	m_game->soundManager.play(Sound::Effect::Explosion);
+	notifyFusion5Stimulus(origin);
+
+	for (int bombIndex : bombIndices)
+		createExplosion(bombIndex, false);
+	for (int fusion2Index : fusion2Indices)
+		createHorizontalExplosion(fusion2Index);
+}
+
+void Cave::Map::detonateCells(const int& origin, const std::vector<int>& cells, bool caveGullExplosion, bool rubyExplosion) {
 	std::vector<int> bombIndices;
 	std::vector<int> fusion2Indices;
 
 	for (int explosionIndex : cells) {
-		if (!inBounds(explosionIndex)) continue;
+		if (!inBounds(explosionIndex) || !inBounds(origin) || width <= 0) continue;
+		const int ox = origin % width;
+		const int oy = origin / width;
+		const int ex = explosionIndex % width;
+		const int ey = explosionIndex / width;
+		int dx = ex - ox;
+		int dy = ey - oy;
+		if (dx < 0) dx = -dx;
+		if (dy < 0) dy = -dy;
+		if (dx > 2 || dy > 2) continue;
 
 		if (hasTrait(Cave::Entity::Trait::Indestructible, explosionIndex)) {
 			continue;
 		}
 
-		if (getEntityType(explosionIndex) == Cave::Entity::Type::Jim && isJimInvincible()) {
+		if (getEntityType(explosionIndex) == Cave::Entity::Type::Jim && isJimInvincible(explosionIndex)) {
 			continue;
 		}
 
@@ -75,16 +165,23 @@ void Cave::Map::detonateCells(const int& origin, const std::vector<int>& cells, 
 		caveEntities[explosionIndex].terminateCurrentTransition();
 
 		Cave::Entity::Type type = getEntityType(explosionIndex);
-		if (!caveGullExplosion && explosionIndex != origin && type == Cave::Entity::Type::Bomb) {
+		const bool playerPilotShip = Cave::Entity::isActiveJimlinShip(type)
+			&& !isJimlinPilotShip(explosionIndex);
+		if (!caveGullExplosion && !rubyExplosion && explosionIndex != origin && type == Cave::Entity::Type::Bomb) {
 			bombIndices.push_back(explosionIndex);
 		}
 		if (explosionIndex != origin && type == Cave::Entity::Type::Fusion2) {
 			fusion2Indices.push_back(explosionIndex);
 		}
 
-		caveGullExplosion ? setEntity(explosionIndex, Cave::Entity::CaveGullExplosion()) : setEntity(explosionIndex, Cave::Entity::Explosion());
+		if (rubyExplosion)
+			setEntity(explosionIndex, Cave::Entity::ChaosExplosion());
+		else if (caveGullExplosion)
+			setEntity(explosionIndex, Cave::Entity::CaveGullExplosion());
+		else
+			setEntity(explosionIndex, Cave::Entity::Explosion());
 
-		if (type == Cave::Entity::Type::Jim) {
+		if (type == Cave::Entity::Type::Jim || playerPilotShip) {
 			m_game->sendSignal(GameSignal::CaveFail);
 			m_state = Cave::State::Fail;
 			m_resetCameraPosition = false;

@@ -190,6 +190,11 @@ public:
     /// @brief Paste the selection clipboard with its top-left at (destX, destY).
     void pasteSelection(Cave::Map& map, int destX, int destY);
 
+    /// Inclusive paint range: interior only, or the full map including the border ring.
+    int paintMin() const { return settings.editableBorders ? 0 : 1; }
+    int paintMaxX(int width) const { return settings.editableBorders ? width - 1 : width - 2; }
+    int paintMaxY(int height) const { return settings.editableBorders ? height - 1 : height - 2; }
+
     /**
      * @brief Write the live map state back into the loadedFile cave entry.
      *
@@ -304,8 +309,14 @@ private:
     /// @brief Set by actionShowCaveProperties(); handled each frame in run().
     bool m_doShowCaveProps = false;
 
+    /// @brief Open Cosmic Settings after right-clicking a placed Singularity.
+    bool m_doShowCosmicSettings = false;
+
     /// @brief Set by actionShowCavesList(); opens the caves list window.
     bool m_showCavesList = false;
+
+    /// @brief Skip outside-click close for a couple of frames after opening the list.
+    int m_cavesListIgnoreClick = 0;
 
     /// @brief Whether small (16px) block mode is active.
     bool m_smallBlocks     = false;
@@ -339,10 +350,15 @@ private:
     int m_cavesListDel = -1;
     int m_cavesListMoveFrom = -1;
     int m_cavesListMoveTo = -1;
+    int m_cavesListRename = -1;
+    int m_cavesListRenameCommit = -1;
+    bool m_cavesListRenameFocus = false;
+    char m_cavesListRenameBuf[65] = {};
+    std::string m_cavesListRenameCommitName;
 
     void clearUndoHistory();
     void applyEditorSnapshot(const EditorSnapshot& snap, Cave::Map& map, Cave::File& loadedFile, int& currentCaveIndex);
-    void drawCavesListWindow(int currentCaveIndex, int caveCount);
+    void drawCavesListWindow(int currentCaveIndex, Cave::File& loadedFile);
     void reorderCaves(Cave::File& loadedFile, int& currentCaveIndex, int from, int to);
 
     // ----------------------------------------------------------------------------------
@@ -362,6 +378,7 @@ private:
     std::vector<char> m_clipboardTileData;
     std::vector<Cave::WellRecord> m_clipboardWells;
     std::vector<Cave::PortalRecord> m_clipboardPortals;
+    std::vector<Cave::CosmicRecord> m_clipboardCosmics;
 
     bool m_hasSelection = false;
     int  m_selX0 = 0, m_selY0 = 0, m_selX1 = 0, m_selY1 = 0;

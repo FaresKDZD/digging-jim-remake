@@ -80,8 +80,12 @@ namespace Cave::Entity {
                 return;
             }
             if (frames.size() > 1) {
-                currentFrame = (currentFrame + 1) % frames.size();
-                if (!loopCompleted && currentFrame == 0) {
+                const int count = static_cast<int>(frames.size());
+                if (reverse)
+                    currentFrame = (currentFrame - 1 + count) % count;
+                else
+                    currentFrame = (currentFrame + 1) % count;
+                if (!loopCompleted && currentFrame == (reverse ? count - 1 : 0)) {
                     loopCompleted = true;
                 }
             }
@@ -94,7 +98,11 @@ namespace Cave::Entity {
          *         or @ref NO_TEXTURE_INDEX if the animation has no frames.
          */
         int getTextureIndex() const {
-            return frames.empty() ? NO_TEXTURE_INDEX : frames[currentFrame];
+            if (frames.empty()) return NO_TEXTURE_INDEX;
+            const int count = static_cast<int>(frames.size());
+            int i = currentFrame % count;
+            if (i < 0) i += count;
+            return frames[i];
         }
 
         /// @brief Index of the current frame in the animation sequence.
@@ -108,6 +116,9 @@ namespace Cave::Entity {
 
         /// @brief Optional interval counter for frame progression.
         std::optional<Utils::TickCounter> counter;
+
+        /// @brief When true, @ref update walks the frame list backwards.
+        bool reverse = false;
 
     };
 

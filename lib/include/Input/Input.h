@@ -119,6 +119,19 @@ namespace Input {
         bool wasPressed(Input::Action action) const;
 
         /**
+         * @brief Held now, or tapped since the last cave tick.
+         *
+         * Lets a light tap count on the next Jim step without making that
+         * direction keep repeating after the key is released.
+         */
+        bool gameplayHeld(Input::Action action) const;
+
+        /**
+         * @brief Clear tap buffers after a cave tick has applied them.
+         */
+        void consumeGameplayLatch();
+
+        /**
          * @brief Increase the push timer counter.
          *
          * Called when Jim attempts to push an object, tracking the number
@@ -129,12 +142,13 @@ namespace Input {
         /**
          * @brief Check if the current push duration qualifies as a registered push.
          *
-         * A push is considered registered if the push timer has been active
-         * for at least 8 frames, and occurs on multiples of 8 thereafter.
+         * A push is registered after `interval` consecutive push ticks, then
+         * again on each multiple of `interval`.
          *
+         * @param interval Ticks of hold before the first push, and between repeats.
          * @return true if a push is registered, false otherwise.
          */
-        bool registerPush() const;
+        bool registerPush(unsigned int interval = 8) const;
 
         /**
          * @brief Toggle whether to use joystick controls.
@@ -142,11 +156,18 @@ namespace Input {
         void setJoystick(const bool& toggle);
 
         /**
+         * @brief Ignore WASD for menu navigation so only arrow keys move the cursor.
+         */
+        void setIgnoreWasd(bool ignore);
+
+        /**
          * @brief Get the joystick ID (0 - 7 for SFML).
          */
         void detectJoystick();
 
     private:
+        void latchIfJimAction(Action action);
+
         /// @brief Mapping of keyboard keys to actions.
         std::unordered_map<sf::Keyboard::Scan, Action> m_keyMap = {
             // Developer buttons
@@ -194,6 +215,9 @@ namespace Input {
         /// @brief Actions that are currently being held down.
         std::set<Input::Action> m_heldActions;
 
+        /// @brief Jim taps that stay active until the next cave tick.
+        std::set<Input::Action> m_latchedActions;
+
         /// @brief Whether a keyboard event occurred before the next update.
         bool m_keyboardEventOccurred = false;
 
@@ -211,6 +235,9 @@ namespace Input {
 
         /// @brief Whether to use JoyStick controls.
         bool m_joystick = false;
+
+        /// @brief When true, W/A/S/D are not treated as movement (menus use arrows only).
+        bool m_ignoreWasd = false;
 
         /// @brief ID of the joystick (0 - 7 for SFML).
         int m_joystickId = -1;

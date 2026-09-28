@@ -4,6 +4,7 @@
 #include <SFML/Graphics.hpp>
 #include <imgui.h>
 #include <imgui-SFML.h>
+#include "Cave/Entity/Cosmic.h"
 
 static constexpr uint32_t QUOTA_MIN = 0u;
 static constexpr uint32_t QUOTA_MAX = 999u;
@@ -63,6 +64,8 @@ namespace Cave {
         uint32_t lum;
         /// @brief Extra field (not in the 11×uint32 .cav properties blob). Persisted via CHUM chunk.
         uint32_t chumGrowthSpeed = 0;
+        /// @brief Extra field (not in the 11×uint32 .cav properties blob). CHUM flags bit 0.
+        bool unlimitedTime = false;
     };
 
     /**
@@ -79,7 +82,10 @@ namespace Cave {
      * @param diamondCount The current number of diamonds in the cave (used by "Count" button).
      * @param trigger Reference to a flag set to true if the user clicks "OK".
      */
-    void editCaveProperties(sf::RenderWindow& window, Cave::Properties& props, Cave::Properties original, const int& diamondCount, bool& trigger, bool developerMode = false, std::function<void()> onTest = nullptr);
+    void editCaveProperties(sf::RenderWindow& window, Cave::Properties& props, Cave::Properties original, const int& diamondCount, bool& trigger, bool developerMode = false, std::function<void()> onTest = nullptr, bool* editableBorders = nullptr);
+
+    /// @brief Opens a Cosmic Settings dialog for a placed Singularity.
+    void editCosmicSettings(sf::RenderWindow& window, Cave::Entity::Cosmic::Settings& settings, Cave::Entity::Cosmic::Settings original, bool& trigger);
 }
 
 

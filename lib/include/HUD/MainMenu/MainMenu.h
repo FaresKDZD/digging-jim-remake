@@ -16,6 +16,8 @@ namespace HUD::MainMenu {
     enum class Selection {
         /// @brief Play the game
         Play = 0,
+        /// @brief LAN multiplayer
+        Multiplayer,
         /// @brief Start the currently selected cave
         StartCave,
         /// @brief Open cave selection menu
@@ -38,6 +40,14 @@ namespace HUD::MainMenu {
         GameCompleted,
         /// @brief Game over screen
         GameOver,
+        /// @brief Multiplayer lobby (name, host, join)
+        Multiplayer,
+        /// @brief Host party list
+        MultiplayerHost,
+        /// @brief Joinable LAN hosts
+        MultiplayerJoin,
+        /// @brief Pick a cave file to start in multiplayer
+        MultiplayerCaves,
         /// @brief No active section
         None 
     };
@@ -105,6 +115,11 @@ namespace HUD::MainMenu {
          * @brief Updates the game over section, handling animation and transition back to main menu.
          */
         void updateGameOverSection();
+        void updateMultiplayerSection();
+        void updateMultiplayerHostSection();
+        void updateMultiplayerJoinSection();
+        void updateMultiplayerCavesSection();
+        bool tryStartMultiplayerCave();
 
         /**
          * @brief Toggle whether the main menu visuals should be hidden
@@ -169,7 +184,7 @@ namespace HUD::MainMenu {
         Utils::TickCounter m_tickCounter = Utils::TickCounter(8);
 
         /// @brief Vertical position of main selection arrow.
-        int m_selectArrowY = 0;
+        int m_selectArrowY = 12;
 
         /// @brief Whether cave loading animation has begun.
         bool m_caveBegin = false;
@@ -206,5 +221,13 @@ namespace HUD::MainMenu {
         Selection m_selected = Selection::Play;
         /// @brief Currently active section of the main menu.
         Section m_section = Section::Main;
+
+        Renderer::TextRenderer m_multiplayerLabel;
+        std::vector<Renderer::TextRenderer> m_mpRows;
+        std::string m_mpName = "PLAYER";
+        std::string m_mpWarning;
+        int m_mpMenuIndex = 0;
+        int m_mpJoinIndex = 0;
+        bool m_mpTyping = true;
     };
 }

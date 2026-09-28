@@ -4,11 +4,14 @@
 #include "HUD/Developer/FPSCounter.h"
 #include "HUD/Developer/CameraCenter.h"
 #include "HUD/Level/Panel.h"
+#include "HUD/Level/PauseMenu.h"
 #include "HUD/MainMenu/MainMenu.h"
 
 #include "Cave/Map/Map.h"
 #include "Cave/Manager/Manager.h"
-#include "Utils/Counter.h"
+#include "Utils/Random.h"
+#include "Net/Session.h"
+#include <chrono>
 
 #include <algorithm>
 #include <iostream>
@@ -39,7 +42,8 @@ Game::Game() :
     m_extraLifeThreshold(EXTRA_LIFE_SCORE_STEP),
     m_time(0),
     m_score(0),
-    m_gameIsPaused(0),
+    m_gameIsPaused(false),
+    m_quitConfirmOpen(false),
     m_caveFileIndex(0),
     m_chosenCaveNumber(INITIAL_CAVE)
 {
@@ -51,6 +55,25 @@ Game::Game() :
 // ----------------------------------------------------------------------------------
 
 void Game::sendSignal(const GameSignal& signal) {
+    if (signal == GameSignal::OpenQuitConfirm) {
+        if (m_gameState != GameState::MainMenu) {
+            m_quitConfirmOpen = true;
+            m_gameIsPaused = true;
+        }
+        return;
+    }
+    if (signal == GameSignal::CloseQuitConfirm) {
+        m_quitConfirmOpen = false;
+        m_gameIsPaused = false;
+        return;
+    }
+    if (signal == GameSignal::GotoMainMenu) {
+        m_quitConfirmOpen = false;
+        m_gameIsPaused = false;
+        m_net.setPlaying(false);
+        m_net.leave();
+    }
+
     switch (m_gameState) {
     case GameState::MainMenu: handleMainMenu(signal); break;
     case GameState::CaveLoad: handleCaveLoad(signal); break;
@@ -65,6 +88,13 @@ void Game::sendSignal(const GameSignal& signal) {
 void Game::handleMainMenu(const GameSignal& signal) {
     switch (signal) {
     case GameSignal::PlayGame:
+        if (m_settings.setRefreshRateOnStart) setRefreshrate();
+        resetGame();
+        m_chosenCaveNumber = getCaveNumber();
+        m_gameState = GameState::CaveLoad;
+        m_revealCaveHUD = true;
+        break;
+    case GameSignal::PlayMultiplayer:
         if (m_settings.setRefreshRateOnStart) setRefreshrate();
         resetGame();
         m_chosenCaveNumber = getCaveNumber();
@@ -286,6 +316,7 @@ void Game::mainGameLoop() {
         ? sf::RenderWindow(sf::VideoMode::getDesktopMode(), APPLICATION_NAME, sf::State::Fullscreen)
         : sf::RenderWindow(sf::VideoMode({ SCREEN_WIDTH, SCREEN_HEIGHT }), APPLICATION_NAME);
     setRefreshrate();
+    window.setMouseCursorVisible(false);
 
     imageManager.loadAllImages();
     soundManager.loadAllSounds();
@@ -296,6 +327,7 @@ void Game::mainGameLoop() {
 
     HUD::MainMenu::MainMenu mainMenu(this);
     HUD::Level::Panel levelPanel(this);
+    HUD::Level::PauseMenu pauseMenu(this);
     HUD::Developer::PositionDisplay jimPositionDisplay;
     HUD::Developer::PositionDisplay cameraPositionDisplay;
     HUD::Developer::PositionDisplay cameraOffsetDisplay;
@@ -307,8 +339,13 @@ void Game::mainGameLoop() {
     shaderManager.loadAllShaders();
     caveManager.load();
     m_caveFilenames = caveManager.getCaveFiles();
+    setCaveDoorLookup([&caveManager](int fileIndex, int caveNumber) {
+        const auto doors = caveManager.countDoors(fileIndex, caveNumber);
+        return DoorCount{ doors.start, doors.exit };
+    });
 
     levelPanel.load();
+    pauseMenu.load();
     mainMenu.load();
 
     if (m_editorMode)
@@ -430,6 +467,9 @@ void Game::mainGameLoop() {
 
     while (window.isOpen())
     {
+        inputSystem.setIgnoreWasd(
+            m_gameState == GameState::MainMenu || m_gameIsPaused || m_quitConfirmOpen);
+
         if (showtrigger) {
             showtrigger = false;
             showProps = !showProps;
@@ -447,6 +487,8 @@ void Game::mainGameLoop() {
             }
             else {
                 inputSystem.handleEvent(event.value());
+                if (const auto* text = event->getIf<sf::Event::TextEntered>())
+                    handleTextInput(text->unicode);
             }
 
             if (event->is<sf::Event::Closed>())
@@ -469,6 +511,8 @@ void Game::mainGameLoop() {
         if (m_closeWindow) {
             window.close();
         }
+
+        pollNetwork();
 
         // Check if cheat mode is activated
         if (inputSystem.wasPressed(Input::Action::ActivateCheatMode)) {
@@ -525,6 +569,8 @@ void Game::mainGameLoop() {
 
         setCaveCount(static_cast<int>(caveManager.numCaves(getCaveFileIndex())));
 
+        window.setMouseCursorVisible(showProps);
+
         if (showProps) Cave::editCaveProperties(window, m_caveProperties, getCaveProperties(), map.getDiamondCount(), showtrigger);
 
         // ---- Render to virtual screen (fixed 640x480 render texture) --------
@@ -550,6 +596,7 @@ void Game::mainGameLoop() {
         cameraOffsetDisplay.update(camera, "Offset", { cameraOffset.x, cameraOffset.y }, 35.0);
         fpsCounter.update(camera);
         levelPanel.update(camera);
+        pauseMenu.update(camera);
         mainMenu.update();
 
         if (caveActive) rt.draw(map, shaderManager.currentShader());
@@ -573,8 +620,15 @@ void Game::mainGameLoop() {
         if (!caveActive) rt.draw(mainMenu, shaderManager.defaultShader());
 
         rt.draw(levelPanel, shaderManager.defaultShader());
+        rt.draw(pauseMenu, shaderManager.defaultShader());
 
         rt.display();
+
+        const bool waiting = isMultiplayer() && m_net.waitingForTick();
+        if (m_gameState != GameState::CavePlay || m_gameIsPaused || m_quitConfirmOpen)
+            inputSystem.consumeGameplayLatch();
+        else if (Utils::TickCounter::onTick() && !waiting)
+            inputSystem.consumeGameplayLatch();
 
         inputSystem.update();
 
@@ -622,7 +676,8 @@ void Game::mainGameLoop() {
             cameraOffset = { 0, 0 };
         }
 
-        Utils::incrementGlobalCounter();
+        if (!(isMultiplayer() && m_net.waitingForTick()))
+            Utils::incrementGlobalCounter();
     }
 }
 
@@ -632,11 +687,17 @@ void Game::update() {
         break;
 
     case GameState::CavePlay:
-        // Decrease timer once per second while cave is active
-        if (!m_gameIsPaused && m_time > 0) m_time--;
+        if (m_caveProperties.unlimitedTime) {
+            m_time = static_cast<int>(TIME_MAX) * 64 + 63;
+        }
+        else if (!m_gameIsPaused && m_time > 0 && !m_freezeCaveTimer && !(isMultiplayer() && m_net.waitingForTick())) {
+            m_time--;
+        }
         break;
 
     case GameState::CavePass:
+        if (m_caveProperties.unlimitedTime)
+            break;
         // Convert leftover time into bonus points at end of cave
         if (m_time > 0) {
             m_score++;
@@ -757,6 +818,10 @@ bool Game::isGamePaused() const {
     return m_gameIsPaused;
 }
 
+bool Game::isQuitConfirmOpen() const {
+    return m_quitConfirmOpen;
+}
+
 bool Game::isGameCompleted() const {
     return m_gameState == GameState::GameDone;
 }
@@ -808,7 +873,8 @@ bool Game::isTimeWarning() const {
 // ----------------------------------------------------------------------------------
 
 int Game::initialCaveTime() const {
-    return m_caveProperties.time * 64 + 63;
+    const uint32_t seconds = m_caveProperties.unlimitedTime ? TIME_MAX : m_caveProperties.time;
+    return static_cast<int>(seconds) * 64 + 63;
 }
 
 void Game::resetCaveState() {
@@ -816,6 +882,8 @@ void Game::resetCaveState() {
     m_time = initialCaveTime();
     m_collected = 0;
     m_gameIsPaused = false;
+    m_quitConfirmOpen = false;
+    m_freezeCaveTimer = false;
 }
 
 void Game::resetGame() {
@@ -848,4 +916,59 @@ void Game::commitGameOptions(const GameSettings& options) {
     if (startMusic) sendSignal(GameSignal::StartMusic);
     if (stopMusic) sendSignal(GameSignal::StopMusic);
     saveGameOptionsToFile(m_settings, SETTINGS_FILE);
+}
+
+const Net::PlayerInput& Game::mpInput(int id) const {
+    static const Net::PlayerInput empty;
+    if (id < 0 || id >= Net::MaxPlayers) return empty;
+    return m_mpInputs[static_cast<size_t>(id)];
+}
+
+void Game::handleTextInput(std::uint32_t unicode) {
+    m_textChar = unicode;
+}
+
+std::uint32_t Game::takeTextInput() {
+    const std::uint32_t ch = m_textChar;
+    m_textChar = 0;
+    return ch;
+}
+
+void Game::pollNetwork() {
+    m_net.poll(1.f / 64.f);
+    if (m_net.consumePartyEnded() && m_gameState != GameState::MainMenu)
+        sendSignal(GameSignal::GotoMainMenu);
+
+    const Net::PlayerInput local = sampleLocalInput();
+    if (isMultiplayer())
+        m_net.submitLocalInput(local);
+    m_mpInputs[0] = local;
+}
+
+Net::PlayerInput Game::sampleLocalInput() const {
+    Net::PlayerInput local;
+    local.up = inputSystem.gameplayHeld(Input::Action::MoveUp);
+    local.down = inputSystem.gameplayHeld(Input::Action::MoveDown);
+    local.left = inputSystem.gameplayHeld(Input::Action::MoveLeft);
+    local.right = inputSystem.gameplayHeld(Input::Action::MoveRight);
+    local.collect = inputSystem.gameplayHeld(Input::Action::Collect);
+    local.selfDestruct = inputSystem.gameplayHeld(Input::Action::SelfDestruct);
+    return local;
+}
+
+bool Game::consumeSimTick() {
+    if (!isMultiplayer()) {
+        m_mpInputs[0] = sampleLocalInput();
+        return true;
+    }
+    return m_net.tryBeginSimTick(m_mpInputs);
+}
+
+Game::DoorCount Game::countCaveDoors(int fileIndex, int caveNumber) const {
+    if (m_doorLookup) return m_doorLookup(fileIndex, caveNumber);
+    return {};
+}
+
+void Game::setCaveDoorLookup(const std::function<DoorCount(int, int)>& lookup) {
+    m_doorLookup = lookup;
 }

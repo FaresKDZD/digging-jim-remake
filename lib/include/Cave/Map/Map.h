@@ -1,11 +1,25 @@
 #pragma once
 #include <array>
 #include <functional>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 #include <SFML/Graphics.hpp>
 
 #include "Game/Game.h"
+#include "Net/Session.h"
+#include "Cave/State/State.h"
+#include "Cave/Entity/Entity.h"
+#include "Cave/Properties/Properties.h"
+#include "Cave/Manager/Data.h"
+#include "Camera/Camera.h"
+#include "Renderer/TileRenderer.h"
+#include "Renderer/TextRenderer.h"
+#include "Input/Input.h"
+#include "Sound/Manager.h"
+#include "Cave/Entity/Direction.h"
+#include "Utils/Counter.h"
+#include "Net/Session.h"
 #include "Cave/State/State.h"
 #include "Cave/Entity/Entity.h"
 #include "Cave/Properties/Properties.h"
@@ -96,7 +110,7 @@ namespace Cave {
          * @param properties Pointer to the cave properties (width, height, timings, etc.).
          * @param tileData Vector of raw tile identifiers used to populate cave entities.
          */
-        void generateMap(const Cave::Properties* properties, const std::vector<char>& tileData, const std::vector<Cave::WellRecord>& wells = {}, const std::vector<Cave::PortalRecord>& portals = {});
+        void generateMap(const Cave::Properties* properties, const std::vector<char>& tileData, const std::vector<Cave::WellRecord>& wells = {}, const std::vector<Cave::PortalRecord>& portals = {}, const std::vector<Cave::CosmicRecord>& cosmics = {});
 
         /**
          * @brief Updates the cave state and its entities.
@@ -121,11 +135,20 @@ namespace Cave {
         /// @brief True if a 3x3 Charger centered here would stay inside the inner cave (not on/against the border).
         bool canPlaceCharger(const int& index) const;
 
+        /// @brief True if this cosmic can be painted here (one of each, and wanderers never share a cave with Singularity).
+        bool canPlaceCosmic(const int& index, Cave::Entity::Type type) const;
+
         /// @brief Write spawn settings for every Well currently on the map.
         void collectWellRecords(std::vector<Cave::WellRecord>& out) const;
 
         /// @brief Write id/link settings for every Portal currently on the map.
         void collectPortalRecords(std::vector<Cave::PortalRecord>& out) const;
+
+        /// @brief Write cosmic job limits for every Singularity currently on the map.
+        void collectCosmicRecords(std::vector<Cave::CosmicRecord>& out) const;
+
+        Cave::Entity::Cosmic::Settings& cosmicSettings() { return m_cosmicSettings; }
+        const Cave::Entity::Cosmic::Settings& cosmicSettings() const { return m_cosmicSettings; }
 
         /**
          * @brief Counts the number of diamonds in the cave.
@@ -229,9 +252,13 @@ namespace Cave {
 
         /// @brief True if Jim cannot currently be killed by explosions or falling objects.
         bool isJimInvincible() const;
+        bool isJimInvincible(const int& index) const;
 
         /// @brief Remaining ruby invincibility frames, or 0.
         int getJimInvincibleFrames() const;
+
+        int nearestJimIndex(const int& from) const;
+        void noteJimMoved(const int& dest);
 
     private:
         // -------------
@@ -291,6 +318,12 @@ namespace Cave {
          */
         bool onBorder(const int& index) const;
 
+        /// True if this cell is empty space that can be used as a wrap opening.
+        bool isBorderOpening(const int& index) const;
+
+        /// True if moving `direction` from this cell would leave the map.
+        bool isOutwardBorderCell(const int& index, const Cave::Entity::Direction& direction) const;
+
         /**
          * @brief Gets the index of a neighboring cell in a given direction.
          *
@@ -302,6 +335,7 @@ namespace Cave {
          * @return The index of the neighboring cell, or OUT_OF_BOUNDS_INDEX if invalid.
          */
         int getIndex(const int& sourceIndex, const Cave::Entity::Direction& direction) const;
+        int getWrappedIndex(const int& sourceIndex, const Cave::Entity::Direction& direction) const;
 
         // ---------------------
         // - Adjacency Queries -
@@ -421,7 +455,7 @@ namespace Cave {
          * @param index The index of the entity.
          * @return The current direction of the entity.
          */
-        Cave::Entity::Direction getEntityDirection(const int& index);
+        Cave::Entity::Direction getEntityDirection(const int& index) const;
 
         /**
          * @brief Sets the movement direction of the entity at a given index.
@@ -505,6 +539,7 @@ namespace Cave {
          * - The source or destination entity is transitioning.
          */
         bool moveEntity(const int& sourceIndex, const Cave::Entity::Direction& direction, int slideInc = 4);
+        bool moveEntityTo(const int& sourceIndex, const int& destinationIndex, const Cave::Entity::Direction& direction, int slideInc = 4);
         
         /**
          * @brief Warps an entity two tiles forward in the specified direction.
@@ -545,6 +580,7 @@ namespace Cave {
          * - Any of the involved entities are transitioning.
          */
         bool pushEntity(const int& sourceIndex, const Cave::Entity::Direction& direction);
+        bool pushEntityTo(const int& sourceIndex, const int& pushedIndex, const int& destinationIndex, const Cave::Entity::Direction& direction);
 
         // ---------------------
         // - Update Lifecycle  -
@@ -583,6 +619,9 @@ namespace Cave {
          * @param indicies A vector of entity indices to update.
          */
         void updateActiveEntity(const std::vector<int> indicies);
+
+        /// @brief Expand horizontal/vertical walls before plasma so they win empty cells.
+        void updateExpandingWalls(const std::vector<int>& indicies);
         
         /**
          * @brief Updates inactive entities when the cave is not in play.
@@ -676,6 +715,12 @@ namespace Cave {
          * @return True if traversal was successful, false otherwise.
          */
         bool handleJimTraverse(const int& index, const int& inFront, const bool& collectMode, const Cave::Entity::Facing& facing, const Cave::Entity::Direction& direction);
+
+        /// Walk off a border opening and appear in the matching hole on the opposite edge.
+        bool handleJimBorderWrap(const int& index, const int& inFront, const bool& collectMode, const Cave::Entity::Facing& facing, const Cave::Entity::Direction& direction);
+        bool tryJimWrapPush(const int& index, const int& pushed, const int& dest, const bool& collectMode, const Cave::Entity::Direction& direction, bool snapCamera);
+        bool tryJimWrapWalk(const int& index, const int& dest, const Cave::Entity::Direction& direction, bool snapCamera);
+        void applyJimWrapLandingEffects(const int& dest);
         
         /**
          * @brief Handles Jim pushing pushable entities (e.g., boulders).
@@ -702,6 +747,9 @@ namespace Cave {
          */
         bool handleJimPushDetonator(const int& index, const int& inFront);
 
+        /// @brief Pushing against a vault button plays its press and opens private gates.
+        bool handleJimPushVaultButton(const int& index, const int& inFront);
+
         /**
          * @brief Handles Jim opening or closing an adjacent gate with Space.
          *
@@ -709,6 +757,95 @@ namespace Cave {
          * when that combination becomes held, even if one key was already down.
          */
         bool handleJimUseGate(const int& index, const int& inFront, const bool& collectMode);
+
+        /// @brief Space toward a parked Jimlin ship boards it.
+        bool handleJimEnterShip(const int& index, const int& inFront, const bool& collectMode);
+
+        /// @brief Space toward a tile while piloting exits the ship in that direction.
+        bool handleJimExitShip(const int& index, const Cave::Entity::Direction& direction);
+
+        /// @brief Pilot an occupied Jimlin ship with Jim's input.
+        void updateJimlinShip(const int& index);
+
+        void updateJimlin(const int& index);
+        int jimlinMode(const int& index) const;
+        void setJimlinMode(const int& index, int mode);
+        int jimlinTimer(const int& index) const;
+        void setJimlinTimer(const int& index, int ticks);
+        int jimlinRestPhase(const int& index) const;
+        void setJimlinRestPhase(const int& index, int phase);
+        void setJimlinBlinkAnimation(const int& index, int frame, bool held);
+        bool jimlinCollected(const int& index) const;
+        void setJimlinCollected(const int& index, bool collected);
+        bool jimlinPushLeft(const int& index) const;
+        void setJimlinPushLeft(const int& index, bool left);
+        int jimlinPushCooldown(const int& index) const;
+        void setJimlinPushCooldown(const int& index, int ticks);
+        Cave::Entity::Type jimlinLook(const int& index) const;
+        bool isJimlinPilotShip(const int& index) const;
+        bool jimlinInShip(const int& index) const;
+        bool jimlinCanBoardShip(const int& self, const int& ship) const;
+        bool isJimlinThreat(const int& index) const;
+        bool isJimlinDiamond(const int& index) const;
+        bool isJimlinPushable(const int& index) const;
+        bool jimlinPushDestOnJimlinBlock(const int& pushed, const Cave::Entity::Direction& direction) const;
+        bool jimlinPushDestIsPit(const int& pushed, const Cave::Entity::Direction& direction) const;
+        bool jimlinCanPushObject(const int& index) const;
+        bool jimlinShipOnGate(const int& cell) const;
+        bool jimlinShipOnJimlinBlock(const int& cell) const;
+        bool jimlinShipStable(const int& cell) const;
+        bool jimlinShipPreferredSupport(const int& cell) const;
+        bool canJimlinWalk(const int& cell, const int& self, bool inShip, bool throughClosedPrivate = false) const;
+        bool canJimlinOccupy(const int& cell, const int& self, int goal, bool inShip, bool throughClosedPrivate = false) const;
+        bool privateGatesUsable() const;
+        int findJimlinReachableVault(const int& index) const;
+        bool tryJimlinKingUseVault(const int& index);
+        bool tryJimlinKingOpenIfNeeded(const int& index, int goal);
+        int jimlinCargo(const int& index) const;
+        void setJimlinCargo(const int& index, int count);
+        void refreshJimlinBlockCache();
+        void jimlinSearchBegin() const;
+        bool jimlinSearchSeen(int cell) const;
+        void jimlinSearchVisit(int cell, int parent, Cave::Entity::Direction via, int dist = 0) const;
+        Cave::Entity::Direction jimlinSearchFirstStep(int from, int goal) const;
+        bool jimlinBlockAvailable(const int& block) const;
+        bool jimlinCanCollectDiamond(const int& self, const int& cell) const;
+        int jimlinDepositSlot(const int& block) const;
+        bool isJimlinDepositStand(const int& cell) const;
+        int pickJimlinDepositStand(const int& index) const;
+        bool tryJimlinDeposit(const int& index);
+        bool jimlinThreatCanEnter(const int& threat, const int& cell) const;
+        void jimlinFillThreatReach(const int& threat, std::vector<char>& reach) const;
+        bool jimlinBehindPipe(const int& cell) const;
+        bool jimlinBesideGate(const int& cell) const;
+        bool jimlinIsSafeEmpty(const int& cell, const std::vector<char>& threatReach) const;
+        bool jimlinIsSafeHaven(const int& cell, const std::vector<char>& threatReach) const;
+        bool jimlinIsLethalFallable(const int& index) const;
+        int findJimlinCrushThreat(const int& index) const;
+        bool jimlinHasCrushAbove(const int& index) const;
+        bool canJimlinDodgeWalk(const int& self, const int& cell, const int& threat) const;
+        bool jimlinDodgeCanArrive(const int& cell, int arriveDist) const;
+        bool tryJimlinDodgeStep(const int& index, const Cave::Entity::Direction& direction);
+        bool tryJimlinDodgeCrush(const int& index);
+        void killPlayerAt(const int& index);
+        Cave::Entity::Direction findPathForJimlin(const int& index, int goal, bool inShip, bool throughClosedPrivate = true) const;
+        int findJimlinReachable(const int& index, bool diamonds, bool ships, bool pushables, int range) const;
+        int pickJimlinWanderCell(const int& index) const;
+        int nearestJimlinThreat(const int& index) const;
+        int pickJimlinFleeGoal(const int& index, const int& threat) const;
+        int pickJimlinLandCell(const int& index) const;
+        void setJimlinFacingFromDir(const int& index, const Cave::Entity::Direction& direction);
+        void setJimlinAnimation(const int& index, bool moving, bool pushing);
+        void jimlinCloseGateBehind(const int& from);
+        bool tryJimlinStep(const int& index, const Cave::Entity::Direction& direction, bool pushing);
+        bool tryJimlinBoardShip(const int& index, const int& ship);
+        bool tryJimlinExitShip(const int& index, const Cave::Entity::Direction& direction);
+        void jimlinBeginIdle(const int& index);
+        void jimlinBeginHome(const int& index);
+        void jimlinBeginRest(const int& index);
+        bool jimlinCanReachHome(const int& index) const;
+        bool jimlinReadyToGoHome(const int& index) const;
+        void jimlinPickAction(const int& index);
         
         /**
          * @brief Handles Jim warping through tubes.
@@ -768,6 +905,7 @@ namespace Cave {
          * @param index The entity index representing the Start Door.
          */
         void updateStartDoor(const int& index);
+        bool anyStartDoorPending() const;
         
         /**
          * @brief Updates the Start Door Open entity.
@@ -810,22 +948,82 @@ namespace Cave {
         Cave::Entity::Direction findPathToPegulPartner(const int& index, const int& target) const;
         bool fusePeguls(const int& a, const int& b);
         void updateFusion(const int& index);
+        void updateCosmic(const int& index);
+        void updateSingularity(const int& index);
+        void updateSingularityExplosion(const int& index);
+        bool singularitySeesJim(const int& index) const;
+        int pickCosmicWanderGoal(const int& index) const;
+        Cave::Entity::Direction findPathToCell(const int& index, const int& goal);
+        bool moveCosmicOver(const int& index, const Cave::Entity::Direction& direction);
+        bool tryStepCosmic(const int& index, const int& goal);
+        void ensureCosmicUnder();
+        void hoistWandererCosmics();
+        void updateOverlayCosmics();
+        Cave::Entity::Base& cosmicRef(const int& index);
+        const Cave::Entity::Base& cosmicRef(const int& index) const;
+        Cave::Entity::Type cosmicType(const int& index) const;
+        Cave::Entity::Type cosmicTerrainType(const int& index) const;
+        void cosmicStamp(const int& index, Cave::Entity::Base tile);
+        void cosmicVanish(const int& index);
+        bool cosmicOccupied(const int& index, const int& self) const;
+        int pickInteriorSpace(const int& self) const;
+        int pickClosestInteriorSpace(const int& self) const;
+        bool ensureInteriorSpaceGoal(const int& index);
+        bool ensureClosestInteriorSpaceGoal(const int& index);
+        int manhattanIndex(const int& a, const int& b) const;
+        void enterCavePlay();
+        int perimeterLength() const;
+        int perimeterCell(int p) const;
+        bool borderComplete() const;
+        int findCosmic(Cave::Entity::Type type) const;
+        bool cosmicJobDone(Cave::Entity::Type type) const;
+        bool cosmicDespawned(Cave::Entity::Type type) const;
+        bool layoutWorkersDone() const;
+        bool anyWandererExcept(Cave::Entity::Type type) const;
+        bool hasWandererCosmic() const;
+        void beginCosmicJob(const int& index);
+        void beginCosmicVanish(const int& index);
+        void updateCosmicGenesis(const int& index);
+        void updateTerminusJob(const int& index);
+        void updateOstiaJob(const int& index);
+        void updateMurusJob(const int& index);
+        void updateAdamaJob(const int& index);
+        void updateVitusJob(const int& index);
+        void updateTeraJob(const int& index);
+        void updateNihilusSolo(const int& index);
+        void advanceCosmicGenesis();
+        void endCosmicGenesis();
+        Cave::Entity::Base randomVitusMonster() const;
         void updateFusion1Hunt(const int& index);
         bool tryFusion1HuntMove(const int& index);
         bool isFusion1TeleportBlock(const int& index) const;
         bool warpFusion1ThroughWall(const int& index, const int& dest);
         void updateFusion4Hunt(const int& index);
-        bool tryFusion4PlaceBomb(const int& index, const int& prefer);
-        bool tryFusion4PlaceBombAt(const int& index, const int& spot);
+        bool tryFusion4PlaceBombAt(const int& index, const int& spot, const int& around = OUT_OF_BOUNDS_INDEX);
+        bool tryFusion4PlaceOnJimPath(const int& index);
         bool tryFusion4Flee(const int& index, const int& bomb);
+        void fusion4WanderProtozo(const int& index, const int& avoidBomb = OUT_OF_BOUNDS_INDEX);
+        int fusion4FollowBomb(const int& last) const;
         int findFusion4Objective(const int& index) const;
+        int findFusion4PrimedThreat(const int& index) const;
         Cave::Entity::Direction findPathToFusion4Goal(const int& index, const int& goal) const;
         Cave::Entity::Direction findPathToFusion5Goal(const int& index, const int& goal) const;
         bool isFusion4Objective(const int& index) const;
+        bool isFusion4DiamondVariant(const int& index) const;
         bool isFusion4ExitDoor(const int& index) const;
+        bool fusion4IsBombableTile(const int& spot) const;
+        bool fusion4IsBombableAroundTarget(const int& spot, const int& objective) const;
+        bool fusion4IsTargetDownCorner(const int& spot, const int& objective) const;
+        bool fusion4PlacesAboveSelf(const int& hunter, const int& spot) const;
+        bool fusion4CanPlantFrom(const int& hunter, const int& spot, const int& around = OUT_OF_BOUNDS_INDEX) const;
         bool isFusion4BombableObjective(const int& hunter, const int& objective) const;
-        bool fusion4BombWouldRest(const int& spot) const;
+        bool fusion4InBlast3x3(const int& cell, const int& bomb) const;
+        bool fusion4HasEscapeFromBomb(const int& hunter, const int& bomb, const int& self = OUT_OF_BOUNDS_INDEX) const;
+        bool fusion4InAnyPrimedBlast(const int& cell, const int& ignoreBomb = OUT_OF_BOUNDS_INDEX) const;
+        void fusion4MarkPrimedBlasts(std::vector<char>& mask, int ignoreBomb = OUT_OF_BOUNDS_INDEX) const;
         bool isAdjacentCell(const int& a, const int& b) const;
+        int fusion4OffsetCell(const int& origin, int dx, int dy) const;
+        bool fusion4IsPrimedBomb(const int& cell) const;
         void collectFusion4BombSpots(const int& hunter, const int& objective, std::vector<int>& spots) const;
         int findNearestFusion4BombSpot(const int& index, const int& objective) const;
         bool isFusion3Armored(const int& index) const;
@@ -833,11 +1031,17 @@ namespace Cave {
         void updateFusion5Hunt(const int& index);
         void notifyFusion5Stimulus(const int& cell);
         void updateGate(const int& index);
+        void updateVaultButton(const int& index);
         void toggleGate(const int& index);
         bool isPassableGate(const int& index) const;
         bool isMonsterWalkable(const int& index) const;
         void coverPassableGate(const int& index);
         bool restoreCoveredGate(const int& index);
+        void openPrivateGates();
+        void beginPrivateGateOpen(Cave::Entity::Base& gate);
+        void beginPrivateGateClose(Cave::Entity::Base& gate);
+        bool tryPressVaultButton(const int& index);
+        void tickCoveredPrivateGates();
 
         /// @brief Protozo wander, but pipes in the facing direction count as a path.
         void updateBlob(const int& index);
@@ -934,6 +1138,27 @@ namespace Cave {
 
         /// @brief Digs dirt, pathfinds to Jim, dodges falling boulders, petrifies Jim and monsters.
         void updateGod(const int& index);
+        /// @brief Invincible. Idle is stationary. First craze hunts Jim; later crazes pick hunt, summon, or freeze.
+        void updateChaos(const int& index);
+        Cave::Entity::Direction findPathToJimForChaos(const int& index) const;
+        int chaosToroidalDist(const int& a, const int& b) const;
+        int nearestJimIndexWrapped(const int& from) const;
+        bool tryMoveChaos(const int& index, const Cave::Entity::Direction& direction);
+        void chaosClearOccupant(const int& cell);
+        void chaosHuntJim(const int& index);
+        void chaosSummonTick(const int& index);
+        Cave::Entity::Base chaosRandomSummonTile(bool allowMonster) const;
+        Cave::Entity::Base randomChaosSummonMonster() const;
+        bool chaosCanSummonAt(const int& origin, const int& cell) const;
+        bool chaosPlayerBlocksSummon(const int& cell) const;
+        int chaosJimlinToReplace(const int& cell) const;
+        void chaosEraseJimlin(const int& cell);
+        bool chaosCellNearJim(const int& cell, int clearance) const;
+        bool chaosHasOtherMonsters() const;
+        void syncChaosCrushable(const int& index);
+        void chaosHitByFallable(const int& index);
+        void chaosPetrifyMonsters();
+        bool isChaosFreezeTarget(Cave::Entity::Type type) const;
         bool godTileUnsafe(const int& cell) const;
         Cave::Entity::Direction findPathToJimForGod(const int& index) const;
         Cave::Entity::Direction findPathToGoalForGod(const int& index, const int& goal) const;
@@ -969,7 +1194,8 @@ namespace Cave {
          * @brief Updates the Sludg enemy's behavior.
          *
          * If plasma is reachable through empty space, locks onto the nearest tile and
-         * pathfinds to eat it. Eating plasma turns it into a Saturated Sludg.
+         * pathfinds to eat it. Eating plasma plays a saturate animation, then
+         * turns it into a Saturated Sludg.
          * If no plasma route exists, it wanders like a Cave Gull (turning right).
          *
          * @param index The entity index of the Sludg.
@@ -1001,8 +1227,11 @@ namespace Cave {
          *
          * If Gallops or eggs are present she stays in her 5x5 nest, eats nest
          * diamonds, waits three seconds, and lays. If none remain she leaves to
-         * fetch one diamond, returns home, waits, then lays. After Jim enters the
-         * nest she ignores the rest and chases exactly like a Tetrapus forever.
+         * fetch one diamond, returns home, waits, then lays. If the nest has no
+         * stable ground for 5 seconds she walks through nest diamonds and eats
+         * them, then lays that many eggs. After Jim enters the nest she chases
+         * like a Tetrapus. If she has no path to him for 3 seconds she returns
+         * to the nest and resumes nest behaviour.
          *
          * @param index The entity index of the Gallop Queen.
          */
@@ -1042,6 +1271,7 @@ namespace Cave {
         void inflatePuffer(int index, int dest);
         void deflatePuffer(const int& index);
         void freezePufferIdle(const int& index);
+        void freezePuffersBlockedAt(const int& cell);
 
         void updateCharger(const int& index);
         void updateChargerBody(const int& index);
@@ -1086,7 +1316,6 @@ namespace Cave {
         void wanderGallopQueen(const int& index, const int& nest, bool nestOnly);
         bool tryLayGallopEgg(const int& index);
         bool nestHasStableGallopSpot(const int& nest) const;
-        int gorgeGallopNestDiamonds(const int& nest);
 
         bool gallopCanTraverse(const int& cell) const;
         bool gallopDepositSupported(const int& cell) const;
@@ -1171,6 +1400,7 @@ namespace Cave {
          * @return true if the enemy was destroyed, false otherwise.
          */
         bool handleEnemyDeath(const int& index);
+        bool isAdjacentToJimlin(const int& index) const;
         
         /**
          * @brief Attempts to move an enemy in the given direction.
@@ -1349,9 +1579,16 @@ namespace Cave {
 
         bool handleEntityLanding(const int& index, const int& ahead);
 
+        /// @brief True if this Jim cell was occupied by a different tile at tick start.
+        bool jimSteppedIntoCellThisTick(const int& cell) const;
+        bool jimlinSteppedIntoCellThisTick(const int& cell) const;
+
         bool handleEntitySlip(const int& index, const int& support, const Cave::Entity::Direction& gravity);
 
         bool handleEntityLandingOnMagicWall(const int& index, const Cave::Entity::Type& type, const int& ahead, const Cave::Entity::Type& aheadType, const Cave::Entity::Direction& gravity);
+
+        void updateJimlinBlock(const int& index);
+        bool tryJimlinBlockTransport(const int& block);
 
         // --------------------
         // - Visual Updates   -
@@ -1418,7 +1655,9 @@ namespace Cave {
          */
         void createExplosion(const int& index, bool triggerBomb);
         void createHorizontalExplosion(const int& index);
-        void detonateCells(const int& origin, const std::vector<int>& cells, bool caveGullExplosion);
+        void createRubyExplosion(const int& index);
+        void createSingularityExplosion(const int& index);
+        void detonateCells(const int& origin, const std::vector<int>& cells, bool caveGullExplosion, bool rubyExplosion = false);
         
         /**
          * @brief Updates the texture (animation) of a tube entity based on adjacent walls.
@@ -1464,11 +1703,16 @@ namespace Cave {
         /// @brief Used to render the cave tiles.
         Renderer::TileRenderer m_tileRenderer;
 
+        /// @brief Used to render wanderer cosmics above the cave.
+        Renderer::TileRenderer m_cosmicRenderer;
+
         /// @brief Used to render the cave loading tiles.
         Renderer::TileRenderer m_loadingTileRenderer;
 
         /// @brief White seconds remaining drawn above Jim during ruby invincibility.
         Renderer::TextRenderer m_invincibleText;
+        std::vector<Renderer::TextRenderer> m_playerNameText;
+        std::vector<bool> m_showPlayerName;
 
         /// @brief True when the invincibility countdown should be drawn this frame.
         bool m_showInvincibleText = false;
@@ -1511,6 +1755,12 @@ namespace Cave {
 
         /// @brief Open gates hidden under an occupant, indexed like caveEntities.
         std::vector<Cave::Entity::Base> m_coveredGate;
+        std::vector<Cave::Entity::Base> m_cosmicUnder;
+        std::vector<Cave::Entity::Base> m_cosmicOver;
+        bool m_cosmicGenesis = false;
+        Cave::Entity::Cosmic::GenesisPhase m_cosmicPhase = Cave::Entity::Cosmic::GenesisPhase::None;
+        int m_nihilusSpaceAcc = 0;
+        Cave::Entity::Cosmic::Settings m_cosmicSettings{};
 
         /// @brief Whether the magic wall has been activated.
         bool m_magicWallStarted = false;
@@ -1566,11 +1816,49 @@ namespace Cave {
         /// @brief After a Pegul is crushed, remaining Peguls hunt other variants to fuse.
         bool m_pegulFuseHunt = false;
 
+        /// @brief Remaining ticks of Chaos craze freeze on other monsters.
+        int m_chaosFreezeTicks = 0;
+
+        /// @brief Jimlin Block cells, rebuilt once per tick.
+        std::vector<int> m_jimlinBlocks;
+
+        /// @brief Jimlin Dock cells, rebuilt with the block cache.
+        std::vector<int> m_jimlinDocks;
+
+        /// @brief Walk-up cells beside a Jimlin Block deposit slot, rebuilt once per tick.
+        std::vector<char> m_jimlinDepositStand;
+
+        /// @brief Reused Jimlin pathfinding scratch (generation-stamped).
+        mutable std::vector<int> m_jimlinBfsVisit;
+        mutable std::vector<int> m_jimlinBfsParent;
+        mutable std::vector<int> m_jimlinBfsDist;
+        mutable std::vector<Cave::Entity::Direction> m_jimlinBfsVia;
+        mutable std::vector<int> m_jimlinBfsQueue;
+        mutable std::vector<int> m_jimlinWanderScratch;
+        mutable std::vector<char> m_jimlinThreatReach;
+        mutable int m_jimlinBfsGen = 0;
+        mutable size_t m_jimlinBfsQueueHead = 0;
+        mutable bool m_jimlinPrivateGatesCached = false;
+        mutable bool m_jimlinPrivateGatesUsable = false;
+
+        /// @brief Cells emptied this tick by digging or an explosion finishing.
+        std::vector<char> m_supportDugOrExploded;
+
         /// @brief Whether the cave needs to be reset
         bool m_reset = false;
 
         /// @brief Whether upon reset, the camera position should also be reset
         bool m_resetCameraPosition = true;
+
+        std::array<int, Net::MaxPlayers> m_playerJimIndex{};
+        std::array<int, Net::MaxPlayers> m_playerJimIndexAtTickStart{};
+        int m_jimIndexAtTickStart = OUT_OF_BOUNDS_INDEX;
+        std::vector<char> m_jimlinAtTickStart;
+        std::array<bool, Net::MaxPlayers> m_playerExited{};
+        std::array<int, Net::MaxPlayers> m_playerInvincible{};
+        std::array<int, Net::MaxPlayers> m_playerHollow{};
+        std::array<int, Net::MaxPlayers> m_playerBombs{};
+        std::array<bool, Net::MaxPlayers> m_playerGateCombo{};
 
         /// @brief Map of functions to run entity updates.
         std::unordered_map<Cave::Entity::Type, std::function<void(int)>> m_entityUpdateMap;

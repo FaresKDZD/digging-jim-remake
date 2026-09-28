@@ -3,6 +3,7 @@
 #include "Cave/Properties/Properties.h"
 #include "Cave/Entity/Entity.h"
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace Cave {
@@ -17,6 +18,12 @@ namespace Cave {
     struct PortalRecord {
         uint16_t index = 0;
         int32_t packed = 0;
+    };
+
+    /// @brief Per-singularity cosmic job limits stored alongside cave tile data.
+    struct CosmicRecord {
+        uint16_t index = 0;
+        Entity::Cosmic::Settings settings{};
     };
 
     /**
@@ -46,6 +53,12 @@ namespace Cave {
          * @brief Id and link settings for each Portal in this cave.
          */
         std::vector<PortalRecord> portals;
+
+        /// @brief Job limits for each Singularity in this cave.
+        std::vector<CosmicRecord> cosmics;
+
+        /// @brief Optional display name (not in the classic .cav properties blob). Persisted via NAME chunk.
+        std::string name;
 
         /**
          * @brief Get the corresponding entity from the tile data char.

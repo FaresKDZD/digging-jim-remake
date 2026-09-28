@@ -2,6 +2,7 @@
 #include <iostream>
 #include <fstream>
 #include <stdexcept>
+#include <algorithm>
 
 /**
  * @brief Reads a 16-bit unsigned integer from a 2-byte array in reversed (little-endian) order.
@@ -137,6 +138,41 @@ Cave::File Cave::File::loadFromFile(const std::string& directory, const std::str
         const bool isWell = magic[0] == 'W' && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'L';
         const bool isPort = magic[0] == 'P' && magic[1] == 'O' && magic[2] == 'R' && magic[3] == 'T';
         const bool isChum = magic[0] == 'C' && magic[1] == 'H' && magic[2] == 'U' && magic[3] == 'M';
+        const bool isCosm = magic[0] == 'C' && magic[1] == 'O' && magic[2] == 'S' && magic[3] == 'M';
+        const bool isName = magic[0] == 'N' && magic[1] == 'A' && magic[2] == 'M' && magic[3] == 'E';
+        if (isName) {
+            for (uint32_t n = 0; n < count; ++n) {
+                char rec[4] = {};
+                if (!file.read(rec, 4)) break;
+                const uint16_t caveIndex = readReversedUint16(&rec[0]);
+                const uint16_t storedLen = readReversedUint16(&rec[2]);
+                const uint16_t nameLen = storedLen > 256 ? 256 : storedLen;
+                std::string name(nameLen, '\0');
+                if (nameLen > 0 && !file.read(name.data(), nameLen)) break;
+                if (storedLen > nameLen)
+                    file.ignore(static_cast<std::streamsize>(storedLen - nameLen));
+                if (caveIndex < caveFile.caves.size())
+                    caveFile.caves[caveIndex].name = std::move(name);
+            }
+            continue;
+        }
+        if (isCosm) {
+            for (uint32_t n = 0; n < count; ++n) {
+                char rec[16] = {};
+                if (!file.read(rec, 16)) break;
+                const uint16_t caveIndex = readReversedUint16(&rec[0]);
+                if (caveIndex >= caveFile.caves.size()) continue;
+                Cave::CosmicRecord cosmic;
+                cosmic.index = readReversedUint16(&rec[2]);
+                cosmic.settings.maxBoulders = static_cast<uint8_t>(rec[4]);
+                cosmic.settings.maxWalls = static_cast<uint8_t>(rec[5]);
+                cosmic.settings.maxDiamonds = static_cast<uint8_t>(rec[6]);
+                cosmic.settings.maxMonsters = static_cast<uint8_t>(rec[7]);
+                cosmic.settings.monsterMask = readReversedUint32(&rec[8]);
+                caveFile.caves[caveIndex].cosmics.push_back(cosmic);
+            }
+            continue;
+        }
         for (uint32_t n = 0; n < count; ++n) {
             char rec[8] = {};
             if (!file.read(rec, 8)) break;
@@ -155,6 +191,8 @@ Cave::File Cave::File::loadFromFile(const std::string& directory, const std::str
                 caveFile.caves[caveIndex].portals.push_back(portal);
             }
             else if (isChum) {
+                const uint16_t flags = readReversedUint16(&rec[2]);
+                caveFile.caves[caveIndex].properties.unlimitedTime = (flags & 1u) != 0;
                 caveFile.caves[caveIndex].properties.chumGrowthSpeed = readReversedUint32(&rec[4]);
             }
         }
@@ -220,12 +258,66 @@ void Cave::File::saveToFile(const Cave::File& caveFile, const std::string& fullP
             char bytes[8] = {};
             bytes[0] = static_cast<char>(caveIndex & 0xFF);
             bytes[1] = static_cast<char>((caveIndex >> 8) & 0xFF);
+            const uint16_t flags = caveFile.caves[caveIndex].properties.unlimitedTime ? 1u : 0u;
+            bytes[2] = static_cast<char>(flags & 0xFF);
+            bytes[3] = static_cast<char>((flags >> 8) & 0xFF);
             const uint32_t speed = caveFile.caves[caveIndex].properties.chumGrowthSpeed;
             bytes[4] = static_cast<char>(speed & 0xFF);
             bytes[5] = static_cast<char>((speed >> 8) & 0xFF);
             bytes[6] = static_cast<char>((speed >> 16) & 0xFF);
             bytes[7] = static_cast<char>((speed >> 24) & 0xFF);
             file.write(bytes, 8);
+        }
+    }
+
+    uint32_t cosmCount = 0;
+    for (const auto& cave : caveFile.caves)
+        cosmCount += static_cast<uint32_t>(cave.cosmics.size());
+    if (cosmCount > 0) {
+        const char cosmMagic[4] = { 'C', 'O', 'S', 'M' };
+        file.write(cosmMagic, 4);
+        writeUint32LE(file, 1);
+        writeUint32LE(file, cosmCount);
+        for (uint16_t caveIndex = 0; caveIndex < static_cast<uint16_t>(caveFile.caves.size()); ++caveIndex) {
+            for (const auto& rec : caveFile.caves[caveIndex].cosmics) {
+                char bytes[16] = {};
+                bytes[0] = static_cast<char>(caveIndex & 0xFF);
+                bytes[1] = static_cast<char>((caveIndex >> 8) & 0xFF);
+                bytes[2] = static_cast<char>(rec.index & 0xFF);
+                bytes[3] = static_cast<char>((rec.index >> 8) & 0xFF);
+                bytes[4] = static_cast<char>(rec.settings.maxBoulders);
+                bytes[5] = static_cast<char>(rec.settings.maxWalls);
+                bytes[6] = static_cast<char>(rec.settings.maxDiamonds);
+                bytes[7] = static_cast<char>(rec.settings.maxMonsters);
+                const uint32_t mask = rec.settings.monsterMask;
+                bytes[8] = static_cast<char>(mask & 0xFF);
+                bytes[9] = static_cast<char>((mask >> 8) & 0xFF);
+                bytes[10] = static_cast<char>((mask >> 16) & 0xFF);
+                bytes[11] = static_cast<char>((mask >> 24) & 0xFF);
+                file.write(bytes, 16);
+            }
+        }
+    }
+
+    uint32_t nameCount = 0;
+    for (const auto& cave : caveFile.caves)
+        if (!cave.name.empty()) ++nameCount;
+    if (nameCount > 0) {
+        const char nameMagic[4] = { 'N', 'A', 'M', 'E' };
+        file.write(nameMagic, 4);
+        writeUint32LE(file, 1);
+        writeUint32LE(file, nameCount);
+        for (uint16_t caveIndex = 0; caveIndex < static_cast<uint16_t>(caveFile.caves.size()); ++caveIndex) {
+            const std::string& name = caveFile.caves[caveIndex].name;
+            if (name.empty()) continue;
+            const uint16_t nameLen = static_cast<uint16_t>(std::min(name.size(), static_cast<size_t>(256)));
+            char rec[4] = {};
+            rec[0] = static_cast<char>(caveIndex & 0xFF);
+            rec[1] = static_cast<char>((caveIndex >> 8) & 0xFF);
+            rec[2] = static_cast<char>(nameLen & 0xFF);
+            rec[3] = static_cast<char>((nameLen >> 8) & 0xFF);
+            file.write(rec, 4);
+            file.write(name.data(), nameLen);
         }
     }
 }

@@ -7,6 +7,9 @@
 #include "Image/Manager.h"
 #include "Sound/Manager.h"
 #include "Utils/Counter.h"
+#include "Net/Session.h"
+#include <array>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -137,6 +140,11 @@ public:
     /// @param time New time value.
     void setTime(const int& time);
 
+    /// @brief Pause the cave countdown without pausing simulation.
+    void setFreezeCaveTimer(bool freeze) { m_freezeCaveTimer = freeze; }
+    bool freezeCaveTimer() const { return m_freezeCaveTimer; }
+    bool unlimitedCaveTime() const { return m_caveProperties.unlimitedTime; }
+
     /// @brief Get the number of player lives remaining.
     int getLives() const;
 
@@ -166,6 +174,9 @@ public:
     /// @brief Determine whether the game is currently paused.
     /// @return true if the game is paused, false otherwise
     bool isGamePaused() const;
+
+    /// @brief Whether the ESC quit confirmation menu is open.
+    bool isQuitConfirmOpen() const;
 
     /// @brief Determine whether the game is completed.
     /// @return true if the game is completed, false otherwise
@@ -217,6 +228,22 @@ public:
     /// @brief Commit the game options.
     /// @param GameSettings The current game options.
     void commitGameOptions(const GameSettings& options);
+
+    Net::Session& net() { return m_net; }
+    const Net::Session& net() const { return m_net; }
+    bool isMultiplayer() const { return m_net.playing(); }
+    int mpPlayerCount() const { return m_net.playing() ? m_net.playerCount() : 1; }
+    int mpLocalId() const { return m_net.playing() ? m_net.localId() : 0; }
+    const std::string& mpName(int id) const { return m_net.playerName(id); }
+    const Net::PlayerInput& mpInput(int id) const;
+    void handleTextInput(std::uint32_t unicode);
+    std::uint32_t takeTextInput();
+    Net::PlayerInput sampleLocalInput() const;
+    bool consumeSimTick();
+    void pollNetwork();
+    struct DoorCount { int start = 0; int exit = 0; };
+    DoorCount countCaveDoors(int fileIndex, int caveNumber) const;
+    void setCaveDoorLookup(const std::function<DoorCount(int, int)>& lookup);
 
 private:
     // ----------------------------------------------------------------------------------
@@ -302,6 +329,9 @@ private:
     /// @brief The cave timer countdown value
     int m_time;
 
+    /// @brief When true, CavePlay does not decrement the cave timer.
+    bool m_freezeCaveTimer = false;
+
     /// @brief Current player score
     int m_score;
 
@@ -310,6 +340,9 @@ private:
 
     /// @brief Whether the game is paused
     bool m_gameIsPaused;
+
+    /// @brief Whether the ESC quit confirmation overlay is showing
+    bool m_quitConfirmOpen;
 
     /// @brief Whether the game is in developer mode
     bool m_developerMode = false;
@@ -368,4 +401,9 @@ private:
 
     /// @brief The index of the chosen cave file, in @ref m_caveFilenames;
     int m_caveFileIndex;
+
+    Net::Session m_net;
+    std::array<Net::PlayerInput, Net::MaxPlayers> m_mpInputs{};
+    std::uint32_t m_textChar = 0;
+    std::function<DoorCount(int, int)> m_doorLookup;
 };

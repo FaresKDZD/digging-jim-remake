@@ -1,6 +1,9 @@
 #include "HUD/MainMenu/MainMenu.h"
 #include "Utils/Counter.h"
+#include "Utils/Random.h"
 #include <algorithm>
+#include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -9,6 +12,7 @@ HUD::MainMenu::MainMenu::MainMenu(Game* game)
     : m_game(game), m_caveNumberRenderer(game, 3), m_selectArrow(game, 1), m_selectCaveFileArrow(game, 1), m_selectOptionsArrow(game, 1), m_credits(game, 1024), m_loadingTileRenderer(&game->imageManager)
     , m_creditsText(""), m_creditsPositionX(800), m_caveFilePlaceolder({}), m_caveFiles({})
     , m_optionOnOffAudio(game, 1), m_optionOnOffAudioVolumeDial(game, 1), m_optionOnOffJoystickControl(game, 1), m_optionOnOffFiedColours(game, 1), m_optionOnOffSetRefreshrateOnStart(game, 1)
+    , m_multiplayerLabel(game, 12)
 {
     for (int index = 0; index < 20 * 15; index++) {
         loadingTiles.emplace_back(true);
@@ -16,6 +20,9 @@ HUD::MainMenu::MainMenu::MainMenu(Game* game)
 
     for (int index = 0; index < 8; index++) {
         m_caveFilePlaceolder.emplace_back(Renderer::TextRenderer(game, 25));
+    }
+    for (int index = 0; index < 12; index++) {
+        m_mpRows.emplace_back(Renderer::TextRenderer(game, 24));
     }
 }
 
@@ -37,6 +44,9 @@ void HUD::MainMenu::MainMenu::load() {
     m_selectCaveFileArrow.load(Image::Texture::MainMenuSelectArrow, { 32, 32 });
     m_selectOptionsArrow.load(Image::Texture::MainMenuSelectArrow, { 32, 32 });
     m_credits.load(Image::Texture::GameFont, { 16, 32 });
+    m_multiplayerLabel.load(Image::Texture::GameFont, { 16, 32 });
+    for (auto& row : m_mpRows)
+        row.load(Image::Texture::GameFont, { 16, 32 });
 
     if (!m_loadingTileRenderer.load(Image::Texture::CaveLoadingTiles, { 32, 32 })) {
         throw std::runtime_error("Error: Unable to load map loading texture.\n");
@@ -62,11 +72,31 @@ void HUD::MainMenu::MainMenu::update() {
 
     if (m_game->isGameCompleted()) m_section = HUD::MainMenu::Section::GameCompleted;
     if (m_game->isGameOver()) m_section = HUD::MainMenu::Section::GameOver;
+
+    Net::StartInfo start;
+    if (m_game->net().consumeStart(start)) {
+        Utils::seedRandom(start.seed);
+        Utils::resetGlobalCounter();
+        m_game->setCaveFileIndex(start.fileIndex);
+        m_game->setCaveNumber(start.caveNumber);
+        m_game->sendSignal(GameSignal::StopMusic);
+        m_game->sendSignal(GameSignal::PlayMultiplayer);
+        m_caveBegin = true;
+        m_gameOverTilesHide = false;
+        m_section = HUD::MainMenu::Section::Main;
+    }
+    if (m_game->net().consumePartyEnded() && m_section != HUD::MainMenu::Section::Main) {
+        m_section = HUD::MainMenu::Section::Multiplayer;
+        m_mpMenuIndex = 0;
+    }
     if (m_game->markedAsExitedFromCave()) {
         m_section = HUD::MainMenu::Section::Main;
+        m_selected = HUD::MainMenu::Selection::Play;
+        m_caveBegin = false;
         m_game->sendSignal(GameSignal::StartMusic);
         for (int index = 0; index < 20 * 15; index++) loadingTiles[index] = true;
         m_creditsPositionX = 800;
+        return;
     }
 
     switch (m_section) {
@@ -88,24 +118,62 @@ void HUD::MainMenu::MainMenu::update() {
         }
         updateGameOverSection();
         break;
+    case HUD::MainMenu::Section::Multiplayer:
+        if (!m_hideMainMenuVisuals) updateMultiplayerSection();
+        break;
+    case HUD::MainMenu::Section::MultiplayerHost:
+        if (!m_hideMainMenuVisuals) updateMultiplayerHostSection();
+        break;
+    case HUD::MainMenu::Section::MultiplayerJoin:
+        if (!m_hideMainMenuVisuals) updateMultiplayerJoinSection();
+        break;
+    case HUD::MainMenu::Section::MultiplayerCaves:
+        if (!m_hideMainMenuVisuals) updateMultiplayerCavesSection();
+        break;
     default:
         break;
+    }
+
+    if (m_caveBegin) {
+        if (m_loadRate < 96) {
+            m_loadRate++;
+            for (int index = 0; index < 20 * 15; index++) {
+                if (Utils::cosmeticRandom(m_loadRate, 96) == 96) loadingTiles[index] = false;
+            }
+        }
+        else {
+            m_game->sendSignal(GameSignal::CaveBegin);
+            m_caveBegin = false;
+            m_section = HUD::MainMenu::Section::None;
+            m_loadRate = 0;
+        }
+    }
+    else if (m_gameOverTilesHide) {
+        m_loadRate--;
+        if (m_loadRate < 0) m_loadRate = 0;
+        for (int index = 0; index < 20 * 15; index++) {
+            if (Utils::cosmeticRandom(0, m_loadRate) == 0) loadingTiles[index] = true;
+        }
+        if (m_loadRate == 0) m_gameOverTilesHide = false;
     }
 
     m_creditsPositionX -= 2;
     if (m_creditsPositionX < -6500) m_creditsPositionX = 800;
 
     m_caveNumberRenderer.updateNumbers({
-        {{ 480, 64 }, m_game->getCaveNumber(), 3, 0},
+        {{ 480, 109 }, m_game->getCaveNumber(), 3, 0},
         });
 
     m_selectArrow.updateNumbers({
-        {{ 200, 12 + m_selectArrowY}, m_tickCounter.tickCount(), 1, 0},
+        {{ 200, m_selectArrowY}, m_tickCounter.tickCount(), 1, 0},
         });
 
-    m_selectCaveFileArrow.updateNumbers({
-        {{ 200, 26 + m_selectCaveFileArrowY}, m_tickCounter.tickCount(), 1, 0},
-        });
+    if (m_section == HUD::MainMenu::Section::LoadCaves
+        || m_section == HUD::MainMenu::Section::MultiplayerCaves) {
+        m_selectCaveFileArrow.updateNumbers({
+            {{ 200, 26 + m_selectCaveFileArrowY}, m_tickCounter.tickCount(), 1, 0},
+            });
+    }
 
     m_selectOptionsArrow.updateNumbers({
         {{ 200, 12 + m_selectOptionsArrowY}, m_tickCounter.tickCount(), 1, 0},
@@ -131,8 +199,6 @@ void HUD::MainMenu::MainMenu::update() {
        {{ 640 - 64, 172 }, 1 - static_cast<int>(m_settings.setRefreshRateOnStart), 1, 0},
        });
 
-    m_credits.updateMovingText(m_creditsPositionX, 400, m_creditsText);
-
     m_loadingTileRenderer.updateLoadingTexture(loadingTiles, { 0, 0 }, sf::IntRect({ 0, 0 }, { 20, 15 }));
 
     int i = m_caveFileStartListIndex;
@@ -146,14 +212,24 @@ void HUD::MainMenu::MainMenu::update() {
 }
 
 void HUD::MainMenu::MainMenu::updateMainSection() {
+    static const int kOptionY[] = { 12, 62, 109, 160, 210, 260 };
+    const int selected = static_cast<int>(m_selected);
+    const int targetY = kOptionY[selected];
+
     // Handle main select cursor movement
     if (!m_gameOverTilesHide) {
-        if (m_selectArrowY < static_cast<int>(m_selected) * 48) m_selectArrowY += 6;
-        else if (m_selectArrowY > static_cast<int>(m_selected) * 48) m_selectArrowY -= 6;
+        if (m_selectArrowY < targetY) {
+            m_selectArrowY += 6;
+            if (m_selectArrowY > targetY) m_selectArrowY = targetY;
+        }
+        else if (m_selectArrowY > targetY) {
+            m_selectArrowY -= 6;
+            if (m_selectArrowY < targetY) m_selectArrowY = targetY;
+        }
 
-        if (std::abs(static_cast<int>(m_selected) * 48 - m_selectArrowY) < 4) {
-            if (m_game->inputSystem.isPressed(Input::Action::MoveUp)) m_selected = static_cast<HUD::MainMenu::Selection>(std::max(static_cast<int>(m_selected) - 1, 0));
-            else if (m_game->inputSystem.isPressed(Input::Action::MoveDown)) m_selected = static_cast<HUD::MainMenu::Selection>(std::min(static_cast<int>(m_selected) + 1, 4));
+        if (m_selectArrowY == targetY) {
+            if (m_game->inputSystem.isPressed(Input::Action::MoveUp)) m_selected = static_cast<HUD::MainMenu::Selection>(std::max(selected - 1, 0));
+            else if (m_game->inputSystem.isPressed(Input::Action::MoveDown)) m_selected = static_cast<HUD::MainMenu::Selection>(std::min(selected + 1, 5));
         }
     }
 
@@ -166,6 +242,15 @@ void HUD::MainMenu::MainMenu::updateMainSection() {
             m_game->sendSignal(GameSignal::PlayGame);
             m_caveBegin = true;
             m_gameOverTilesHide = false;
+        }
+        break;
+
+    case HUD::MainMenu::Selection::Multiplayer:
+        if (m_game->inputSystem.wasPressed(Input::Action::Confirm)) {
+            m_section = HUD::MainMenu::Section::Multiplayer;
+            m_mpMenuIndex = 0;
+            m_mpTyping = true;
+            m_game->net().refreshHosts();
         }
         break;
 
@@ -201,30 +286,6 @@ void HUD::MainMenu::MainMenu::updateMainSection() {
 
     default:
         break;
-    }
-
-    // Handle loading tile transitions
-    if (m_caveBegin) {
-        if (m_loadRate < 96) {
-            m_loadRate++;
-            for (int index = 0; index < 20 * 15; index++) {
-                if (Utils::randomInteger(m_loadRate, 96) == 96) loadingTiles[index] = false;
-            }
-        }
-        else {
-            m_game->sendSignal(GameSignal::CaveBegin);
-            m_caveBegin = false;
-            m_section = HUD::MainMenu::Section::None;
-            m_loadRate = 0;
-        }
-    }
-    else if (m_gameOverTilesHide) {
-        m_loadRate--;
-        if (m_loadRate < 0) m_loadRate = 0;
-        for (int index = 0; index < 20 * 15; index++) {
-            if (Utils::randomInteger(0, m_loadRate) == 0) loadingTiles[index] = true;
-        }
-        if (m_loadRate == 0) m_gameOverTilesHide = false;
     }
 }
 
@@ -353,6 +414,176 @@ void HUD::MainMenu::MainMenu::updateGameOverSection() {
     }
 }
 
+namespace {
+    const std::string kNameChars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz+-";
+    void clearMpRows(std::vector<Renderer::TextRenderer>& rows) {
+        for (auto& row : rows) row.updateText(0, 0, "");
+    }
+}
+
+bool HUD::MainMenu::MainMenu::tryStartMultiplayerCave() {
+    const int fileIndex = m_selectedCaveFileIndex;
+    const int caveNumber = m_game->getCaveNumber();
+    const auto doors = m_game->countCaveDoors(fileIndex, caveNumber);
+    const int party = m_game->net().playerCount();
+    if (doors.start < 2 || doors.exit < 2 || doors.start != doors.exit) {
+        m_mpWarning = "Need matching start and exit doors!";
+        return false;
+    }
+    if (party > doors.start) {
+        m_mpWarning = "Not enough doors for this party!";
+        return false;
+    }
+    m_mpWarning.clear();
+    const auto seed = static_cast<std::uint32_t>(
+        std::chrono::steady_clock::now().time_since_epoch().count() & 0xffffffffu);
+    m_game->net().startGame(fileIndex, caveNumber, seed);
+    Utils::seedRandom(seed);
+    Utils::resetGlobalCounter();
+    m_game->setCaveFileIndex(fileIndex);
+    m_game->setCaveNumber(caveNumber);
+    m_game->sendSignal(GameSignal::StopMusic);
+    m_game->sendSignal(GameSignal::PlayMultiplayer);
+    m_caveBegin = true;
+    m_gameOverTilesHide = false;
+    return true;
+}
+
+void HUD::MainMenu::MainMenu::updateMultiplayerSection() {
+    if (m_game->inputSystem.wasPressed(Input::Action::Quit)) {
+        m_section = HUD::MainMenu::Section::Main;
+        return;
+    }
+    if (m_game->inputSystem.wasPressed(Input::Action::MoveUp))
+        m_mpMenuIndex = std::max(m_mpMenuIndex - 1, 0);
+    else if (m_game->inputSystem.wasPressed(Input::Action::MoveDown))
+        m_mpMenuIndex = std::min(m_mpMenuIndex + 1, 2);
+
+    m_mpTyping = (m_mpMenuIndex == 0);
+    if (m_mpTyping) {
+        const std::uint32_t ch = m_game->takeTextInput();
+        if (ch == 8 || ch == 127) {
+            if (!m_mpName.empty()) m_mpName.pop_back();
+        }
+        else if (ch >= 32 && ch < 127 && m_mpName.size() < 12) {
+            const char c = static_cast<char>(ch);
+            if (kNameChars.find(c) != std::string::npos) m_mpName.push_back(c);
+        }
+    }
+    else {
+        m_game->takeTextInput();
+    }
+
+    if (m_game->inputSystem.wasPressed(Input::Action::Confirm) && m_mpMenuIndex != 0) {
+        if (m_mpName.empty()) m_mpName = "PLAYER";
+        if (m_mpMenuIndex == 1) {
+            if (m_game->net().host(m_mpName))
+                m_section = HUD::MainMenu::Section::MultiplayerHost;
+            else
+                m_mpWarning = "Could not host on this network!";
+        }
+        else if (m_mpMenuIndex == 2) {
+            m_game->net().refreshHosts();
+            m_mpJoinIndex = 0;
+            m_section = HUD::MainMenu::Section::MultiplayerJoin;
+        }
+    }
+
+    clearMpRows(m_mpRows);
+    m_mpRows[0].updateText(240, 28, "NAME");
+    m_mpRows[1].updateText(240, 60, m_mpName + (m_mpTyping && (m_tickCounter.tickCount() % 2 == 0) ? "_" : ""));
+    m_mpRows[2].updateText(240, 108, "Host");
+    m_mpRows[3].updateText(240, 140, "Join");
+    if (!m_mpWarning.empty()) m_mpRows[4].updateText(220, 188, m_mpWarning);
+    m_selectCaveFileArrow.updateNumbers({
+        {{ 200, 26 + (m_mpMenuIndex == 0 ? 32 : (m_mpMenuIndex == 1 ? 80 : 112)) }, m_tickCounter.tickCount(), 1, 0},
+        });
+}
+
+void HUD::MainMenu::MainMenu::updateMultiplayerHostSection() {
+    if (m_game->inputSystem.wasPressed(Input::Action::Quit)) {
+        m_game->net().leave();
+        m_section = HUD::MainMenu::Section::Multiplayer;
+        return;
+    }
+    if (m_game->inputSystem.wasPressed(Input::Action::Confirm)) {
+        if (m_game->net().isHost()) {
+            m_caveFiles = m_game->getCaveFiles();
+            m_section = HUD::MainMenu::Section::MultiplayerCaves;
+        }
+        return;
+    }
+    clearMpRows(m_mpRows);
+    m_mpRows[0].updateText(240, 28, "PARTY");
+    const auto& names = m_game->net().names();
+    for (int i = 0; i < static_cast<int>(names.size()) && i < 8; ++i)
+        m_mpRows[static_cast<size_t>(i + 1)].updateText(240, 60 + i * 24, names[static_cast<size_t>(i)]);
+    m_mpRows[10].updateText(240, 260, m_game->net().isHost() ? "Start" : "Waiting");
+    if (m_game->net().isHost()) {
+        m_selectCaveFileArrow.updateNumbers({
+            {{ 200, 258 }, m_tickCounter.tickCount(), 1, 0},
+            });
+    }
+}
+
+void HUD::MainMenu::MainMenu::updateMultiplayerJoinSection() {
+    m_game->net().refreshHosts();
+    const auto& hosts = m_game->net().discoveredHosts();
+    if (m_game->inputSystem.wasPressed(Input::Action::Quit)) {
+        m_section = HUD::MainMenu::Section::Multiplayer;
+        return;
+    }
+    if (!hosts.empty()) {
+        if (m_game->inputSystem.wasPressed(Input::Action::MoveUp))
+            m_mpJoinIndex = std::max(m_mpJoinIndex - 1, 0);
+        else if (m_game->inputSystem.wasPressed(Input::Action::MoveDown))
+            m_mpJoinIndex = std::min(m_mpJoinIndex + 1, static_cast<int>(hosts.size()) - 1);
+        if (m_game->inputSystem.wasPressed(Input::Action::Confirm)) {
+            const auto& host = hosts[static_cast<size_t>(m_mpJoinIndex)];
+            if (m_mpName.empty()) m_mpName = "PLAYER";
+            if (m_game->net().join(host.address, host.port, m_mpName))
+                m_section = HUD::MainMenu::Section::MultiplayerHost;
+            else
+                m_mpWarning = "Could not join that host!";
+        }
+    }
+    clearMpRows(m_mpRows);
+    m_mpRows[0].updateText(240, 28, "JOIN");
+    if (hosts.empty())
+        m_mpRows[1].updateText(240, 60, "Searching...");
+    for (int i = 0; i < static_cast<int>(hosts.size()) && i < 8; ++i) {
+        std::string line = hosts[static_cast<size_t>(i)].name;
+        line += " ";
+        line += std::to_string(hosts[static_cast<size_t>(i)].players);
+        m_mpRows[static_cast<size_t>(i + 1)].updateText(240, 60 + i * 24, line);
+    }
+    if (!m_mpWarning.empty()) m_mpRows[10].updateText(220, 260, m_mpWarning);
+    m_selectCaveFileArrow.updateNumbers({
+        {{ 200, 58 + m_mpJoinIndex * 24 }, m_tickCounter.tickCount(), 1, 0},
+        });
+}
+
+void HUD::MainMenu::MainMenu::updateMultiplayerCavesSection() {
+    if (m_game->inputSystem.wasPressed(Input::Action::Quit)) {
+        m_section = HUD::MainMenu::Section::MultiplayerHost;
+        m_mpWarning.clear();
+        return;
+    }
+    clearMpRows(m_mpRows);
+    updateLoadCavesSection();
+    if (m_section == HUD::MainMenu::Section::Main) {
+        m_section = HUD::MainMenu::Section::MultiplayerCaves;
+        if (!tryStartMultiplayerCave()) {
+            /* keep this screen so the warning is visible */
+        }
+        else {
+            m_section = HUD::MainMenu::Section::Main;
+        }
+    }
+    if (!m_mpWarning.empty())
+        m_mpRows[11].updateText(210, 280, m_mpWarning);
+}
+
 void HUD::MainMenu::MainMenu::toggleMainMenuHidden(bool hidden) {
     m_hideMainMenuVisuals = hidden;
 }
@@ -373,14 +604,17 @@ void HUD::MainMenu::MainMenu::draw(sf::RenderTarget& target, sf::RenderStates st
 
             m_credits.render(target, states);
 
-            m_caveNumberRenderer.render(target, states);
-            m_selectArrow.render(target, states);
+            if (m_section == HUD::MainMenu::Section::Main)
+                m_caveNumberRenderer.render(target, states);
+            if (m_section == HUD::MainMenu::Section::Main)
+                m_selectArrow.render(target, states);
         }
 
         m_loadingTileRenderer.render(target, states);
     }
 
-    if (m_section == HUD::MainMenu::Section::LoadCaves) {
+    if (m_section == HUD::MainMenu::Section::LoadCaves
+        || m_section == HUD::MainMenu::Section::MultiplayerCaves) {
 
         sf::Sprite loadCaves(m_loadCaves);
         loadCaves.setPosition({ 190.f, 0.f });
@@ -389,6 +623,17 @@ void HUD::MainMenu::MainMenu::draw(sf::RenderTarget& target, sf::RenderStates st
         for (int index = 0; index < 8; index++) {
             m_caveFilePlaceolder[index].render(target, states);
         }
+        m_selectCaveFileArrow.render(target, states);
+        if (m_section == HUD::MainMenu::Section::MultiplayerCaves && !m_mpWarning.empty())
+            m_mpRows[11].render(target, states);
+    }
+    else if (m_section == HUD::MainMenu::Section::Multiplayer
+        || m_section == HUD::MainMenu::Section::MultiplayerHost
+        || m_section == HUD::MainMenu::Section::MultiplayerJoin) {
+        sf::Sprite loadCaves(m_loadCaves);
+        loadCaves.setPosition({ 190.f, 0.f });
+        target.draw(loadCaves, states);
+        for (const auto& row : m_mpRows) row.render(target, states);
         m_selectCaveFileArrow.render(target, states);
     }
     else if (m_section == HUD::MainMenu::Section::Options) {

@@ -7,29 +7,27 @@ namespace Cave::Entity {
 
     /**
      * @class Spinner
-     * @brief Custom creature that moves around through free space, turning right whenever possible.
-     * Deadly on contact with Jim. When hit by a falling object or adjacent to reactive entities,
-     * it explodes like a Protozo (standard explosion into empty space).
+     * @brief Moves through empty space, swapping every 5 seconds between turning
+     * right (Cave Gull, animation forward) and turning left (Protozo, animation reversed).
+     * Deadly on contact with Jim. Explodes like a Protozo when crushed or next to reactive tiles.
      */
     class Spinner : public Base {
     public:
+        static constexpr int MODE_RIGHT = 0;
+        static constexpr int MODE_LEFT = 1;
+        static constexpr int TURN_TICKS = 40;
+
         Spinner()
-            : Base(Type::Spinner, Animation{ getFrames(), Utils::randomInteger(0, 6) }) {
+            : Base(Type::Spinner, Animation{ getFrames(), Utils::randomInteger(0, 5) }) {
             addTrait(Trait::Crushable);
             direction = Cave::Entity::getRandomDirection();
+            spawnCredit = MODE_RIGHT;
+            targetIndex = TURN_TICKS;
         }
 
     private:
-        /**
-         * @brief Provides the animation frames for the Spinner.
-         *
-         * The Spinner cycles through a fixed set of sprite frames.
-         *
-         * @return A vector of integer frame indices used for animation.
-         */
         static std::vector<int> getFrames() {
-            return { 226, 227, 228, 229, 230, 231, 232 };
+            return { 226, 227, 228, 229, 230, 231 };
         }
     };
 }
-

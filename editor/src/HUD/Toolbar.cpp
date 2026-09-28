@@ -212,7 +212,12 @@ void HUD::Editor::Toolbar::drawToolItems(HUD::Editor::Panel* editorPanel)
             editorPanel->selectType(px, py);
         if (type == selType
             || (Cave::Entity::isPegul(type) && Cave::Entity::isPegul(selType))
-            || (Cave::Entity::isFusion(type) && Cave::Entity::isFusion(selType)))
+            || (Cave::Entity::isFusion(type) && Cave::Entity::isFusion(selType))
+            || (Cave::Entity::isGodVariant(type) && Cave::Entity::isGodVariant(selType))
+            || (Cave::Entity::isJimlin(type) && Cave::Entity::isJimlin(selType))
+            || (Cave::Entity::isGateVariant(type) && Cave::Entity::isGateVariant(selType))
+            || (Cave::Entity::isJimlinBlockVariant(type) && Cave::Entity::isJimlinBlockVariant(selType))
+            || (Cave::Entity::isJimlinShipVariant(type) && Cave::Entity::isJimlinShipVariant(selType)))
         {
             ImVec2 rmin = ImGui::GetItemRectMin();
             ImVec2 rmax = ImGui::GetItemRectMax();
@@ -280,6 +285,9 @@ void HUD::Editor::Toolbar::drawToolItems(HUD::Editor::Panel* editorPanel)
     tool("Pegul",                   "",  0, 18, Cave::Entity::Type::PegulNormo);
     tool("Fusion",                  "",  1, 18, Cave::Entity::Type::Fusion1);
     tool("Gate",                    "",  2, 18, Cave::Entity::Type::Gate);
+    tool("Jimlin Ship",             "",  0, 19, Cave::Entity::Type::JimlinShipInactive);
+    tool("Jimlin",                  "",  1, 19, Cave::Entity::Type::Jimlin1);
+    tool("Jimlin Block",            "",  2, 19, Cave::Entity::Type::JimlinBlock);
 }
 
 void HUD::Editor::Toolbar::drawToolsMenu(HUD::Editor::Panel* editorPanel)

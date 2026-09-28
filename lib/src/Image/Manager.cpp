@@ -12,6 +12,7 @@ void Image::Manager::loadAllImages() {
     loadTexture(Image::Texture::GameCompleted, "./assets/textures/Game/completed.png");
     loadTexture(Image::Texture::GameFont, "./assets/textures/Game/font.png");
     loadTexture(Image::Texture::GameOver, "./assets/textures/Game/over.png");
+    loadTexture(Image::Texture::PauseMenu, "./assets/textures/Game/pause_menu.png");
     loadTexture(Image::Texture::MainMenuBelow, "./assets/textures/MainMenu/below.png");
     loadTexture(Image::Texture::MainMenuDial, "./assets/textures/MainMenu/dial.png");
     loadTexture(Image::Texture::MainMenuLoadCaves, "./assets/textures/MainMenu/load_caves.png");
@@ -42,6 +43,7 @@ void Image::Manager::loadTexture(const Image::Texture& texture, const std::strin
     if (!tex.loadFromFile(filename)) {
         throw std::runtime_error("Error: Unable to load texture: " + filename + "\n");
     }
+    tex.setSmooth(false);
     m_textures[texture] = std::move(tex);
 }
 

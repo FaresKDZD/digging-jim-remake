@@ -149,7 +149,7 @@ namespace Cave::Entity {
 		}
 
 		/// @brief Whether this transition is finished.
-		bool isFinished() {
+		bool isFinished() const {
 			return (m_displacement >= 32);
 		}
 

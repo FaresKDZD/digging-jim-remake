@@ -31,6 +31,9 @@ namespace Image {
         /// @brief Sprite displayed when the player fails the game.
         GameOver,
 
+        /// @brief Confirmation frame shown when quitting from a cave.
+        PauseMenu,
+
         /// @brief Bottom background portion of the main menu.
         MainMenuBelow,
 

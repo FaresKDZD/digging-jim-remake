@@ -37,6 +37,18 @@ HUD::Editor::Panel::Panel(::Editor* editor) : m_editor(editor), m_tileRenderer(&
         m_entities[variant.type] = getNewEntity(variant.type);
     for (const auto& variant : Cave::Entity::Fusion::VARIANTS)
         m_entities[variant.type] = getNewEntity(variant.type);
+    for (const auto& variant : Cave::Entity::God::VARIANTS)
+        m_entities[variant.type] = getNewEntity(variant.type);
+    for (const auto& variant : Cave::Entity::Jimlin::VARIANTS)
+        m_entities[variant.type] = getNewEntity(variant.type);
+    for (const auto& variant : Cave::Entity::Gate::VARIANTS)
+        m_entities[variant.type] = getNewEntity(variant.type);
+    for (const auto& variant : Cave::Entity::JimlinBlock::VARIANTS)
+        m_entities[variant.type] = getNewEntity(variant.type);
+    for (const auto& variant : Cave::Entity::JimlinShipInactive::VARIANTS)
+        m_entities[variant.type] = getNewEntity(variant.type);
+    for (const auto& variant : Cave::Entity::Cosmic::VARIANTS)
+        m_entities[variant.type] = getNewEntity(variant.type);
 
     m_builderMenu.setSize(sf::Vector2f(PANEL_W, 496.f - PALETTE_H));
     m_builderMenu.setFillColor(sf::Color(128, 128, 128));
@@ -146,6 +158,29 @@ int HUD::Editor::Panel::miniTileIndex(Cave::Entity::Type type)
     case T::Mole:            return 45;
     case T::Fan:             return 46;
     case T::God:             return 47;
+    case T::Chaos:           return 65;
+    case T::JimlinShipInactive:
+    case T::JimlinShipActive: return 66;
+    case T::KingShipInactive:
+    case T::KingShipActive:   return 75;
+    case T::Singularity:      return 76;
+    case T::Ostia:            return 77;
+    case T::Murus:            return 78;
+    case T::Tera:             return 79;
+    case T::Vitus:            return 80;
+    case T::Adama:            return 81;
+    case T::Terminus:         return 82;
+    case T::Initia:           return 83;
+    case T::Nihilus:          return 84;
+    case T::JimlinDock:       return 85;
+    case T::Jimlin1:         return 67;
+    case T::Jimlin2:         return 68;
+    case T::Jimlin3:         return 69;
+    case T::JimlinBlock:     return 70;
+    case T::Jimlin4:         return 71;
+    case T::JimlinKing:      return 72;
+    case T::PrivateGate:     return 73;
+    case T::VaultButton:     return 74;
     case T::Charger:         return 48;
     case T::ChargerBody:     return 48;
     case T::Well:            return 49;
@@ -543,6 +578,66 @@ void HUD::Editor::Panel::setFusionType(Cave::Entity::Type type) {
     selectType(1, 18);
 }
 
+bool HUD::Editor::Panel::isGodSlot(const int& x, const int& y) const {
+    return x == 2 && y == 15;
+}
+
+void HUD::Editor::Panel::setGodType(Cave::Entity::Type type) {
+    if (!Cave::Entity::isGodVariant(type)) return;
+    m_godType = type;
+    selectType(2, 15);
+}
+
+bool HUD::Editor::Panel::isJimlinSlot(const int& x, const int& y) const {
+    return x == 1 && y == 19;
+}
+
+void HUD::Editor::Panel::setJimlinType(Cave::Entity::Type type) {
+    if (!Cave::Entity::isJimlin(type)) return;
+    m_jimlinType = type;
+    selectType(1, 19);
+}
+
+bool HUD::Editor::Panel::isGateSlot(const int& x, const int& y) const {
+    return x == 2 && y == 18;
+}
+
+void HUD::Editor::Panel::setGateType(Cave::Entity::Type type) {
+    if (!Cave::Entity::isGateVariant(type)) return;
+    m_gateType = type;
+    selectType(2, 18);
+}
+
+bool HUD::Editor::Panel::isJimlinBlockSlot(const int& x, const int& y) const {
+    return x == 2 && y == 19;
+}
+
+void HUD::Editor::Panel::setJimlinBlockType(Cave::Entity::Type type) {
+    if (!Cave::Entity::isJimlinBlockVariant(type)) return;
+    m_jimlinBlockType = type;
+    selectType(2, 19);
+}
+
+bool HUD::Editor::Panel::isJimlinShipSlot(const int& x, const int& y) const {
+    return x == 0 && y == 19;
+}
+
+void HUD::Editor::Panel::setJimlinShipType(Cave::Entity::Type type) {
+    if (!Cave::Entity::isJimlinShipVariant(type)) return;
+    m_jimlinShipType = type;
+    selectType(0, 19);
+}
+
+bool HUD::Editor::Panel::isSpaceSlot(const int& x, const int& y) const {
+    return x == 0 && y == 0;
+}
+
+void HUD::Editor::Panel::setSpaceSlotType(Cave::Entity::Type type) {
+    if (!Cave::Entity::isSpaceSlotType(type)) return;
+    m_spaceSlotType = type;
+    selectType(0, 0);
+}
+
 bool HUD::Editor::Panel::handleRightClick(sf::Vector2f vp, float panelX, float toolbarH) {
     float lx = vp.x - panelX;
     float ly = vp.y - toolbarH;
@@ -551,7 +646,9 @@ bool HUD::Editor::Panel::handleRightClick(sf::Vector2f vp, float panelX, float t
     if (px >= 0 && px < 3 && py >= 0 && py < VISIBLE_PALETTE_ROWS && lx < SB_X)
     {
         const int row = py + m_scrollRow;
-        if (isPegulSlot(px, row) || isFusionSlot(px, row))
+        if (isSpaceSlot(px, row) || isPegulSlot(px, row) || isFusionSlot(px, row) || isGodSlot(px, row)
+            || isJimlinSlot(px, row) || isGateSlot(px, row) || isJimlinBlockSlot(px, row)
+            || isJimlinShipSlot(px, row))
         {
             selectType(px, row);
             if (m_fillSelected == 3) m_fillSelected = 0;
@@ -580,7 +677,7 @@ void HUD::Editor::Panel::handleScroll(float delta)
 Cave::Entity::Type HUD::Editor::Panel::getType(const int& x, const int& y) {
     int num = std::clamp(y, 0, TOTAL_PALETTE_ROWS - 1) * 3 + std::clamp(x, 0, 2);
     switch (num) {
-    case 0:  return Cave::Entity::Type::Space;
+    case 0:  return m_spaceSlotType;
     case 1:  return Cave::Entity::Type::Dirt;
     case 2:  return Cave::Entity::Type::Boulder;
     case 3:  return Cave::Entity::Type::Diamond;
@@ -627,7 +724,7 @@ Cave::Entity::Type HUD::Editor::Panel::getType(const int& x, const int& y) {
     case 44: return Cave::Entity::Type::Portal;
     case 45: return Cave::Entity::Type::Mole;
     case 46: return Cave::Entity::Type::Fan;
-    case 47: return Cave::Entity::Type::God;
+    case 47: return m_godType;
     case 48: return Cave::Entity::Type::Charger;
     case 49: return Cave::Entity::Type::Well;
     case 50: return Cave::Entity::Type::Chum;
@@ -636,7 +733,10 @@ Cave::Entity::Type HUD::Editor::Panel::getType(const int& x, const int& y) {
     case 53: return Cave::Entity::Type::Gallop;
     case 54: return m_pegulType;
     case 55: return m_fusionType;
-    case 56: return Cave::Entity::Type::Gate;
+    case 56: return m_gateType;
+    case 57: return m_jimlinShipType;
+    case 58: return m_jimlinType;
+    case 59: return m_jimlinBlockType;
     default: return Cave::Entity::Type::NoType;
     }
 }
@@ -692,6 +792,7 @@ Cave::Entity::Base HUD::Editor::Panel::getNewEntity(Cave::Entity::Type type) {
     case Cave::Entity::Type::Mole:            return Cave::Entity::Mole();
     case Cave::Entity::Type::Fan:             return Cave::Entity::Fan();
     case Cave::Entity::Type::God:             return Cave::Entity::God();
+    case Cave::Entity::Type::Chaos:           return Cave::Entity::Chaos();
     case Cave::Entity::Type::Charger: {
         Cave::Entity::Charger charger;
         charger.setAnimation(Cave::Entity::Animation{ { Cave::Entity::Charger::ICON_FRAME }, 0 });
@@ -713,6 +814,29 @@ Cave::Entity::Base HUD::Editor::Panel::getNewEntity(Cave::Entity::Type type) {
     case Cave::Entity::Type::Fusion4:         return Cave::Entity::Fusion(Cave::Entity::Type::Fusion4);
     case Cave::Entity::Type::Fusion5:         return Cave::Entity::Fusion(Cave::Entity::Type::Fusion5);
     case Cave::Entity::Type::Gate:            return Cave::Entity::Gate();
+    case Cave::Entity::Type::PrivateGate:     return Cave::Entity::PrivateGate();
+    case Cave::Entity::Type::VaultButton:     return Cave::Entity::VaultButton();
+    case Cave::Entity::Type::JimlinShipInactive: return Cave::Entity::JimlinShipInactive();
+    case Cave::Entity::Type::JimlinShipActive:   return Cave::Entity::JimlinShipActive();
+    case Cave::Entity::Type::KingShipInactive:   return Cave::Entity::KingShipInactive();
+    case Cave::Entity::Type::KingShipActive:     return Cave::Entity::KingShipActive();
+    case Cave::Entity::Type::Jimlin1:            return Cave::Entity::Jimlin(Cave::Entity::Type::Jimlin1);
+    case Cave::Entity::Type::Jimlin2:            return Cave::Entity::Jimlin(Cave::Entity::Type::Jimlin2);
+    case Cave::Entity::Type::Jimlin3:            return Cave::Entity::Jimlin(Cave::Entity::Type::Jimlin3);
+    case Cave::Entity::Type::Jimlin4:            return Cave::Entity::Jimlin(Cave::Entity::Type::Jimlin4);
+    case Cave::Entity::Type::JimlinKing:         return Cave::Entity::Jimlin(Cave::Entity::Type::JimlinKing);
+    case Cave::Entity::Type::JimlinBlock:        return Cave::Entity::JimlinBlock();
+    case Cave::Entity::Type::JimlinDock:         return Cave::Entity::JimlinDock();
+    case Cave::Entity::Type::Singularity:
+    case Cave::Entity::Type::Ostia:
+    case Cave::Entity::Type::Murus:
+    case Cave::Entity::Type::Tera:
+    case Cave::Entity::Type::Vitus:
+    case Cave::Entity::Type::Adama:
+    case Cave::Entity::Type::Terminus:
+    case Cave::Entity::Type::Initia:
+    case Cave::Entity::Type::Nihilus:
+        return Cave::Entity::Cosmic(type);
     default:                                  return Cave::Entity::Base();
     }
 }

@@ -84,7 +84,7 @@ bool Cave::Manager::startCave(const int& fileIndex, const int& caveNumber, Cave:
     m_game->setCaveProperties(*properties);
 
     // Construct the map
-    map->generateMap(properties, data.tileData, data.wells, data.portals);
+    map->generateMap(properties, data.tileData, data.wells, data.portals, data.cosmics);
 
     return true;
 }
@@ -96,4 +96,18 @@ size_t Cave::Manager::numCaves(const int& fileIndex) {
     Cave::File file = m_cavesData[index];
 
     return file.caves.size();
+}
+
+Cave::Manager::DoorCount Cave::Manager::countDoors(int fileIndex, int caveNumber) const {
+    DoorCount counts;
+    if (m_cavesData.empty()) return counts;
+    const int index = std::clamp(fileIndex, 0, static_cast<int>(m_cavesData.size()) - 1);
+    const Cave::File& file = m_cavesData[index];
+    if (file.caves.empty()) return counts;
+    const int caveIndex = std::clamp(caveNumber - 1, 0, static_cast<int>(file.caves.size()) - 1);
+    for (char tile : file.caves[caveIndex].tileData) {
+        if (tile == 13) ++counts.start;
+        else if (tile == 14) ++counts.exit;
+    }
+    return counts;
 }

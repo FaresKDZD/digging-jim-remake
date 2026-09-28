@@ -62,7 +62,6 @@ namespace Cave::Entity {
             case Type::Pyram:
             case Type::Blob:
             case Type::Mole:
-            case Type::Fan:
             case Type::God:
             case Type::GallopQueen:
             case Type::Gallop:
@@ -104,7 +103,6 @@ namespace Cave::Entity {
             { "Pyram", Type::Pyram },
             { "Blob", Type::Blob },
             { "Mole", Type::Mole },
-            { "Fan", Type::Fan },
             { "God", Type::God },
             { "Gallop Queen", Type::GallopQueen },
             { "Gallop", Type::Gallop },

@@ -105,4 +105,14 @@ namespace Cave::Entity {
     inline Direction getRandomDirection() {
         return ALL_DIRECTIONS[Utils::randomInteger(0, 3)];
     }
+
+    inline Direction oppositeDirection(Direction direction) {
+        switch (direction) {
+        case Direction::LEFT:  return Direction::RIGHT;
+        case Direction::RIGHT: return Direction::LEFT;
+        case Direction::UP:    return Direction::DOWN;
+        case Direction::DOWN:  return Direction::UP;
+        default:               return Direction::NO_DIRECTION;
+        }
+    }
 }

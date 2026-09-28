@@ -9,6 +9,7 @@ add_library(DiggingJimLib STATIC
     src/Cave/Map/Entity.cpp
     src/Cave/Map/Falling.cpp
     src/Cave/Map/Jim.cpp
+    src/Cave/Map/Jimlin.cpp
     src/Cave/Map/Map.cpp
     src/Cave/Map/Misc.cpp
     src/Cave/Map/Movement.cpp
@@ -20,12 +21,14 @@ add_library(DiggingJimLib STATIC
     src/HUD/Developer/FPSCounter.cpp
     src/HUD/Developer/PositionDisplay.cpp
     src/HUD/Level/Panel.cpp
+    src/HUD/Level/PauseMenu.cpp
     src/HUD/MainMenu/MainMenu.cpp
     src/Image/Manager.cpp
     src/Input/Input.cpp
     src/Renderer/TextRenderer.cpp
     src/Renderer/TileRenderer.cpp
     src/Shader/Shader.cpp
+    src/Net/Session.cpp
     src/Sound/Manager.cpp
     src/Utils/Counter.cpp
  )
@@ -34,4 +37,4 @@ target_compile_features(DiggingJimLib PUBLIC cxx_std_17)
 
 target_include_directories(DiggingJimLib PUBLIC include ${CMAKE_SOURCE_DIR}/game/include)
 
-target_link_libraries(DiggingJimLib PUBLIC SFML::Graphics SFML::Audio ImGui-SFML::ImGui-SFML wx::wxcore wx::wxbase)
+target_link_libraries(DiggingJimLib PUBLIC SFML::Graphics SFML::Audio SFML::Network ImGui-SFML::ImGui-SFML wx::wxcore wx::wxbase)
