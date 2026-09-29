@@ -12,7 +12,12 @@ namespace Cave::Entity {
         Explosion()
             : Base(Type::Explosion, Animation{ getFrames(), 0 }) {
             addTrait(Trait::Transient);
+            extra = 0;
+            spawnCredit = 0;
         }
+
+        /// @brief extra value meaning this explosion becomes an extinguished pyrozo.
+        static constexpr int SPAWN_EXTINGUISHED = 1;
 
     private:
         /**

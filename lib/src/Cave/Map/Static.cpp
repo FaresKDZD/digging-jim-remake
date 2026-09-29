@@ -89,6 +89,35 @@ void Cave::Map::updateChum(const int& index) {
 	}
 }
 
+void Cave::Map::updateLava(const int& index) {
+	updateEntityAnimation(index);
+	if (m_editorPreview) return;
+	for (auto& direction : Cave::Entity::ALL_DIRECTIONS) {
+		int dest = getIndex(index, direction);
+		if (hasTrait(Cave::Entity::Trait::Empty, dest) && Utils::randomInteger(0, 1000) <= m_lavaGrowthSpeed) {
+			setEntity(dest, Cave::Entity::Lava());
+			m_game->soundManager.play(Sound::Effect::Plasma);
+			notifyFusion5Stimulus(dest);
+		}
+	}
+}
+
+void Cave::Map::updateFire(const int& index) {
+	updateEntityAnimation(index);
+	if (m_editorPreview) return;
+	if (caveEntities[index].extra > 0)
+		caveEntities[index].extra--;
+	if (caveEntities[index].extra <= 0)
+		setEntity(index, Cave::Entity::Space());
+}
+
+void Cave::Map::updateExplosion(const int& index) {
+	if (caveEntities[index].extra == Cave::Entity::Explosion::SPAWN_EXTINGUISHED)
+		updateTransientEntity(index, Cave::Entity::Pyrozo(Cave::Entity::Type::PyrozoExtinguished));
+	else
+		updateTransientEntity(index, Cave::Entity::Space());
+}
+
 void Cave::Map::updateHorizontalWall(const int& index) {
 	for (auto& direction : Cave::Entity::HORIZONTAL_DIRECTIONS) {
 		int newWall = getIndex(index, direction);

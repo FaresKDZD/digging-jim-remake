@@ -409,10 +409,14 @@ bool Cave::Map::jimlinShipStable(const int& cell) const {
 	return true;
 }
 
-bool Cave::Map::jimlinShipPreferredSupport(const int& cell) const {
+bool Cave::Map::jimlinShipPreferredSupport(const int& cell, int self) const {
 	if (!jimlinShipStable(cell)) return false;
 	const int below = getIndex(cell, Cave::Entity::Direction::DOWN);
-	return inBounds(below) && getEntityType(below) == Cave::Entity::Type::JimlinDock;
+	if (!inBounds(below) || getEntityType(below) != Cave::Entity::Type::JimlinDock)
+		return false;
+	if (cell == self) return true;
+	if (getEntityTransitioning(cell)) return false;
+	return hasTrait(Cave::Entity::Trait::Empty, cell);
 }
 
 void Cave::Map::jimlinFillThreatReach(const int& threat, std::vector<char>& reach) const {
@@ -596,7 +600,7 @@ bool Cave::Map::tryJimlinDodgeStep(const int& index, const Cave::Entity::Directi
 
 	setJimlinAnimation(index, true, false);
 	const int from = index;
-	if (!moveEntity(index, direction)) return false;
+	if (!moveEntity(index, direction, digSlideInc(inFront))) return false;
 	setEntityMoving(inFront, true);
 	jimlinCloseGateBehind(from);
 	if (jimlinMode(inFront) != Cave::Entity::Jimlin::MODE_FLEE) {
@@ -1039,7 +1043,7 @@ int Cave::Map::pickJimlinLandCell(const int& index) const {
 	while (m_jimlinBfsQueueHead < m_jimlinBfsQueue.size()) {
 		const int current = m_jimlinBfsQueue[m_jimlinBfsQueueHead++];
 		if (canJimlinWalk(current, index, true) || current == index) {
-			if (jimlinShipPreferredSupport(current) && bestPreferred == OUT_OF_BOUNDS_INDEX)
+			if (jimlinShipPreferredSupport(current, index) && bestPreferred == OUT_OF_BOUNDS_INDEX)
 				bestPreferred = current;
 		}
 		if (bestPreferred != OUT_OF_BOUNDS_INDEX) break;
@@ -1343,7 +1347,7 @@ bool Cave::Map::tryJimlinStep(const int& index, const Cave::Entity::Direction& d
 
 	setJimlinAnimation(index, true, false);
 	const int from = index;
-	if (moveEntity(index, direction)) {
+	if (moveEntity(index, direction, digSlideInc(inFront))) {
 		setEntityMoving(inFront, true);
 		jimlinCloseGateBehind(from);
 		return true;
@@ -1483,7 +1487,7 @@ bool Cave::Map::jimlinReadyToGoHome(const int& index) const {
 	if (caveEntities[index].dutyTicks < Cave::Entity::Jimlin::DUTY_TICKS)
 		return false;
 	if (jimlinInShip(index)) {
-		if (jimlinShipPreferredSupport(index)) return true;
+		if (jimlinShipPreferredSupport(index, index)) return true;
 		if (m_jimlinDocks.empty()) return false;
 		return pickJimlinLandCell(index) != OUT_OF_BOUNDS_INDEX;
 	}
@@ -1583,7 +1587,7 @@ void Cave::Map::updateJimlin(const int& index) {
 			++caveEntities[index].dutyTicks;
 		if (onTick && caveEntities[index].dutyTicks >= Cave::Entity::Jimlin::DUTY_TICKS) {
 			if (jimlinInShip(index)) {
-				if (jimlinShipPreferredSupport(index) || !m_jimlinDocks.empty()) {
+				if (jimlinShipPreferredSupport(index, index) || !m_jimlinDocks.empty()) {
 					jimlinBeginHome(index);
 					mode = jimlinMode(index);
 				}
@@ -1597,7 +1601,7 @@ void Cave::Map::updateJimlin(const int& index) {
 
 	if (mode == Cave::Entity::Jimlin::MODE_HOME) {
 		if (jimlinInShip(index)) {
-			if (jimlinShipPreferredSupport(index)) {
+			if (jimlinShipPreferredSupport(index, index)) {
 				for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
 					if (tryJimlinExitShip(index, dir)) return;
 				}
@@ -1611,7 +1615,7 @@ void Cave::Map::updateJimlin(const int& index) {
 				return;
 			}
 			int land = caveEntities[index].targetIndex;
-			if (!inBounds(land) || land == index || !jimlinShipPreferredSupport(land))
+			if (!inBounds(land) || land == index || !jimlinShipPreferredSupport(land, index))
 				land = pickJimlinLandCell(index);
 			caveEntities[index].targetIndex = land;
 			if (!inBounds(land) || land == index) {
@@ -1883,7 +1887,7 @@ void Cave::Map::updateJimlin(const int& index) {
 		int timer = jimlinTimer(index);
 		if (timer <= 1) {
 			const int land = pickJimlinLandCell(index);
-			if (inBounds(land) || jimlinShipPreferredSupport(index)) {
+			if (inBounds(land) || jimlinShipPreferredSupport(index, index)) {
 				setJimlinMode(index, Cave::Entity::Jimlin::MODE_SHIP_LAND);
 				caveEntities[index].targetIndex = land;
 			}
@@ -1912,7 +1916,7 @@ void Cave::Map::updateJimlin(const int& index) {
 			jimlinBeginIdle(index);
 			return;
 		}
-		if (jimlinShipPreferredSupport(index)) {
+		if (jimlinShipPreferredSupport(index, index)) {
 			for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
 				if (tryJimlinExitShip(index, dir)) return;
 			}
@@ -1926,11 +1930,11 @@ void Cave::Map::updateJimlin(const int& index) {
 			return;
 		}
 		int goal = caveEntities[index].targetIndex;
-		if (!inBounds(goal) || !jimlinShipPreferredSupport(goal))
+		if (!inBounds(goal) || !jimlinShipPreferredSupport(goal, index))
 			goal = pickJimlinLandCell(index);
 		caveEntities[index].targetIndex = goal;
 		if (!inBounds(goal) || goal == index) {
-			if (jimlinShipPreferredSupport(index)) {
+			if (jimlinShipPreferredSupport(index, index)) {
 				for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
 					if (tryJimlinExitShip(index, dir)) return;
 				}
@@ -1943,7 +1947,7 @@ void Cave::Map::updateJimlin(const int& index) {
 			dir = findPathForJimlin(index, goal, true);
 		if (dir != Cave::Entity::Direction::NO_DIRECTION)
 			tryJimlinStep(index, dir, false);
-		else if (jimlinShipPreferredSupport(index)) {
+		else if (jimlinShipPreferredSupport(index, index)) {
 			for (Cave::Entity::Direction side : Cave::Entity::ALL_DIRECTIONS) {
 				if (tryJimlinExitShip(index, side)) return;
 			}

@@ -21,6 +21,10 @@ void Cave::Map::updateProtoza(const int& index) {
 	setEntityMoving(index, false);
 }
 
+void Cave::Map::updatePyrozo(const int& index) {
+	updateProtoza(index);
+}
+
 void Cave::Map::updateCosmic(const int& index) {
 	Cave::Entity::Base& cosmic = cosmicRef(index);
 	const Cave::Entity::Type type = cosmic.getType();
@@ -30,6 +34,13 @@ void Cave::Map::updateCosmic(const int& index) {
 	}
 	if (!Cave::Entity::Cosmic::isWanderer(type)) return;
 	cosmic.processed = true;
+
+	if (m_cosmicGenesis && !Utils::TickCounter::onTick()) {
+		if (cosmic.spawnCredit != Cave::Entity::Cosmic::MODE_JOB) return;
+		if (cosmic.isTransitioning()) return;
+		updateCosmicGenesis(index);
+		return;
+	}
 
 	if (cosmic.spawnCredit == Cave::Entity::Cosmic::MODE_VANISH) {
 		if (cosmic.isTransitioning()) return;
@@ -337,13 +348,20 @@ void Cave::Map::updateTerminusJob(const int& index) {
 	if (index == goal) {
 		cosmicStamp(index, Cave::Entity::SolidWall());
 		step++;
-		if (step >= peri && borderComplete())
+		if (step >= peri && borderComplete()) {
 			beginCosmicVanish(index);
-		else
+			return;
+		}
+		const int next = perimeterCell(step);
+		if (!inBounds(next) || next == index) {
+			cosmic.moving = false;
+			return;
+		}
+		if (!tryStepCosmic(index, next, Cave::Entity::Cosmic::GENESIS_SLIDE_INC))
 			cosmic.moving = false;
 		return;
 	}
-	if (!tryStepCosmic(index, goal))
+	if (!tryStepCosmic(index, goal, Cave::Entity::Cosmic::GENESIS_SLIDE_INC))
 		cosmic.moving = false;
 }
 
@@ -370,13 +388,23 @@ void Cave::Map::updateOstiaJob(const int& index) {
 		}
 		stage++;
 		goal = OUT_OF_BOUNDS_INDEX;
-		if (stage >= 2)
+		if (stage >= 2) {
 			beginCosmicVanish(index);
-		else
+			return;
+		}
+		if (!ensureInteriorSpaceGoal(index)) {
+			beginCosmicVanish(index);
+			return;
+		}
+		if (index == cosmic.targetIndex) {
+			cosmic.moving = false;
+			return;
+		}
+		if (!tryStepCosmic(index, cosmic.targetIndex, Cave::Entity::Cosmic::GENESIS_SLIDE_INC))
 			cosmic.moving = false;
 		return;
 	}
-	if (!tryStepCosmic(index, goal))
+	if (!tryStepCosmic(index, goal, Cave::Entity::Cosmic::GENESIS_SLIDE_INC))
 		cosmic.moving = false;
 }
 
@@ -409,10 +437,23 @@ void Cave::Map::updateMurusJob(const int& index) {
 			packed = (((walls + 1) & 0xff) << 8) | (boulders & 0xff);
 		}
 		goal = OUT_OF_BOUNDS_INDEX;
-		cosmic.moving = false;
+		if ((packed & 0xff) >= maxBoulders && ((packed >> 8) & 0xff) >= maxWalls) {
+			beginCosmicVanish(index);
+			return;
+		}
+		if (!ensureInteriorSpaceGoal(index)) {
+			beginCosmicVanish(index);
+			return;
+		}
+		if (index == cosmic.targetIndex) {
+			cosmic.moving = false;
+			return;
+		}
+		if (!tryStepCosmic(index, cosmic.targetIndex, Cave::Entity::Cosmic::GENESIS_SLIDE_INC))
+			cosmic.moving = false;
 		return;
 	}
-	if (!tryStepCosmic(index, goal))
+	if (!tryStepCosmic(index, goal, Cave::Entity::Cosmic::GENESIS_SLIDE_INC))
 		cosmic.moving = false;
 }
 
@@ -432,10 +473,23 @@ void Cave::Map::updateAdamaJob(const int& index) {
 		cosmicStamp(index, Cave::Entity::Diamond());
 		laid++;
 		goal = OUT_OF_BOUNDS_INDEX;
-		cosmic.moving = false;
+		if (laid >= static_cast<int>(m_cosmicSettings.maxDiamonds)) {
+			beginCosmicVanish(index);
+			return;
+		}
+		if (!ensureInteriorSpaceGoal(index)) {
+			beginCosmicVanish(index);
+			return;
+		}
+		if (index == cosmic.targetIndex) {
+			cosmic.moving = false;
+			return;
+		}
+		if (!tryStepCosmic(index, cosmic.targetIndex, Cave::Entity::Cosmic::GENESIS_SLIDE_INC))
+			cosmic.moving = false;
 		return;
 	}
-	if (!tryStepCosmic(index, goal))
+	if (!tryStepCosmic(index, goal, Cave::Entity::Cosmic::GENESIS_SLIDE_INC))
 		cosmic.moving = false;
 }
 
@@ -455,10 +509,23 @@ void Cave::Map::updateVitusJob(const int& index) {
 		cosmicStamp(index, randomVitusMonster());
 		laid++;
 		goal = OUT_OF_BOUNDS_INDEX;
-		cosmic.moving = false;
+		if (laid >= static_cast<int>(m_cosmicSettings.maxMonsters) || m_cosmicSettings.monsterMask == 0) {
+			beginCosmicVanish(index);
+			return;
+		}
+		if (!ensureInteriorSpaceGoal(index)) {
+			beginCosmicVanish(index);
+			return;
+		}
+		if (index == cosmic.targetIndex) {
+			cosmic.moving = false;
+			return;
+		}
+		if (!tryStepCosmic(index, cosmic.targetIndex, Cave::Entity::Cosmic::GENESIS_SLIDE_INC))
+			cosmic.moving = false;
 		return;
 	}
-	if (!tryStepCosmic(index, goal))
+	if (!tryStepCosmic(index, goal, Cave::Entity::Cosmic::GENESIS_SLIDE_INC))
 		cosmic.moving = false;
 }
 
@@ -473,14 +540,7 @@ void Cave::Map::updateTeraJob(const int& index) {
 		beginCosmicVanish(index);
 		return;
 	}
-	int& goal = cosmic.targetIndex;
-	if (index == goal) {
-		cosmicStamp(index, Cave::Entity::Dirt());
-		goal = OUT_OF_BOUNDS_INDEX;
-		cosmic.moving = false;
-		return;
-	}
-	if (!tryStepCosmic(index, goal))
+	if (!tryStepCosmic(index, cosmic.targetIndex, Cave::Entity::Cosmic::TERA_SLIDE_INC, true))
 		cosmic.moving = false;
 }
 
@@ -2008,6 +2068,54 @@ void Cave::Map::updateMole(const int& index) {
 	caveEntities[index].setAnimationFrame(0);
 }
 
+void Cave::Map::updateHellgull(const int& index) {
+	if (handleEnemyBasicUpdate(index)) return;
+
+	using H = Cave::Entity::Hellgull;
+	int& mode = caveEntities[index].spawnCredit;
+	int& timer = caveEntities[index].extra;
+
+	if (mode == H::MODE_WINDUP) {
+		if (timer > 0) timer--;
+		if (timer <= 0) {
+			const Cave::Entity::Direction dir = getEntityDirection(index);
+			const int dest = getIndex(index, dir);
+			if (inBounds(dest) && hasTrait(Cave::Entity::Trait::Empty, dest))
+				setEntity(dest, Cave::Entity::Fireball(dir));
+			else if (inBounds(dest))
+				createExplosion(dest);
+			mode = H::MODE_COOLDOWN;
+			timer = H::COOLDOWN_TICKS;
+		}
+		setEntityMoving(index, false);
+		return;
+	}
+
+	if (mode == H::MODE_COOLDOWN) {
+		if (timer > 0) timer--;
+		if (timer <= 0)
+			mode = H::MODE_IDLE;
+	}
+
+	if (mode != H::MODE_COOLDOWN) {
+		const Cave::Entity::Direction los = pyramLineOfSightDirection(index);
+		if (los != Cave::Entity::Direction::NO_DIRECTION) {
+			setEntityDirection(index, los);
+			mode = H::MODE_WINDUP;
+			timer = H::WINDUP_TICKS;
+			setEntityMoving(index, false);
+			return;
+		}
+	}
+
+	auto arc = clockwiseArc(getEntityDirection(index));
+	for (int i = 0; i < 3; ++i) {
+		if (tryMoveEnemy(index, Cave::Entity::Trait::Empty, arc[i])) return;
+	}
+	if (!getEntityMoving(index) && tryMoveEnemy(index, Cave::Entity::Trait::Empty, arc[3])) return;
+	setEntityMoving(index, false);
+}
+
 void Cave::Map::updateCaveGull(const int& index) {
 	if (handleEnemyBasicUpdate(index)) return;
 
@@ -2131,6 +2239,47 @@ void Cave::Map::updateCilia(const int& index) {
 	if (!tryMoveEnemy(index, Cave::Entity::Trait::Empty, dir)) {
 		setEntityDirection(index, Cave::Entity::getRandomDirection());
 	}
+}
+
+void Cave::Map::updateCharia(const int& index) {
+	if (handleEnemyBasicUpdate(index)) return;
+
+	int& pause = caveEntities[index].extra;
+	if (pause > 0) {
+		pause--;
+		setEntityMoving(index, false);
+		return;
+	}
+
+	const Cave::Entity::Direction dir = getEntityDirection(index);
+	const int from = index;
+	if (!tryMoveEnemy(index, Cave::Entity::Trait::Empty, dir)) {
+		pause = Cave::Entity::Charia::WALL_PAUSE_TICKS;
+		setEntityDirection(index, Cave::Entity::getRandomDirection());
+		setEntityMoving(index, false);
+		return;
+	}
+	if (inBounds(from) && hasTrait(Cave::Entity::Trait::Empty, from))
+		setEntity(from, Cave::Entity::Fire());
+}
+
+void Cave::Map::updateFireball(const int& index) {
+	updateEntityAnimation(index);
+	if (m_editorPreview) return;
+	if (getEntityTransitioning(index)) return;
+
+	const Cave::Entity::Direction dir = getEntityDirection(index);
+	const int dest = getIndex(index, dir);
+	if (!inBounds(dest)) {
+		createExplosion(index);
+		return;
+	}
+	if (hasTrait(Cave::Entity::Trait::Empty, dest)) {
+		if (!moveEntity(index, dir))
+			createExplosion(index);
+		return;
+	}
+	createExplosion(index);
 }
 
 void Cave::Map::updateEater(const int& index) {
@@ -2438,6 +2587,10 @@ Cave::Entity::Base Cave::Map::monsterFromType(Cave::Entity::Type type) const {
 	case Cave::Entity::Type::Fusion3: return Cave::Entity::Fusion(Cave::Entity::Type::Fusion3);
 	case Cave::Entity::Type::Fusion4: return Cave::Entity::Fusion(Cave::Entity::Type::Fusion4);
 	case Cave::Entity::Type::Fusion5: return Cave::Entity::Fusion(Cave::Entity::Type::Fusion5);
+	case Cave::Entity::Type::Pyrozo: return Cave::Entity::Pyrozo();
+	case Cave::Entity::Type::PyrozoExtinguished: return Cave::Entity::Pyrozo(Cave::Entity::Type::PyrozoExtinguished);
+	case Cave::Entity::Type::Hellgull: return Cave::Entity::Hellgull();
+	case Cave::Entity::Type::Charia: return Cave::Entity::Charia();
 	default: return Cave::Entity::Protozo();
 	}
 }
@@ -4373,6 +4526,10 @@ static bool isWanderMonster(Cave::Entity::Type type) {
 	case Cave::Entity::Type::Terminus:
 	case Cave::Entity::Type::Initia:
 	case Cave::Entity::Type::Nihilus:
+	case Cave::Entity::Type::Pyrozo:
+	case Cave::Entity::Type::PyrozoExtinguished:
+	case Cave::Entity::Type::Hellgull:
+	case Cave::Entity::Type::Charia:
 		return true;
 	default:
 		return false;
@@ -4982,6 +5139,8 @@ bool Cave::Map::isFallableEntity(const int& index) const {
 	if (index == OUT_OF_BOUNDS_INDEX) return false;
 	switch (getEntityType(index)) {
 	case Cave::Entity::Type::Boulder:
+	case Cave::Entity::Type::HotBoulder:
+	case Cave::Entity::Type::HotBoulderCracked:
 	case Cave::Entity::Type::Diamond:
 	case Cave::Entity::Type::FragileDiamond:
 	case Cave::Entity::Type::HollowDiamond:
@@ -5095,6 +5254,15 @@ bool Cave::Map::handleEnemyDeath(const int& index) {
 		m_game->soundManager.play(Sound::Effect::Drop);
 		return true;
 	}
+	if (type != Cave::Entity::Type::God
+		&& type != Cave::Entity::Type::Charger
+		&& type != Cave::Entity::Type::ChargerBody
+		&& type != Cave::Entity::Type::Singularity
+		&& !Cave::Entity::isLavaImmune(type)
+		&& isAdjacentTo(index, Cave::Entity::Type::Lava)) {
+		createExplosion(index);
+		return true;
+	}
 	if (type == Cave::Entity::Type::God
 		|| type == Cave::Entity::Type::Chaos
 		|| type == Cave::Entity::Type::Charger
@@ -5147,10 +5315,14 @@ bool Cave::Map::tryMoveEnemy(const int& index, const Cave::Entity::Trait& trait,
 	setEntityDirection(index, direction);
 	const int destination = getIndex(index, direction);
 	if (destination == OUT_OF_BOUNDS_INDEX) return false;
+	const Cave::Entity::Type destType = getEntityType(destination);
 	const bool match = hasTrait(trait, destination)
-		|| (trait == Cave::Entity::Trait::Empty && isPassableGate(destination));
+		|| (trait == Cave::Entity::Trait::Empty && (isPassableGate(destination) || destType == Cave::Entity::Type::Fire));
 	if (match && moveEntity(index, direction, slideInc)) {
 		setEntityMoving(destination, true);
+		if (destType == Cave::Entity::Type::Fire
+			&& !Cave::Entity::isFireImmune(getEntityType(destination)))
+			createExplosion(destination);
 		return true;
 	}
 	return false;

@@ -150,6 +150,11 @@ public:
         outer->Add(sliderGroup("Chum growth speed",
                                m_chumSpd, props.chumGrowthSpeed,
                                CHUM_GROWTH_SPEED_MIN, CHUM_GROWTH_SPEED_MAX, 6),
+                   0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 4);
+
+        outer->Add(sliderGroup("Lava growth speed",
+                               m_lavaSpd, props.lavaGrowthSpeed,
+                               LAVA_GROWTH_SPEED_MIN, LAVA_GROWTH_SPEED_MAX, 6),
                    0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 8);
 
         // ── Colors ────────────────────────────────────────────────────────────
@@ -248,6 +253,7 @@ public:
         m_props.amoebaGrowthSpeed = clampSlider(m_amoebaSpd, AMOEBA_GROWTH_SPEED_MIN,  AMOEBA_GROWTH_SPEED_MAX);
         m_props.plasmaGrowthSpeed = clampSlider(m_plasmaSpd, PLASMA_GROWTH_SPEED_MIN,  PLASMA_GROWTH_SPEED_MAX);
         m_props.chumGrowthSpeed   = clampSlider(m_chumSpd,   CHUM_GROWTH_SPEED_MIN,    CHUM_GROWTH_SPEED_MAX);
+        m_props.lavaGrowthSpeed   = clampSlider(m_lavaSpd,   LAVA_GROWTH_SPEED_MIN,    LAVA_GROWTH_SPEED_MAX);
         m_props.hue               = clampSlider(m_hue,       HUE_MIN,                  HUE_MAX);
         m_props.sat               = clampSlider(m_sat,       SAT_MIN,                  SAT_MAX);
         m_props.lum               = clampSlider(m_lum,       LUM_MIN,                  LUM_MAX);
@@ -303,6 +309,7 @@ private:
     wxSlider*   m_amoebaSpd    = nullptr;
     wxSlider*   m_plasmaSpd    = nullptr;
     wxSlider*   m_chumSpd      = nullptr;
+    wxSlider*   m_lavaSpd      = nullptr;
     wxSlider*   m_hue          = nullptr;
     wxSlider*   m_sat          = nullptr;
     wxSlider*   m_lum          = nullptr;

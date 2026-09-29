@@ -90,6 +90,13 @@ Cave::Entity::Base Cave::Data::getTileEntity(const char& tile) {
 	case 89: return Cave::Entity::Cosmic(Cave::Entity::Type::Initia);
 	case 90: return Cave::Entity::Cosmic(Cave::Entity::Type::Nihilus);
 	case 91: return Cave::Entity::JimlinDock();
+	case 92: return Cave::Entity::Magma();
+	case 93: return Cave::Entity::HotBoulder();
+	case 94: return Cave::Entity::Lava();
+	case 95: return Cave::Entity::Pyrozo();
+	case 96: return Cave::Entity::Hellgull();
+	case 97: return Cave::Entity::Charia();
+	case 98: return Cave::Entity::Pyrozo(Cave::Entity::Type::PyrozoExtinguished);
 	default:
 		return Cave::Entity::Space();
 	}

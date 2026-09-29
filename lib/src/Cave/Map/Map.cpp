@@ -168,6 +168,7 @@ void Cave::Map::generateMap(const Cave::Properties* properties, const std::vecto
 	// Reset plasma variables
 	m_plasmaGrowthSpeed = properties->plasmaGrowthSpeed;
 	m_chumGrowthSpeed = static_cast<int>(properties->chumGrowthSpeed);
+	m_lavaGrowthSpeed = static_cast<int>(properties->lavaGrowthSpeed);
 
 	// Reset amoeba variables
 	m_amoebaGrowthCount = 0;
@@ -430,6 +431,7 @@ int Cave::Map::pickClosestInteriorSpace(const int& self) const {
 	int best = OUT_OF_BOUNDS_INDEX;
 	int bestDist = 0;
 	for (int i = 0; i < width * height; ++i) {
+		if (i == self) continue;
 		if (onBorder(i)) continue;
 		if (cosmicOccupied(i, self)) continue;
 		if (cosmicTerrainType(i) != Cave::Entity::Type::Space) continue;
@@ -458,7 +460,7 @@ bool Cave::Map::ensureClosestInteriorSpaceGoal(const int& index) {
 		goal = OUT_OF_BOUNDS_INDEX;
 		return false;
 	}
-	if (inBounds(goal) && !cosmicOccupied(goal, index)
+	if (inBounds(goal) && goal != index && !cosmicOccupied(goal, index)
 		&& cosmicTerrainType(goal) == Cave::Entity::Type::Space
 		&& manhattanIndex(index, goal) <= manhattanIndex(index, closest))
 		return true;

@@ -138,6 +138,7 @@ Cave::File Cave::File::loadFromFile(const std::string& directory, const std::str
         const bool isWell = magic[0] == 'W' && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'L';
         const bool isPort = magic[0] == 'P' && magic[1] == 'O' && magic[2] == 'R' && magic[3] == 'T';
         const bool isChum = magic[0] == 'C' && magic[1] == 'H' && magic[2] == 'U' && magic[3] == 'M';
+        const bool isLava = magic[0] == 'L' && magic[1] == 'A' && magic[2] == 'V' && magic[3] == 'A';
         const bool isCosm = magic[0] == 'C' && magic[1] == 'O' && magic[2] == 'S' && magic[3] == 'M';
         const bool isName = magic[0] == 'N' && magic[1] == 'A' && magic[2] == 'M' && magic[3] == 'E';
         if (isName) {
@@ -195,8 +196,11 @@ Cave::File Cave::File::loadFromFile(const std::string& directory, const std::str
                 caveFile.caves[caveIndex].properties.unlimitedTime = (flags & 1u) != 0;
                 caveFile.caves[caveIndex].properties.chumGrowthSpeed = readReversedUint32(&rec[4]);
             }
+            else if (isLava) {
+                caveFile.caves[caveIndex].properties.lavaGrowthSpeed = readReversedUint32(&rec[4]);
+            }
         }
-        if (!isWell && !isPort && !isChum) break;
+        if (!isWell && !isPort && !isChum && !isLava) break;
     }
 
     return caveFile;
@@ -262,6 +266,24 @@ void Cave::File::saveToFile(const Cave::File& caveFile, const std::string& fullP
             bytes[2] = static_cast<char>(flags & 0xFF);
             bytes[3] = static_cast<char>((flags >> 8) & 0xFF);
             const uint32_t speed = caveFile.caves[caveIndex].properties.chumGrowthSpeed;
+            bytes[4] = static_cast<char>(speed & 0xFF);
+            bytes[5] = static_cast<char>((speed >> 8) & 0xFF);
+            bytes[6] = static_cast<char>((speed >> 16) & 0xFF);
+            bytes[7] = static_cast<char>((speed >> 24) & 0xFF);
+            file.write(bytes, 8);
+        }
+    }
+
+    if (chumCount > 0) {
+        const char lavaMagic[4] = { 'L', 'A', 'V', 'A' };
+        file.write(lavaMagic, 4);
+        writeUint32LE(file, 1);
+        writeUint32LE(file, chumCount);
+        for (uint16_t caveIndex = 0; caveIndex < static_cast<uint16_t>(chumCount); ++caveIndex) {
+            char bytes[8] = {};
+            bytes[0] = static_cast<char>(caveIndex & 0xFF);
+            bytes[1] = static_cast<char>((caveIndex >> 8) & 0xFF);
+            const uint32_t speed = caveFile.caves[caveIndex].properties.lavaGrowthSpeed;
             bytes[4] = static_cast<char>(speed & 0xFF);
             bytes[5] = static_cast<char>((speed >> 8) & 0xFF);
             bytes[6] = static_cast<char>((speed >> 16) & 0xFF);

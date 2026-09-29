@@ -75,6 +75,10 @@ namespace Cave::Entity {
             case Type::Fusion3:
             case Type::Fusion4:
             case Type::Fusion5:
+            case Type::Pyrozo:
+            case Type::PyrozoExtinguished:
+            case Type::Hellgull:
+            case Type::Charia:
                 return true;
             default:
                 return false;
@@ -116,6 +120,10 @@ namespace Cave::Entity {
             { "Fusion 3", Type::Fusion3 },
             { "Fusion 4", Type::Fusion4 },
             { "Fusion 5", Type::Fusion5 },
+            { "Pyrozo", Type::Pyrozo },
+            { "Hellgull", Type::Hellgull },
+            { "Charia", Type::Charia },
+            { "Extinguished Pyrozo", Type::PyrozoExtinguished },
         };
 
     private:

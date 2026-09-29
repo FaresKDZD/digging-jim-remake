@@ -794,7 +794,7 @@ namespace Cave {
         bool jimlinShipOnGate(const int& cell) const;
         bool jimlinShipOnJimlinBlock(const int& cell) const;
         bool jimlinShipStable(const int& cell) const;
-        bool jimlinShipPreferredSupport(const int& cell) const;
+        bool jimlinShipPreferredSupport(const int& cell, int self = OUT_OF_BOUNDS_INDEX) const;
         bool canJimlinWalk(const int& cell, const int& self, bool inShip, bool throughClosedPrivate = false) const;
         bool canJimlinOccupy(const int& cell, const int& self, int goal, bool inShip, bool throughClosedPrivate = false) const;
         bool privateGatesUsable() const;
@@ -942,6 +942,7 @@ namespace Cave {
          * @param index The entity index of the Protozo.
          */
         void updateProtoza(const int& index);
+        void updatePyrozo(const int& index);
         void updatePegul(const int& index);
         bool tryPegulFuseHunt(const int& index);
         int findNearestOtherVariantPegul(const int& index) const;
@@ -954,8 +955,8 @@ namespace Cave {
         bool singularitySeesJim(const int& index) const;
         int pickCosmicWanderGoal(const int& index) const;
         Cave::Entity::Direction findPathToCell(const int& index, const int& goal);
-        bool moveCosmicOver(const int& index, const Cave::Entity::Direction& direction);
-        bool tryStepCosmic(const int& index, const int& goal);
+        bool moveCosmicOver(const int& index, const Cave::Entity::Direction& direction, int slideInc = 4);
+        bool tryStepCosmic(const int& index, const int& goal, int slideInc = 4, bool leaveDirt = false);
         void ensureCosmicUnder();
         void hoistWandererCosmics();
         void updateOverlayCosmics();
@@ -1061,6 +1062,7 @@ namespace Cave {
          * @param index The entity index of the Protozo.
          */
         void updateCaveGull(const int& index);
+        void updateHellgull(const int& index);
         
         /**
          * @brief Updates the Spinner enemy's behavior.
@@ -1082,6 +1084,7 @@ namespace Cave {
          * @param index The entity index of the Cilia.
          */
         void updateCilia(const int& index);
+        void updateCharia(const int& index);
         
         /**
          * @brief Updates the Eater enemy's behavior.
@@ -1476,6 +1479,11 @@ namespace Cave {
          * @param index The entity index of the chum.
          */
         void updateChum(const int& index);
+        void updateLava(const int& index);
+        void updateFire(const int& index);
+        void updateFireball(const int& index);
+        void updateExplosion(const int& index);
+        int digSlideInc(const int& destIndex) const;
         
         /**
          * @brief Updates a horizontal wall entity.
@@ -1574,6 +1582,8 @@ namespace Cave {
          * @param index The entity index of the fallable entity.
          */
         void updateFallableEntityDirection(const int& index, Cave::Entity::Direction gravity);
+
+        bool isOpenForFall(const int& index) const;
 
         bool handleEntityFalling(const int& index, const int& ahead, const Cave::Entity::Direction& gravity);
 
@@ -1794,6 +1804,9 @@ namespace Cave {
 
         /// @brief The chum growth speed.
         int m_chumGrowthSpeed = 0;
+
+        /// @brief The lava growth speed.
+        int m_lavaGrowthSpeed = 0;
 
         /// @brief Whether the detonator has been triggered or not.
         bool m_detonatorTriggered = false;

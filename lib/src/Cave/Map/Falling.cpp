@@ -1,4 +1,12 @@
 #include "Cave/Map/Map.h"
+#include <algorithm>
+
+bool Cave::Map::isOpenForFall(const int& index) const {
+	if (!inBounds(index)) return false;
+	return hasTrait(Cave::Entity::Trait::Empty, index)
+		|| getEntityType(index) == Cave::Entity::Type::Fire
+		|| isPassableGate(index);
+}
 
 void Cave::Map::updateFallableEntity(const int& index) {
 	updateEntityAnimation(index);
@@ -31,7 +39,7 @@ void Cave::Map::updateFallableEntityDirection(const int& index, Cave::Entity::Di
 }
 
 bool Cave::Map::handleEntityFalling(const int& index, const int& ahead, const Cave::Entity::Direction& gravity) {
-	if (hasTrait(Cave::Entity::Trait::Empty, ahead)) {
+	if (isOpenForFall(ahead)) {
 		if (!getEntityFalling(index) && !caveEntities[index].fallPending) {
 			const bool supportDugOrExploded = inBounds(ahead)
 				&& ahead < static_cast<int>(m_supportDugOrExploded.size())
@@ -57,7 +65,7 @@ bool Cave::Map::handleEntityFalling(const int& index, const int& ahead, const Ca
 			const bool delayLand = Cave::Entity::isMagicWall(getEntityType(below))
 				|| (getEntityType(below) == Cave::Entity::Type::JimlinBlock
 					&& Cave::Entity::isDiamondTile(getEntityType(ahead)));
-			if (!hasTrait(Cave::Entity::Trait::Empty, below) && !delayLand) {
+			if (!isOpenForFall(below) && !delayLand) {
 				if (handleEntityLanding(ahead, below)) return true;
 				if (handleEntitySlip(ahead, below, gravity)) return true;
 			}
@@ -110,7 +118,7 @@ bool Cave::Map::handleEntityLanding(const int& index, const int& ahead) {
 		const Cave::Entity::Direction gravity = (getEntityType(index) == Cave::Entity::Type::MagicBoulder)
 			? Cave::Entity::Direction::UP
 			: Cave::Entity::Direction::DOWN;
-		if (hasTrait(Cave::Entity::Trait::Empty, ahead) && moveEntity(index, gravity)) {
+		if (isOpenForFall(ahead) && moveEntity(index, gravity)) {
 			setEntityFalling(ahead, true);
 			caveEntities[ahead].fallPending = false;
 			caveEntities[ahead].airborne = true;
@@ -124,6 +132,15 @@ bool Cave::Map::handleEntityLanding(const int& index, const int& ahead) {
 		return true;
 	}
 
+	const Cave::Entity::Type landingType = getEntityType(index);
+	if ((landingType == Cave::Entity::Type::HotBoulder
+		|| landingType == Cave::Entity::Type::HotBoulderCracked
+		|| getEntityType(ahead) == Cave::Entity::Type::HotBoulder
+		|| getEntityType(ahead) == Cave::Entity::Type::HotBoulderCracked)
+		&& !caveEntities[index].isFullyInTile()) {
+		return true;
+	}
+
 	setEntityFalling(index, false);
 	caveEntities[index].fallPending = false;
 	caveEntities[index].airborne = false;
@@ -134,6 +151,30 @@ bool Cave::Map::handleEntityLanding(const int& index, const int& ahead) {
 		createExplosion(index);
 		return true;
 	}
+	if (type == Cave::Entity::Type::HotBoulderCracked) {
+		createExplosion(index);
+		return true;
+	}
+	if (getEntityType(ahead) == Cave::Entity::Type::HotBoulderCracked) {
+		createExplosion(ahead);
+		return true;
+	}
+
+	auto crackHotBoulder = [this](int cell) {
+		int variant = 0;
+		const auto& anim = caveEntities[cell].animation();
+		if (!anim.frames.empty()) {
+			int frame = anim.currentFrame;
+			if (frame < 0 || frame >= static_cast<int>(anim.frames.size()))
+				frame = 0;
+			variant = std::clamp(anim.frames[static_cast<size_t>(frame)] - Cave::Entity::HotBoulder::FRAME_BASE, 0, 3);
+		}
+		caveEntities[cell] = Cave::Entity::HotBoulderCracked(variant);
+		caveEntities[cell].clearTransition();
+	};
+
+	if (getEntityType(ahead) == Cave::Entity::Type::HotBoulder)
+		crackHotBoulder(ahead);
 
 	if (hasTrait(Cave::Entity::Trait::Crushable, ahead)) {
 		if (getEntityType(ahead) == Cave::Entity::Type::Chaos) {
@@ -175,6 +216,7 @@ bool Cave::Map::handleEntityLanding(const int& index, const int& ahead) {
 	Cave::Entity::Type aheadType = getEntityType(ahead);
 
 	if ((type == Cave::Entity::Type::Boulder || type == Cave::Entity::Type::MagicBoulder
+		|| type == Cave::Entity::Type::HotBoulder || type == Cave::Entity::Type::HotBoulderCracked
 		|| type == Cave::Entity::Type::GallopEgg)
 		&& aheadType == Cave::Entity::Type::Ore) {
 		setEntity(ahead, Cave::Entity::OreTransformation());
@@ -192,6 +234,13 @@ bool Cave::Map::handleEntityLanding(const int& index, const int& ahead) {
 	if (type == Cave::Entity::Type::FragileDiamond) {
 		setEntity(index, Cave::Entity::BreakingFragileDiamond());
 		m_game->soundManager.play(Sound::Effect::Break);
+		return true;
+	}
+
+	if (type == Cave::Entity::Type::HotBoulder) {
+		crackHotBoulder(index);
+		m_game->soundManager.play(Sound::Effect::Land);
+		notifyFusion5Stimulus(index);
 		return true;
 	}
 
@@ -265,7 +314,8 @@ bool Cave::Map::handleEntitySlip(const int& index, const int& support, const Cav
 		return false;
 	}
 
-	if (hasTrait(Cave::Entity::Trait::Empty, index, Cave::Entity::Direction::RIGHT) && hasTrait(Cave::Entity::Trait::Empty, support, Cave::Entity::Direction::RIGHT)) {
+	if (isOpenForFall(getIndex(index, Cave::Entity::Direction::RIGHT))
+		&& isOpenForFall(getIndex(support, Cave::Entity::Direction::RIGHT))) {
 		const int dest = getIndex(index, Cave::Entity::Direction::RIGHT);
 		if (moveEntity(index, Cave::Entity::Direction::RIGHT)) {
 			setEntityFalling(dest, true);
@@ -275,7 +325,8 @@ bool Cave::Map::handleEntitySlip(const int& index, const int& support, const Cav
 		}
 	}
 
-	if (hasTrait(Cave::Entity::Trait::Empty, index, Cave::Entity::Direction::LEFT) && hasTrait(Cave::Entity::Trait::Empty, support, Cave::Entity::Direction::LEFT)) {
+	if (isOpenForFall(getIndex(index, Cave::Entity::Direction::LEFT))
+		&& isOpenForFall(getIndex(support, Cave::Entity::Direction::LEFT))) {
 		const int dest = getIndex(index, Cave::Entity::Direction::LEFT);
 		if (moveEntity(index, Cave::Entity::Direction::LEFT)) {
 			setEntityFalling(dest, true);

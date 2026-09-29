@@ -41,35 +41,53 @@ bool Cave::Map::moveEntityTo(const int& sourceIndex, const int& destinationIndex
 	return true;
 }
 
-bool Cave::Map::moveCosmicOver(const int& sourceIndex, const Cave::Entity::Direction& direction) {
+int Cave::Map::digSlideInc(const int& destIndex) const {
+	(void)destIndex;
+	return 4;
+}
+
+bool Cave::Map::moveCosmicOver(const int& sourceIndex, const Cave::Entity::Direction& direction, int slideInc) {
 	if (direction == Cave::Entity::Direction::NO_DIRECTION) return false;
 	if (!inBounds(sourceIndex)) return false;
 	const int destinationIndex = getIndex(sourceIndex, direction);
 	if (!inBounds(destinationIndex) || destinationIndex == sourceIndex) return false;
 	if (Cave::Entity::isCosmic(cosmicType(destinationIndex))) return false;
+	if (slideInc < 1) slideInc = Cave::Entity::Cosmic::SLIDE_INC;
+	if (slideInc > 32) slideInc = 32;
+	const bool instant = slideInc >= 32;
 
 	ensureCosmicUnder();
 	Cave::Entity::Base& source = cosmicRef(sourceIndex);
 	if (!Cave::Entity::Cosmic::isWanderer(source.getType())) return false;
 	if (source.isTransitioning()) return false;
 
+	auto intoPrevious = [this, destinationIndex]() {
+		Cave::Entity::Animation destAnim = caveEntities[destinationIndex].getAnimation();
+		if (destAnim.frames.empty())
+			destAnim = Cave::Entity::Space().getAnimation();
+		return destAnim;
+	};
+
 	if (sourceIndex < static_cast<int>(m_cosmicOver.size())
 		&& Cave::Entity::Cosmic::isWanderer(m_cosmicOver[static_cast<size_t>(sourceIndex)].getType())) {
 		Cave::Entity::Animation sourceAnimation = m_cosmicOver[static_cast<size_t>(sourceIndex)].getAnimation();
+		Cave::Entity::Animation destPrev = intoPrevious();
 		m_cosmicOver[static_cast<size_t>(destinationIndex)] = std::move(m_cosmicOver[static_cast<size_t>(sourceIndex)]);
 		m_cosmicOver[static_cast<size_t>(sourceIndex)] = Cave::Entity::Base();
-		m_cosmicOver[static_cast<size_t>(sourceIndex)].applyAwayTransition(direction, sourceAnimation, 4);
-		Cave::Entity::Animation none;
-		m_cosmicOver[static_cast<size_t>(destinationIndex)].applyIntoTransition(direction, none, 4);
+		if (!instant) {
+			m_cosmicOver[static_cast<size_t>(sourceIndex)].applyAwayTransition(direction, sourceAnimation, slideInc);
+			m_cosmicOver[static_cast<size_t>(destinationIndex)].applyIntoTransition(direction, destPrev, slideInc);
+		}
+		else {
+			m_cosmicOver[static_cast<size_t>(destinationIndex)].clearTransition();
+		}
 		return true;
 	}
 
 	if (getEntityTransitioning(destinationIndex)) return false;
 
 	Cave::Entity::Animation sourceAnimation = caveEntities[sourceIndex].getAnimation();
-	Cave::Entity::Animation destAnim = caveEntities[destinationIndex].getAnimation();
-	const bool destIsEmpty = hasTrait(Cave::Entity::Trait::Empty, destinationIndex)
-		|| getEntityType(destinationIndex) == Cave::Entity::Type::Space;
+	Cave::Entity::Animation destAnim = intoPrevious();
 
 	Cave::Entity::Base destTerrain = caveEntities[destinationIndex];
 	destTerrain.clearTransition();
@@ -83,22 +101,26 @@ bool Cave::Map::moveCosmicOver(const int& sourceIndex, const Cave::Entity::Direc
 	caveEntities[sourceIndex] = std::move(leftBehind);
 	m_cosmicUnder[static_cast<size_t>(destinationIndex)] = std::move(destTerrain);
 
-	caveEntities[sourceIndex].applyAwayTransition(direction, sourceAnimation, 4);
-	if (destIsEmpty) {
-		Cave::Entity::Animation none;
-		caveEntities[destinationIndex].applyIntoTransition(direction, none, 4);
+	if (!instant) {
+		caveEntities[sourceIndex].applyAwayTransition(direction, sourceAnimation, slideInc);
+		caveEntities[destinationIndex].applyIntoTransition(direction, destAnim, slideInc);
 	}
 	else {
-		caveEntities[destinationIndex].applyIntoTransition(direction, destAnim, 4);
+		caveEntities[sourceIndex].clearTransition();
+		caveEntities[destinationIndex].clearTransition();
 	}
 	return true;
 }
 
-bool Cave::Map::tryStepCosmic(const int& index, const int& goal) {
+bool Cave::Map::tryStepCosmic(const int& index, const int& goal, int slideInc, bool leaveDirt) {
 	if (!inBounds(index) || !inBounds(goal) || index == goal) return false;
 	const Cave::Entity::Direction dir = findPathToCell(index, goal);
 	if (dir == Cave::Entity::Direction::NO_DIRECTION) return false;
-	return moveCosmicOver(index, dir);
+	const int from = index;
+	if (!moveCosmicOver(from, dir, slideInc)) return false;
+	if (leaveDirt && cosmicTerrainType(from) == Cave::Entity::Type::Space)
+		cosmicStamp(from, Cave::Entity::Dirt());
+	return true;
 }
 
 bool Cave::Map::warpEntity(const int& sourceIndex, const Cave::Entity::Direction& direction) {

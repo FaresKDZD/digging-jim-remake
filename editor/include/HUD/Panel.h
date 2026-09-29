@@ -50,9 +50,20 @@ namespace HUD::Editor {
         /**
          * @brief Select the entity at grid position (x, y) in the entity palette.
          * @param x Column index (0–2).
-         * @param y Row index (0–12).
+         * @param y Row index (0–19).
          */
         void selectType(const int& x, const int& y);
+
+        /// Variant palette cells after the door row. Tools menu and dropdowns use these.
+        static constexpr int PegulSlotX = 0, PegulSlotY = 15;
+        static constexpr int FusionSlotX = 1, FusionSlotY = 18;
+        static constexpr int GodSlotX = 2, GodSlotY = 18;
+        static constexpr int JimlinSlotX = 2, JimlinSlotY = 19;
+        static constexpr int GateSlotX = 1, GateSlotY = 11;
+        static constexpr int JimlinBlockSlotX = 1, JimlinBlockSlotY = 13;
+        static constexpr int JimlinShipSlotX = 0, JimlinShipSlotY = 13;
+        static constexpr int SpaceSlotX = 0, SpaceSlotY = 0;
+        static constexpr int PyrozoSlotX = 0, PyrozoSlotY = 21;
 
         /// @brief True if this palette cell is the shared Pegul slot.
         bool isPegulSlot(const int& x, const int& y) const;
@@ -71,6 +82,15 @@ namespace HUD::Editor {
 
         /// @brief Switch the Fusion palette slot to a variant and select it.
         void setFusionType(Cave::Entity::Type type);
+
+        /// @brief True if this palette cell is the shared Pyrozo slot.
+        bool isPyrozoSlot(const int& x, const int& y) const;
+
+        /// @brief Current Pyrozo variant painted by the shared palette slot.
+        Cave::Entity::Type getPyrozoType() const { return m_pyrozoType; }
+
+        /// @brief Switch the Pyrozo palette slot to a variant and select it.
+        void setPyrozoType(Cave::Entity::Type type);
 
         /// @brief True if this palette cell is the shared God/Chaos slot.
         bool isGodSlot(const int& x, const int& y) const;
@@ -136,7 +156,7 @@ namespace HUD::Editor {
         Cave::Entity::Type getSelectedType() const;
 
         /// @brief Map a palette grid position to the corresponding entity type.
-        /// @param x Column (0–2). @param y Row (0–12).
+        /// @param x Column (0–2). @param y Row (0–19).
         Cave::Entity::Type getType(const int& x, const int& y);
 
         /// @brief Construct a fresh entity instance for the given type.
@@ -266,6 +286,7 @@ namespace HUD::Editor {
         Cave::Entity::Type        m_spaceSlotType = Cave::Entity::Type::Space;
         Cave::Entity::Type        m_pegulType    = Cave::Entity::Type::PegulNormo;
         Cave::Entity::Type        m_fusionType   = Cave::Entity::Type::Fusion1;
+        Cave::Entity::Type        m_pyrozoType   = Cave::Entity::Type::Pyrozo;
         Cave::Entity::Type        m_godType      = Cave::Entity::Type::God;
         Cave::Entity::Type        m_jimlinType   = Cave::Entity::Type::Jimlin1;
         Cave::Entity::Type        m_gateType     = Cave::Entity::Type::Gate;
@@ -277,7 +298,7 @@ namespace HUD::Editor {
 
         /// @brief Current scroll row offset for the entity palette.
         int                       m_scrollRow    = 0;
-        static constexpr int      TOTAL_PALETTE_ROWS   = 20;
+        static constexpr int      TOTAL_PALETTE_ROWS   = 22;
         static constexpr int      VISIBLE_PALETTE_ROWS = 10;
         static constexpr int      MAX_SCROLL_ROW       = TOTAL_PALETTE_ROWS - VISIBLE_PALETTE_ROWS;
 

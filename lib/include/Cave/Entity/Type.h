@@ -124,10 +124,30 @@ namespace Cave::Entity {
         Nihilus,
         SingularityExplosion,
         JimlinDock,
+        Magma,
+        HotBoulder,
+        HotBoulderCracked,
+        Lava,
+        Fire,
+        Fireball,
+        Pyrozo,
+        PyrozoExtinguished,
+        Hellgull,
+        Charia,
     };
 
     inline bool isDirtLike(Type type) {
-        return type == Type::Dirt || type == Type::Chum;
+        return type == Type::Dirt || type == Type::Chum || type == Type::Magma;
+    }
+
+    inline bool isLavaImmune(Type type) {
+        return type == Type::Pyrozo || type == Type::PyrozoExtinguished
+            || type == Type::Hellgull || type == Type::Charia;
+    }
+
+    inline bool isFireImmune(Type type) {
+        return type == Type::Chaos || type == Type::Pyrozo || type == Type::PyrozoExtinguished
+            || type == Type::Hellgull || type == Type::Charia;
     }
 
     inline bool isPegul(Type type) {
@@ -141,6 +161,10 @@ namespace Cave::Entity {
         default:
             return false;
         }
+    }
+
+    inline bool isPyrozoVariant(Type type) {
+        return type == Type::Pyrozo || type == Type::PyrozoExtinguished;
     }
 
     inline bool isFusion(Type type) {
@@ -238,6 +262,10 @@ namespace Cave::Entity {
         case Type::Terminus:
         case Type::Initia:
         case Type::Nihilus:
+        case Type::Pyrozo:
+        case Type::PyrozoExtinguished:
+        case Type::Hellgull:
+        case Type::Charia:
             return true;
         default:
             return false;

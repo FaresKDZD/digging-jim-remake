@@ -212,7 +212,7 @@ void Cave::Map::updateInactiveEntity(const std::vector<int> indicies) {
 		Cave::Entity::Type type = getEntityType(index);
 		switch (type) {
 		case Cave::Entity::Type::Jim: updateJimIdle(index); updateEntityAnimation(index); break;
-		case Cave::Entity::Type::Explosion: updateTransientEntity(index, Cave::Entity::Space()); break;
+		case Cave::Entity::Type::Explosion: updateExplosion(index); break;
 		case Cave::Entity::Type::OreTransformation: updateTransientEntity(index, Cave::Entity::Diamond()); break;
 		case Cave::Entity::Type::CaveGullExplosion: updateTransientEntity(index, Cave::Entity::Diamond()); break;
 		case Cave::Entity::Type::ChaosExplosion: updateTransientEntity(index, Cave::Entity::Ruby()); break;
@@ -275,6 +275,9 @@ void Cave::Map::initEntityUpdateMaps() {
 	m_entityUpdateMap[Cave::Entity::Type::TimeBomb] = [this](int i) { updateTimeBomb(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Plasma] = [this](int i) { updatePlasma(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Chum] = [this](int i) { updateChum(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Lava] = [this](int i) { updateLava(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Fire] = [this](int i) { updateFire(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Fireball] = [this](int i) { updateFireball(i); };
 	m_entityUpdateMap[Cave::Entity::Type::HorizontalWall] = [this](int i) { updateHorizontalWall(i); };
 	m_entityUpdateMap[Cave::Entity::Type::VerticalWall] = [this](int i) { updateVerticalWall(i); };
 	m_entityUpdateMap[Cave::Entity::Type::MagicWallActive] = [this](int i) { updateMagicWallActive(i); };
@@ -283,6 +286,8 @@ void Cave::Map::initEntityUpdateMaps() {
 	m_entityUpdateMap[Cave::Entity::Type::DetonatorUsed] = [this](int i) { updateDetonatorUsed(i); };
 
 	m_entityUpdateMap[Cave::Entity::Type::Protozo] = [this](int i) { updateProtoza(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Pyrozo] = [this](int i) { updatePyrozo(i); };
+	m_entityUpdateMap[Cave::Entity::Type::PyrozoExtinguished] = [this](int i) { updatePyrozo(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Blob] = [this](int i) { updateBlob(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Mole] = [this](int i) { updateMole(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Portal] = [this](int i) { updateEntityAnimation(i); };
@@ -290,8 +295,10 @@ void Cave::Map::initEntityUpdateMaps() {
 	m_entityUpdateMap[Cave::Entity::Type::God] = [this](int i) { updateGod(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Chaos] = [this](int i) { updateChaos(i); };
 	m_entityUpdateMap[Cave::Entity::Type::CaveGull] = [this](int i) { updateCaveGull(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Hellgull] = [this](int i) { updateHellgull(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Spinner] = [this](int i) { updateSpinner(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Cilia] = [this](int i) { updateCilia(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Charia] = [this](int i) { updateCharia(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Eater] = [this](int i) { updateEater(i); };
 	m_entityUpdateMap[Cave::Entity::Type::BoulderEater] = [this](int i) { updateBoulderEater(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Aggressor] = [this](int i) { updateAggressor(i); };
@@ -335,7 +342,7 @@ void Cave::Map::initEntityUpdateMaps() {
 	m_entityUpdateMap[Cave::Entity::Type::ChargerBody] = [this](int i) { updateChargerBody(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Well] = [this](int i) { updateWell(i); };
 
-	m_entityUpdateMap[Cave::Entity::Type::Explosion] = [this](int i) { updateTransientEntity(i, Cave::Entity::Space()); };
+	m_entityUpdateMap[Cave::Entity::Type::Explosion] = [this](int i) { updateExplosion(i); };
 	m_entityUpdateMap[Cave::Entity::Type::OreTransformation] = [this](int i) { updateTransientEntity(i, Cave::Entity::Diamond()); };
 	m_entityUpdateMap[Cave::Entity::Type::CaveGullExplosion] = [this](int i) { updateTransientEntity(i, Cave::Entity::Diamond()); };
 	m_entityUpdateMap[Cave::Entity::Type::ChaosExplosion] = [this](int i) { updateTransientEntity(i, Cave::Entity::Ruby()); };
@@ -350,6 +357,8 @@ void Cave::Map::initEntityUpdateMaps() {
 	m_entityUpdateMap[Cave::Entity::Type::Ruby] = [this](int i) { updateFallableEntity(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Ore] = [this](int i) { updateFallableEntity(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Boulder] = [this](int i) { updateFallableEntity(i); };
+	m_entityUpdateMap[Cave::Entity::Type::HotBoulder] = [this](int i) { updateFallableEntity(i); };
+	m_entityUpdateMap[Cave::Entity::Type::HotBoulderCracked] = [this](int i) { updateFallableEntity(i); };
 	m_entityUpdateMap[Cave::Entity::Type::MagicBoulder] = [this](int i) { updateFallableEntity(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Bomb] = [this](int i) { updateFallableEntity(i); };
 	m_entityUpdateMap[Cave::Entity::Type::JimlinShipInactive] = [this](int i) { updateFallableEntity(i); };
@@ -437,8 +446,14 @@ void Cave::Map::update(Camera camera) {
 		if (!syncing || m_game->consumeSimTick())
 			updateCaveEntities(indicies);
 	}
-	else if ((globalCounter % 4) == 0) {
-		updatePyramChaseHalfTick();
+	else {
+		if (m_cosmicGenesis
+			&& (m_state == Cave::State::Play || m_state == Cave::State::Pass || m_state == Cave::State::Fail)) {
+			updateOverlayCosmics();
+			advanceCosmicGenesis();
+		}
+		if ((globalCounter % 4) == 0)
+			updatePyramChaseHalfTick();
 	}
 
 	if (m_state == Cave::State::Play && m_jimInvincibleFrames > 0) {

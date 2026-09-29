@@ -45,6 +45,9 @@ namespace Cave::Entity {
         static constexpr int MAX_MONSTERS = 10;
         static constexpr int INITIA_IDLE_TICKS = 8;
         static constexpr int NIHILUS_SPACES_PER_SEC = 20;
+        static constexpr int SLIDE_INC = 4;
+        static constexpr int GENESIS_SLIDE_INC = 16;
+        static constexpr int TERA_SLIDE_INC = 32;
 
         enum class GenesisPhase {
             None,
@@ -211,6 +214,10 @@ namespace Cave::Entity {
             { "Fusion 3", Type::Fusion3 },
             { "Fusion 4", Type::Fusion4 },
             { "Fusion 5", Type::Fusion5 },
+            { "Pyrozo", Type::Pyrozo },
+            { "Hellgull", Type::Hellgull },
+            { "Charia", Type::Charia },
+            { "Extinguished Pyrozo", Type::PyrozoExtinguished },
         };
 
         static constexpr int VITUS_OPTION_COUNT =

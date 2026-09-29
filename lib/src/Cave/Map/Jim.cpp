@@ -19,6 +19,11 @@ void Cave::Map::updateJim(const int& index) {
 	}
 	updateEntityAnimation(index);
 
+	if (!isJimInvincible(index) && isAdjacentTo(index, Cave::Entity::Type::Lava)) {
+		killPlayerAt(index);
+		return;
+	}
+
 	const bool collect = in.collect;
 	Cave::Entity::Direction moveDir = Cave::Entity::Direction::NO_DIRECTION;
 	if (in.up)
@@ -178,12 +183,15 @@ bool Cave::Map::tryJimWrapWalk(const int& index, const int& dest, const Cave::En
 	if (getEntityTransitioning(index) || getEntityTransitioning(dest)) return false;
 	const bool inShip = Cave::Entity::isActiveJimlinShip(getEntityType(index));
 	if (inShip && hasTrait(Cave::Entity::Trait::Collectable, dest)) return false;
+	const bool intoFire = getEntityType(dest) == Cave::Entity::Type::Fire;
 	applyJimWrapLandingEffects(dest);
 	setJimMoveAmination(index);
-	if (!moveEntityTo(index, dest, direction)) return false;
+	if (!moveEntityTo(index, dest, direction, digSlideInc(dest))) return false;
 	noteJimMoved(dest);
 	m_jimMovedThisTick = true;
 	if (snapCamera) m_snapCameraToJim = true;
+	if (intoFire && !isJimInvincible(dest))
+		killPlayerAt(dest);
 	return true;
 }
 
@@ -225,6 +233,7 @@ bool Cave::Map::handleJimTraverse(const int& index, const int& inFront, const bo
 	}
 	setJimMoveAmination(index);
 	bool digging = Cave::Entity::isDirtLike(getEntityType(inFront));
+	const bool intoFire = getEntityType(inFront) == Cave::Entity::Type::Fire;
 	if (collectMode) {
 		if (!getEntityTransitioning(inFront)) {
 			if (collectable) {
@@ -271,7 +280,7 @@ bool Cave::Map::handleJimTraverse(const int& index, const int& inFront, const bo
 		}
 		return true;
 	}
-	if (moveEntity(index, direction)) {
+	if (moveEntity(index, direction, digSlideInc(inFront))) {
 		noteJimMoved(inFront);
 		m_jimMovedThisTick = true;
 		if (collectable) {
@@ -299,6 +308,8 @@ bool Cave::Map::handleJimTraverse(const int& index, const int& inFront, const bo
 		else if (digging) {
 			m_traversingDirt = true;
 		}
+		if (intoFire && !isJimInvincible(inFront))
+			killPlayerAt(inFront);
 		return true;
 	}
 	return false;

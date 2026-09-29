@@ -241,6 +241,7 @@ static Cave::Properties defaultCaveProperties(uint32_t width = 50, uint32_t heig
     p.magicWallTime     = 20;
     p.plasmaGrowthSpeed = 1000;
     p.chumGrowthSpeed   = 128;
+    p.lavaGrowthSpeed   = 128;
     p.hue               = 100;
     p.sat               = 100;
     p.lum               = 100;
@@ -351,6 +352,13 @@ static char entityTypeToTile(Cave::Entity::Type type)
     case Cave::Entity::Type::Initia:              return 89;
     case Cave::Entity::Type::Nihilus:             return 90;
     case Cave::Entity::Type::JimlinDock:          return 91;
+    case Cave::Entity::Type::Magma:               return 92;
+    case Cave::Entity::Type::HotBoulder:          return 93;
+    case Cave::Entity::Type::Lava:                return 94;
+    case Cave::Entity::Type::Pyrozo:              return 95;
+    case Cave::Entity::Type::PyrozoExtinguished:  return 98;
+    case Cave::Entity::Type::Hellgull:            return 96;
+    case Cave::Entity::Type::Charia:              return 97;
     default:                                      return 0;
     }
 }
@@ -1306,6 +1314,7 @@ bool Editor::run()
     bool         openPortalProps  = false;
     bool         openPegulPicker  = false;
     bool         openFusionPicker = false;
+    bool         openPyrozoPicker = false;
     bool         openGodPicker    = false;
     bool         openJimlinPicker = false;
     bool         openGatePicker   = false;
@@ -1388,6 +1397,8 @@ bool Editor::run()
                                 openCosmicPicker = true;
                             else if (Cave::Entity::isFusion(editorPanel.getSelectedType()))
                                 openFusionPicker = true;
+                            else if (Cave::Entity::isPyrozoVariant(editorPanel.getSelectedType()))
+                                openPyrozoPicker = true;
                             else if (Cave::Entity::isGodVariant(editorPanel.getSelectedType()))
                                 openGodPicker = true;
                             else if (Cave::Entity::isJimlin(editorPanel.getSelectedType()))
@@ -1773,6 +1784,25 @@ bool Editor::run()
                     const bool selected = editorPanel.getFusionType() == variant.type;
                     if (ImGui::MenuItem(variant.label, nullptr, selected))
                         editorPanel.setFusionType(variant.type);
+                }
+                ImGui::EndPopup();
+            }
+        }
+
+        {
+            if (openPyrozoPicker)
+            {
+                ImGui::SetNextWindowPos(tilePickerPos, ImGuiCond_Always, ImVec2(0.f, 0.f));
+                ImGui::OpenPopup("##pyrozo_variant");
+                openPyrozoPicker = false;
+            }
+            if (ImGui::BeginPopup("##pyrozo_variant"))
+            {
+                for (const auto& variant : Cave::Entity::Pyrozo::VARIANTS)
+                {
+                    const bool selected = editorPanel.getPyrozoType() == variant.type;
+                    if (ImGui::MenuItem(variant.label, nullptr, selected))
+                        editorPanel.setPyrozoType(variant.type);
                 }
                 ImGui::EndPopup();
             }
@@ -2503,6 +2533,7 @@ bool Editor::run()
                     || p.magicWallTime != oldP.magicWallTime
                     || p.hue != oldP.hue || p.sat != oldP.sat || p.lum != oldP.lum
                     || p.chumGrowthSpeed != oldP.chumGrowthSpeed
+                    || p.lavaGrowthSpeed != oldP.lavaGrowthSpeed
                     || p.unlimitedTime != oldP.unlimitedTime)
                 {
                     m_undoStack.push_back(std::move(preProps));

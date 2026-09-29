@@ -1,4 +1,5 @@
 #include "Cave/Map/Map.h"
+#include "Utils/Random.h"
 
 void Cave::Map::handleBoulderRoll(const int& index, const Cave::Entity::Direction& direction) {
 	if ((direction == Cave::Entity::Direction::LEFT || direction == Cave::Entity::Direction::RIGHT) && getEntityType(index) == Cave::Entity::Type::Boulder) {
@@ -6,6 +7,12 @@ void Cave::Map::handleBoulderRoll(const int& index, const Cave::Entity::Directio
 	}
 	if ((direction == Cave::Entity::Direction::LEFT || direction == Cave::Entity::Direction::RIGHT) && getEntityType(index) == Cave::Entity::Type::MagicBoulder) {
 		setEntity(index, Cave::Entity::MagicBoulder());
+	}
+	if ((direction == Cave::Entity::Direction::LEFT || direction == Cave::Entity::Direction::RIGHT) && getEntityType(index) == Cave::Entity::Type::HotBoulder) {
+		setEntity(index, Cave::Entity::HotBoulder());
+	}
+	if ((direction == Cave::Entity::Direction::LEFT || direction == Cave::Entity::Direction::RIGHT) && getEntityType(index) == Cave::Entity::Type::HotBoulderCracked) {
+		setEntity(index, Cave::Entity::HotBoulderCracked());
 	}
 }
 
@@ -26,12 +33,25 @@ void Cave::Map::createExplosion(const int& index) {
 }
 
 void Cave::Map::createExplosion(const int& index, bool caveGullExplosion) {
+	const bool spawnPyrozos = getEntityType(index) == Cave::Entity::Type::Pyrozo;
 	std::vector<int> cells;
 	cells.reserve(m_explosionOffsets.size());
 	for (int offset : m_explosionOffsets) {
 		cells.push_back(index + offset);
 	}
 	detonateCells(index, cells, caveGullExplosion);
+	if (!spawnPyrozos) return;
+	std::vector<int> spots;
+	spots.reserve(cells.size());
+	for (int cell : cells) {
+		if (inBounds(cell) && getEntityType(cell) == Cave::Entity::Type::Explosion)
+			spots.push_back(cell);
+	}
+	while (spots.size() > 2) {
+		spots.erase(spots.begin() + static_cast<size_t>(Utils::randomInteger(0, static_cast<int>(spots.size()) - 1)));
+	}
+	for (int cell : spots)
+		caveEntities[cell].extra = Cave::Entity::Explosion::SPAWN_EXTINGUISHED;
 }
 
 void Cave::Map::createRubyExplosion(const int& index) {
@@ -178,8 +198,11 @@ void Cave::Map::detonateCells(const int& origin, const std::vector<int>& cells, 
 			setEntity(explosionIndex, Cave::Entity::ChaosExplosion());
 		else if (caveGullExplosion)
 			setEntity(explosionIndex, Cave::Entity::CaveGullExplosion());
-		else
+		else {
 			setEntity(explosionIndex, Cave::Entity::Explosion());
+			caveEntities[explosionIndex].extra = 0;
+			caveEntities[explosionIndex].spawnCredit = 0;
+		}
 
 		if (type == Cave::Entity::Type::Jim || playerPilotShip) {
 			m_game->sendSignal(GameSignal::CaveFail);

@@ -213,6 +213,7 @@ void HUD::Editor::Toolbar::drawToolItems(HUD::Editor::Panel* editorPanel)
         if (type == selType
             || (Cave::Entity::isPegul(type) && Cave::Entity::isPegul(selType))
             || (Cave::Entity::isFusion(type) && Cave::Entity::isFusion(selType))
+            || (Cave::Entity::isPyrozoVariant(type) && Cave::Entity::isPyrozoVariant(selType))
             || (Cave::Entity::isGodVariant(type) && Cave::Entity::isGodVariant(selType))
             || (Cave::Entity::isJimlin(type) && Cave::Entity::isJimlin(selType))
             || (Cave::Entity::isGateVariant(type) && Cave::Entity::isGateVariant(selType))
@@ -258,36 +259,42 @@ void HUD::Editor::Toolbar::drawToolItems(HUD::Editor::Panel* editorPanel)
     tool("Granite Ore",              "",  2, 1, Cave::Entity::Type::Ore);
     tool("Start Door",               "",  1, 9, Cave::Entity::Type::StartDoor);
     tool("Exit Door",                "",  2, 9, Cave::Entity::Type::ExitDoor);
-    tool("Spinner",                  "",  0, 10, Cave::Entity::Type::Spinner);
-    tool("Boulder Eater",            "",  1, 10, Cave::Entity::Type::BoulderEater);
-    tool("Tetrapus",                 "",  2, 10, Cave::Entity::Type::Tetrapus);
-    tool("Binocule",                 "",  0, 11, Cave::Entity::Type::Binocule);
-    tool("Creep",                    "",  1, 11, Cave::Entity::Type::Creep);
-    tool("Sludg",                    "",  2, 11, Cave::Entity::Type::Sludg);
-    tool("Glutton",                  "",  0, 12, Cave::Entity::Type::Glutton);
-    tool("Hollow Diamond",           "",  1, 12, Cave::Entity::Type::HollowDiamond);
-    tool("Time Bomb",                "",  2, 12, Cave::Entity::Type::TimeBomb);
-    tool("Pyram",                    "",  0, 13, Cave::Entity::Type::Pyram);
-    tool("Ruby",                     "",  1, 13, Cave::Entity::Type::Ruby);
-    tool("Magic Boulder",            "",  2, 13, Cave::Entity::Type::MagicBoulder);
-    tool("Puffer",                   "",  0, 14, Cave::Entity::Type::Puffer);
+    tool("Hollow Diamond",           "",  0, 10, Cave::Entity::Type::HollowDiamond);
+    tool("Ruby",                     "",  1, 10, Cave::Entity::Type::Ruby);
+    tool("Magic Boulder",            "",  2, 10, Cave::Entity::Type::MagicBoulder);
+    tool("Chum",                     "",  0, 11, Cave::Entity::Type::Chum);
+    tool("Gate",                     "",  HUD::Editor::Panel::GateSlotX, HUD::Editor::Panel::GateSlotY, Cave::Entity::Type::Gate);
+    tool("Fan",                      "",  2, 11, Cave::Entity::Type::Fan);
+    tool("Time Bomb",                "",  0, 12, Cave::Entity::Type::TimeBomb);
+    tool("Well",                     "",  1, 12, Cave::Entity::Type::Well);
+    tool("Portal",                   "",  2, 12, Cave::Entity::Type::Portal);
+    tool("Jimlin Ship",              "",  HUD::Editor::Panel::JimlinShipSlotX, HUD::Editor::Panel::JimlinShipSlotY, Cave::Entity::Type::JimlinShipInactive);
+    tool("Jimlin Block",             "",  HUD::Editor::Panel::JimlinBlockSlotX, HUD::Editor::Panel::JimlinBlockSlotY, Cave::Entity::Type::JimlinBlock);
+    tool("Mole",                     "",  2, 13, Cave::Entity::Type::Mole);
+    tool("Spinner",                  "",  0, 14, Cave::Entity::Type::Spinner);
     tool("Blob",                     "",  1, 14, Cave::Entity::Type::Blob);
-    tool("Portal",                   "",  2, 14, Cave::Entity::Type::Portal);
-    tool("Mole",                     "",  0, 15, Cave::Entity::Type::Mole);
-    tool("Fan",                      "",  1, 15, Cave::Entity::Type::Fan);
-    tool("God",                      "",  2, 15, Cave::Entity::Type::God);
-    tool("Charger",                  "",  0, 16, Cave::Entity::Type::Charger);
-    tool("Well",                     "",  1, 16, Cave::Entity::Type::Well);
-    tool("Chum",                     "",  2, 16, Cave::Entity::Type::Chum);
-    tool("Gallop Queen",            "",  0, 17, Cave::Entity::Type::GallopQueen);
-    tool("Gallop Egg",              "",  1, 17, Cave::Entity::Type::GallopEgg);
-    tool("Gallop",                  "",  2, 17, Cave::Entity::Type::Gallop);
-    tool("Pegul",                   "",  0, 18, Cave::Entity::Type::PegulNormo);
-    tool("Fusion",                  "",  1, 18, Cave::Entity::Type::Fusion1);
-    tool("Gate",                    "",  2, 18, Cave::Entity::Type::Gate);
-    tool("Jimlin Ship",             "",  0, 19, Cave::Entity::Type::JimlinShipInactive);
-    tool("Jimlin",                  "",  1, 19, Cave::Entity::Type::Jimlin1);
-    tool("Jimlin Block",            "",  2, 19, Cave::Entity::Type::JimlinBlock);
+    tool("Sludg",                    "",  2, 14, Cave::Entity::Type::Sludg);
+    tool("Pegul",                    "",  HUD::Editor::Panel::PegulSlotX, HUD::Editor::Panel::PegulSlotY, Cave::Entity::Type::PegulNormo);
+    tool("Boulder Eater",            "",  1, 15, Cave::Entity::Type::BoulderEater);
+    tool("Pyram",                    "",  2, 15, Cave::Entity::Type::Pyram);
+    tool("Gallop Egg",               "",  0, 16, Cave::Entity::Type::GallopEgg);
+    tool("Gallop",                   "",  1, 16, Cave::Entity::Type::Gallop);
+    tool("Gallop Queen",             "",  2, 16, Cave::Entity::Type::GallopQueen);
+    tool("Creep",                    "",  0, 17, Cave::Entity::Type::Creep);
+    tool("Tetrapus",                 "",  1, 17, Cave::Entity::Type::Tetrapus);
+    tool("Glutton",                  "",  2, 17, Cave::Entity::Type::Glutton);
+    tool("Binocule",                 "",  0, 18, Cave::Entity::Type::Binocule);
+    tool("Fusion",                   "",  HUD::Editor::Panel::FusionSlotX, HUD::Editor::Panel::FusionSlotY, Cave::Entity::Type::Fusion1);
+    tool("God",                      "",  HUD::Editor::Panel::GodSlotX, HUD::Editor::Panel::GodSlotY, Cave::Entity::Type::God);
+    tool("Puffer",                   "",  0, 19, Cave::Entity::Type::Puffer);
+    tool("Charger",                  "",  1, 19, Cave::Entity::Type::Charger);
+    tool("Jimlin",                   "",  HUD::Editor::Panel::JimlinSlotX, HUD::Editor::Panel::JimlinSlotY, Cave::Entity::Type::Jimlin1);
+    tool("Magma",                    "",  0, 20, Cave::Entity::Type::Magma);
+    tool("Hot Boulder",              "",  1, 20, Cave::Entity::Type::HotBoulder);
+    tool("Lava",                     "",  2, 20, Cave::Entity::Type::Lava);
+    tool("Pyrozo",                   "",  HUD::Editor::Panel::PyrozoSlotX, HUD::Editor::Panel::PyrozoSlotY, Cave::Entity::Type::Pyrozo);
+    tool("Hellgull",                 "",  1, 21, Cave::Entity::Type::Hellgull);
+    tool("Charia",                   "",  2, 21, Cave::Entity::Type::Charia);
 }
 
 void HUD::Editor::Toolbar::drawToolsMenu(HUD::Editor::Panel* editorPanel)
