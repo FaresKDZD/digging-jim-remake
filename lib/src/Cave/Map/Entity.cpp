@@ -23,6 +23,26 @@ bool Cave::Map::isJimInvincible(const int& index) const {
 	return m_playerInvincible[static_cast<size_t>(pid)] > 0;
 }
 
+bool Cave::Map::isJimPyrobe() const {
+	return m_jimPyrobeFrames > 0;
+}
+
+bool Cave::Map::isJimPyrobe(const int& index) const {
+	if (!inBounds(index)) return false;
+	if (getEntityType(index) != Cave::Entity::Type::Jim) return false;
+	const int pid = caveEntities[index].spawnCredit;
+	if (pid < 0 || pid >= Net::MaxPlayers) return m_jimPyrobeFrames > 0;
+	return m_playerPyrobe[static_cast<size_t>(pid)] > 0;
+}
+
+bool Cave::Map::isJimHazardImmune() const {
+	return isJimInvincible() || isJimPyrobe();
+}
+
+bool Cave::Map::isJimHazardImmune(const int& index) const {
+	return isJimInvincible(index) || isJimPyrobe(index);
+}
+
 bool Cave::Map::jimSteppedIntoCellThisTick(const int& cell) const {
 	if (!inBounds(cell) || getEntityType(cell) != Cave::Entity::Type::Jim) return false;
 	const int pid = caveEntities[cell].spawnCredit;
@@ -176,7 +196,7 @@ void Cave::Map::updateEntityAnimation(const int& index) {
 
 void Cave::Map::updateEntityTransition(const int& index) {
 	caveEntities[index].updateTransition();
-	if (m_editorPreview || m_TickCounter.onTick()) return;
+	if (editorIdle() || m_TickCounter.onTick()) return;
 	if (m_cosmicGenesis) return;
 	if (m_state != Cave::State::Play) return;
 	if (!getEntityFalling(index) || caveEntities[index].fallPending) return;

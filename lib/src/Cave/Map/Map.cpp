@@ -13,12 +13,14 @@
 #include "Utils/Random.h"
 
 Cave::Map::Map(Game* game)
-	: m_game(game), m_tileRenderer(&game->imageManager), m_cosmicRenderer(&game->imageManager), m_loadingTileRenderer(&game->imageManager), m_invincibleText(game, 2)
+	: m_game(game), m_tileRenderer(&game->imageManager), m_cosmicRenderer(&game->imageManager), m_loadingTileRenderer(&game->imageManager), m_invincibleText(game, 2), m_pyrobeText(game, 2)
 {
 	m_playerJimIndex.fill(OUT_OF_BOUNDS_INDEX);
 	m_playerJimIndexAtTickStart.fill(OUT_OF_BOUNDS_INDEX);
 	m_playerExited.fill(false);
 	m_playerInvincible.fill(0);
+	m_playerPyrobe.fill(0);
+	m_playerPyrobeShootWait.fill(0);
 	m_playerHollow.fill(0);
 	m_playerBombs.fill(0);
 	m_playerGateCombo.fill(false);
@@ -40,6 +42,9 @@ void Cave::Map::load() {
 	}
 	if (!m_invincibleText.load(Image::Texture::GameFont, { 16, 32 })) {
 		throw std::runtime_error("Error: Unable to load invincibility font.\n");
+	}
+	if (!m_pyrobeText.load(Image::Texture::GameFont, { 16, 32 })) {
+		throw std::runtime_error("Error: Unable to load pyrobe font.\n");
 	}
 	for (auto& nameText : m_playerNameText) {
 		if (!nameText.load(Image::Texture::GameFont, { 16, 32 }))
@@ -105,6 +110,8 @@ void Cave::Map::generateMap(const Cave::Properties* properties, const std::vecto
 	m_playerJimIndex.fill(OUT_OF_BOUNDS_INDEX);
 	m_playerExited.fill(false);
 	m_playerInvincible.fill(0);
+	m_playerPyrobe.fill(0);
+	m_playerPyrobeShootWait.fill(0);
 	m_playerHollow.fill(0);
 	m_playerBombs.fill(0);
 	m_playerGateCombo.fill(false);
@@ -124,6 +131,8 @@ void Cave::Map::generateMap(const Cave::Properties* properties, const std::vecto
 			inflateCharger(index);
 		if (getEntityType(index) == Cave::Entity::Type::GallopQueen)
 			caveEntities[index].targetIndex = index;
+		if (getEntityType(index) == Cave::Entity::Type::Worm)
+			linkWormBodies(index);
 	}
 
 	for (const auto& well : wells) {
@@ -158,6 +167,10 @@ void Cave::Map::generateMap(const Cave::Properties* properties, const std::vecto
 	m_hollowCarried = 0;
 	m_timeBombsCarried = 0;
 	m_jimInvincibleFrames = 0;
+	m_jimPyrobeFrames = 0;
+	m_playerInvincible.fill(0);
+	m_playerPyrobe.fill(0);
+	m_playerPyrobeShootWait.fill(0);
 	m_jimGateComboHeld = false;
 
 	// Reset magic wall variables
@@ -195,6 +208,7 @@ void Cave::Map::generateMap(const Cave::Properties* properties, const std::vecto
 	// Set cave state to loading
 	m_state = Cave::State::Load;
 	m_editorPreview = false;
+	m_editorSimulate = false;
 	m_pegulFuseHunt = false;
 	m_chaosFreezeTicks = 0;
 
@@ -208,6 +222,22 @@ void Cave::Map::setEditorMode() {
 	std::fill(m_loaded.begin(), m_loaded.end(), true);
 	m_state = Cave::State::Pause;
 	m_editorPreview = true;
+	m_editorSimulate = false;
+}
+
+void Cave::Map::setEditorSimulate(bool enabled) {
+	m_editorSimulate = enabled;
+	if (enabled) {
+		m_state = Cave::State::Play;
+		return;
+	}
+	m_state = Cave::State::Pause;
+	if (m_game->soundManager.isPlaying(Sound::Effect::Dig))
+		m_game->soundManager.stop(Sound::Effect::Dig);
+	if (m_game->soundManager.isPlaying(Sound::Effect::MagicWall))
+		m_game->soundManager.stop(Sound::Effect::MagicWall);
+	if (m_game->soundManager.isPlaying(Sound::Effect::Amoeba))
+		m_game->soundManager.stop(Sound::Effect::Amoeba);
 }
 
 void Cave::Map::prepareForPlay() {
@@ -276,7 +306,7 @@ void Cave::Map::ensureCosmicUnder() {
 }
 
 void Cave::Map::hoistWandererCosmics() {
-	if (m_editorPreview) return;
+	if (editorIdle()) return;
 	ensureCosmicUnder();
 	for (int i = 0; i < width * height; ++i) {
 		if (!Cave::Entity::Cosmic::isWanderer(getEntityType(i))) continue;
@@ -476,8 +506,12 @@ void Cave::Map::enterCavePlay() {
 }
 
 void Cave::Map::placeEntity(const int& index, Cave::Entity::Base& entity) {
-	if (!inBounds(index) || getEntityTransitioning(index)) {
+	if (!inBounds(index)) {
 		return;
+	}
+	if (getEntityTransitioning(index)) {
+		if (!m_editorSimulate) return;
+		caveEntities[index].clearTransition();
 	}
 	if (entity.getType() == Cave::Entity::Type::Charger && !canPlaceCharger(index)) {
 		return;
@@ -503,6 +537,12 @@ void Cave::Map::placeEntity(const int& index, Cave::Entity::Base& entity) {
 	else if (prev == Cave::Entity::Type::PufferBody) {
 		blockedPuffer = caveEntities[index].targetIndex;
 	}
+	else if (prev == Cave::Entity::Type::Worm) {
+		clearWorm(index, index);
+	}
+	else if (prev == Cave::Entity::Type::WormBody) {
+		clearWorm(index, index);
+	}
 	caveEntities[index] = entity;
 
 	if (inBounds(blockedPuffer) && getEntityType(blockedPuffer) == Cave::Entity::Type::Puffer)
@@ -516,6 +556,9 @@ void Cave::Map::placeEntity(const int& index, Cave::Entity::Base& entity) {
 	if (getEntityType(index) == Cave::Entity::Type::Charger) {
 		evictOverlappingChargers(index);
 		inflateCharger(index);
+	}
+	if (getEntityType(index) == Cave::Entity::Type::Worm) {
+		spawnWormBodies(index);
 	}
 	if (getEntityType(index) == Cave::Entity::Type::GallopQueen) {
 		caveEntities[index].targetIndex = index;

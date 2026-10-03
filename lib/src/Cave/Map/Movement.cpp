@@ -22,6 +22,7 @@ bool Cave::Map::moveEntityTo(const int& sourceIndex, const int& destinationIndex
 
 	handleBoulderRoll(sourceIndex, direction);
 
+	const bool vacateFallable = isFallableEntity(sourceIndex);
 	const bool dug = Cave::Entity::isDirtLike(getEntityType(destinationIndex));
 
 	Cave::Entity::Animation sourceAnimation = caveEntities[sourceIndex].getAnimation();
@@ -36,6 +37,9 @@ bool Cave::Map::moveEntityTo(const int& sourceIndex, const int& destinationIndex
 	if (slideInc < 1) slideInc = 4;
 	caveEntities[sourceIndex].applyAwayTransition(direction, sourceAnimation, slideInc);
 	caveEntities[destinationIndex].applyIntoTransition(direction, destinationAnimation, slideInc);
+	if (vacateFallable
+		&& sourceIndex >= 0 && sourceIndex < static_cast<int>(m_fallableVacated.size()))
+		m_fallableVacated[static_cast<size_t>(sourceIndex)] = 1;
 	if (dug) notifyFusion5Stimulus(destinationIndex);
 
 	return true;

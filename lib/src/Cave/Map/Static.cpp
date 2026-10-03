@@ -2,7 +2,7 @@
 
 void Cave::Map::updateAmoeba(const int& index) {
 	updateEntityAnimation(index);
-	if (m_editorPreview) return;
+	if (editorIdle()) return;
 
 	// Amoeba will turn into boulders if amoeba grwoth surpasses max growth limit
 	if (m_amoebaSurpassedMaxGrowth) {
@@ -64,7 +64,7 @@ bool Cave::Map::handleTrappedAmoeba(const int& index) {
 
 void Cave::Map::updatePlasma(const int& index) {
 	updateEntityAnimation(index);
-	if (m_editorPreview) return;
+	if (editorIdle()) return;
 
 	// Random chance to create a new plasma in each direction
 	for (auto& direction : Cave::Entity::ALL_DIRECTIONS) {
@@ -78,7 +78,7 @@ void Cave::Map::updatePlasma(const int& index) {
 }
 
 void Cave::Map::updateChum(const int& index) {
-	if (m_editorPreview) return;
+	if (editorIdle()) return;
 	for (auto& direction : Cave::Entity::ALL_DIRECTIONS) {
 		int dest = getIndex(index, direction);
 		if (hasTrait(Cave::Entity::Trait::Empty, dest) && Utils::randomInteger(0, 1000) <= m_chumGrowthSpeed) {
@@ -91,7 +91,7 @@ void Cave::Map::updateChum(const int& index) {
 
 void Cave::Map::updateLava(const int& index) {
 	updateEntityAnimation(index);
-	if (m_editorPreview) return;
+	if (editorIdle()) return;
 	for (auto& direction : Cave::Entity::ALL_DIRECTIONS) {
 		int dest = getIndex(index, direction);
 		if (hasTrait(Cave::Entity::Trait::Empty, dest) && Utils::randomInteger(0, 1000) <= m_lavaGrowthSpeed) {
@@ -104,7 +104,7 @@ void Cave::Map::updateLava(const int& index) {
 
 void Cave::Map::updateFire(const int& index) {
 	updateEntityAnimation(index);
-	if (m_editorPreview) return;
+	if (editorIdle()) return;
 	if (caveEntities[index].extra > 0)
 		caveEntities[index].extra--;
 	if (caveEntities[index].extra <= 0)
@@ -121,20 +121,24 @@ void Cave::Map::updateExplosion(const int& index) {
 void Cave::Map::updateHorizontalWall(const int& index) {
 	for (auto& direction : Cave::Entity::HORIZONTAL_DIRECTIONS) {
 		int newWall = getIndex(index, direction);
-		if (hasTrait(Cave::Entity::Trait::Empty, newWall)) {
-			setEntity(newWall, Cave::Entity::HorizontalWall());
-			m_game->soundManager.play(Sound::Effect::Drop);
-		}
+		if (!hasTrait(Cave::Entity::Trait::Empty, newWall)) continue;
+		if (newWall >= 0 && newWall < static_cast<int>(m_fallableVacated.size())
+			&& m_fallableVacated[static_cast<size_t>(newWall)] != 0)
+			continue;
+		setEntity(newWall, Cave::Entity::HorizontalWall());
+		m_game->soundManager.play(Sound::Effect::Drop);
 	}
 }
 
 void Cave::Map::updateVerticalWall(const int& index) {
 	for (auto& direction : Cave::Entity::VERTICAL_DIRECTIONS) {
 		int newWall = getIndex(index, direction);
-		if (hasTrait(Cave::Entity::Trait::Empty, newWall)) {
-			setEntity(newWall, Cave::Entity::VerticalWall());
-			m_game->soundManager.play(Sound::Effect::Drop);
-		}
+		if (!hasTrait(Cave::Entity::Trait::Empty, newWall)) continue;
+		if (newWall >= 0 && newWall < static_cast<int>(m_fallableVacated.size())
+			&& m_fallableVacated[static_cast<size_t>(newWall)] != 0)
+			continue;
+		setEntity(newWall, Cave::Entity::VerticalWall());
+		m_game->soundManager.play(Sound::Effect::Drop);
 	}
 }
 
@@ -175,7 +179,7 @@ void Cave::Map::updateGate(const int& index) {
 		: Cave::Entity::Gate::FRAME_COUNT) - 1;
 
 	if (priv && mode == Cave::Entity::Gate::MODE_OPEN) {
-		if (m_editorPreview) return;
+		if (editorIdle()) return;
 		if (gate.extra > 0)
 			--gate.extra;
 		if (gate.extra <= 0)
@@ -332,7 +336,7 @@ void Cave::Map::tickCoveredPrivateGates() {
 
 void Cave::Map::updateVaultButton(const int& index) {
 	if (getEntityType(index) != Cave::Entity::Type::VaultButton) return;
-	if (m_editorPreview) return;
+	if (editorIdle()) return;
 
 	auto& button = caveEntities[index];
 	const int mode = button.spawnCredit;

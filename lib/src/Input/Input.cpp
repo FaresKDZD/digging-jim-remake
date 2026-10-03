@@ -1,5 +1,7 @@
 #include "Input/Input.h"
 
+#include <algorithm>
+
 namespace {
 
 bool isWasd(sf::Keyboard::Scan scan) {
@@ -18,6 +20,18 @@ bool isJimAction(Input::Action action) {
         || action == Input::Action::SelfDestruct;
 }
 
+bool altOrWinHeld() {
+    return sf::Keyboard::isKeyPressed(sf::Keyboard::Scan::LAlt)
+        || sf::Keyboard::isKeyPressed(sf::Keyboard::Scan::RAlt)
+        || sf::Keyboard::isKeyPressed(sf::Keyboard::Scan::LSystem)
+        || sf::Keyboard::isKeyPressed(sf::Keyboard::Scan::RSystem);
+}
+
+bool isSelfDestructKey(sf::Keyboard::Scan scan, Input::Action action) {
+    return action == Input::Action::SelfDestruct
+        || scan == sf::Keyboard::Scan::Tab;
+}
+
 }
 
 void Input::System::latchIfJimAction(Action action) {
@@ -30,13 +44,20 @@ void Input::System::handleEvent(const sf::Event& event) {
         const bool wasd = isWasd(keyPressed->scancode);
         if (m_ignoreWasd && wasd) return;
         for (auto& [key, action] : m_keyMap) {
-            if (keyPressed->scancode == key) {
-                m_pressedActions.insert(action);
-                if (!m_heldActions.count(action))
-                    latchIfJimAction(action);
-                m_heldActions.insert(action);
-                m_keyboardEventOccurred = true;
+            if (keyPressed->scancode != key) continue;
+            if (isSelfDestructKey(keyPressed->scancode, action)
+                && (keyPressed->alt || keyPressed->system
+                    || altOrWinHeld() || m_blockSelfDestructUntilTabUp
+                    || m_selfDestructSuppressFrames > 0)) {
+                m_blockSelfDestructUntilTabUp = true;
+                m_selfDestructSuppressFrames = std::max(m_selfDestructSuppressFrames, 24);
+                continue;
             }
+            m_pressedActions.insert(action);
+            if (!m_heldActions.count(action))
+                latchIfJimAction(action);
+            m_heldActions.insert(action);
+            m_keyboardEventOccurred = true;
         }
     }
     if (const auto keyReleased = event.getIf<sf::Event::KeyReleased>()) {
@@ -66,6 +87,73 @@ void Input::System::handleEvent(const sf::Event& event) {
             }
         }
     }
+}
+
+void Input::System::suppressSelfDestructUntilTabReleased() {
+    m_blockSelfDestructUntilTabUp = true;
+    m_selfDestructSuppressFrames = 24;
+    m_heldActions.erase(Action::SelfDestruct);
+    m_pressedActions.erase(Action::SelfDestruct);
+    m_latchedActions.erase(Action::SelfDestruct);
+}
+
+void Input::System::syncKeyboard(bool acceptInput) {
+    if (m_selfDestructSuppressFrames > 0)
+        --m_selfDestructSuppressFrames;
+
+    const bool tabDown = sf::Keyboard::isKeyPressed(sf::Keyboard::Scan::Tab);
+    const bool altDown = altOrWinHeld();
+    if (altDown && tabDown) {
+        m_blockSelfDestructUntilTabUp = true;
+        m_selfDestructSuppressFrames = std::max(m_selfDestructSuppressFrames, 24);
+    }
+    if (!tabDown)
+        m_blockSelfDestructUntilTabUp = false;
+
+    const bool blockSelfDestruct = altDown
+        || m_blockSelfDestructUntilTabUp
+        || m_selfDestructSuppressFrames > 0;
+
+    if (!acceptInput) {
+        for (const auto& [scan, action] : m_keyMap) {
+            m_heldActions.erase(action);
+            m_pressedActions.erase(action);
+            m_latchedActions.erase(action);
+        }
+        return;
+    }
+
+    std::set<Action> down;
+    for (const auto& [scan, action] : m_keyMap) {
+        if (m_ignoreWasd && isWasd(scan)) continue;
+        if (isSelfDestructKey(scan, action) && blockSelfDestruct)
+            continue;
+        if (sf::Keyboard::isKeyPressed(scan))
+            down.insert(action);
+    }
+
+    std::set<Action> keyboardActions;
+    for (const auto& [scan, action] : m_keyMap)
+        keyboardActions.insert(action);
+
+    bool anyDown = false;
+    for (Action action : keyboardActions) {
+        const bool now = down.count(action) != 0;
+        const bool held = m_heldActions.count(action) != 0;
+        if (now) {
+            anyDown = true;
+            if (!held) {
+                m_pressedActions.insert(action);
+                latchIfJimAction(action);
+            }
+            m_heldActions.insert(action);
+        }
+        else {
+            m_heldActions.erase(action);
+        }
+    }
+    if (anyDown)
+        m_keyboardEventOccurred = true;
 }
 
 void Input::System::handleJoystick() {

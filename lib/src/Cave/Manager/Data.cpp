@@ -97,6 +97,12 @@ Cave::Entity::Base Cave::Data::getTileEntity(const char& tile) {
 	case 96: return Cave::Entity::Hellgull();
 	case 97: return Cave::Entity::Charia();
 	case 98: return Cave::Entity::Pyrozo(Cave::Entity::Type::PyrozoExtinguished);
+	case 99: return Cave::Entity::ObsidianWall();
+	case 100: return Cave::Entity::ObsidianWallCracked();
+	case 101: return Cave::Entity::Worm();
+	case 102: return Cave::Entity::WormBody();
+	case 103: return Cave::Entity::HotBoulderEater();
+	case 104: return Cave::Entity::Pyrobe();
 	default:
 		return Cave::Entity::Space();
 	}

@@ -9,8 +9,10 @@ namespace Cave::Entity {
      */
     class Space : public Base {
     public:
+        static constexpr int TEXTURE_INDEX = 223;
+
         Space()
-            : Base(Type::Space, 223) {
+            : Base(Type::Space, TEXTURE_INDEX) {
             addTrait(Trait::Static);
             addTrait(Trait::Empty);
             addTrait(Trait::Free);

@@ -153,6 +153,35 @@ namespace Cave::Entity {
 			return (m_displacement >= 32);
 		}
 
+		/// @brief Pixel displacement of the slide (0-32).
+		int getDisplacement() const {
+			return m_displacement;
+		}
+
+		/// @brief Grid direction this slide travels.
+		Cave::Entity::Direction getMoveDirection() const {
+			switch (m_type) {
+			case TransitionType::MOVE_LEFT_AWAY:
+			case TransitionType::MOVE_LEFT_INTO:
+			case TransitionType::MOVE_LEFT_PUSH:
+				return Cave::Entity::Direction::LEFT;
+			case TransitionType::MOVE_RIGHT_AWAY:
+			case TransitionType::MOVE_RIGHT_INTO:
+			case TransitionType::MOVE_RIGHT_PUSH:
+				return Cave::Entity::Direction::RIGHT;
+			case TransitionType::MOVE_UP_AWAY:
+			case TransitionType::MOVE_UP_INTO:
+			case TransitionType::MOVE_UP_PUSH:
+				return Cave::Entity::Direction::UP;
+			case TransitionType::MOVE_DOWN_AWAY:
+			case TransitionType::MOVE_DOWN_INTO:
+			case TransitionType::MOVE_DOWN_PUSH:
+				return Cave::Entity::Direction::DOWN;
+			default:
+				return Cave::Entity::Direction::NO_DIRECTION;
+			}
+		}
+
 		/// @brief Pixel step per frame. 8 finishes a tile in half a tick.
 		void setDisplacementIncrement(int inc) {
 			m_inc = inc;

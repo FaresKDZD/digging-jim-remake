@@ -248,6 +248,21 @@ namespace Cave::Entity {
             return m_transition.has_value();
         }
 
+        /// @brief True when this tile is sliding into its cell.
+        bool isIntoTransition() const {
+            return m_transition && m_transition->isInto();
+        }
+
+        /// @brief Pixel displacement of the current slide (0-32).
+        int getTransitionDisplacement() const {
+            return m_transition ? m_transition->getDisplacement() : 32;
+        }
+
+        /// @brief Grid direction of the current slide.
+        Direction getTransitionDirection() const {
+            return m_transition ? m_transition->getMoveDirection() : Direction::NO_DIRECTION;
+        }
+
         /// @brief True when the entity draws fully in its cell (no slide, or slide complete).
         bool isFullyInTile() const {
             return !m_transition || m_transition->isFinished();

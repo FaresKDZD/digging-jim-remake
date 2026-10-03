@@ -13,10 +13,22 @@ namespace Cave::Entity {
      */
     class BoulderEater : public Base {
     public:
+        static constexpr int FRAME_BASE_BECOME = 1409;
+        static constexpr int FRAME_COUNT_BECOME = 3;
+        static constexpr int MODE_BECOMING = 1;
+
         BoulderEater()
             : Base(Type::BoulderEater, Animation{ getFrames(), Utils::randomInteger(0, 6) }) {
             addTrait(Trait::Crushable);
             direction = Cave::Entity::getRandomDirection();
+        }
+
+        static Animation becomeHotAnimation() {
+            std::vector<int> frames;
+            frames.reserve(FRAME_COUNT_BECOME);
+            for (int i = 0; i < FRAME_COUNT_BECOME; ++i)
+                frames.push_back(FRAME_BASE_BECOME + i);
+            return Animation{ std::move(frames), 0 };
         }
 
     private:

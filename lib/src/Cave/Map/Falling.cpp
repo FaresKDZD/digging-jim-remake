@@ -8,9 +8,28 @@ bool Cave::Map::isOpenForFall(const int& index) const {
 		|| isPassableGate(index);
 }
 
+int Cave::Map::fallableReservingCell(const int& cell) const {
+	if (!inBounds(cell) || !isOpenForFall(cell)) return OUT_OF_BOUNDS_INDEX;
+
+	const int above = getIndex(cell, Cave::Entity::Direction::UP);
+	if (inBounds(above) && isFallableEntity(above)
+		&& getEntityType(above) != Cave::Entity::Type::MagicBoulder) {
+		if (caveEntities[above].fallPending) return OUT_OF_BOUNDS_INDEX;
+		return above;
+	}
+
+	const int below = getIndex(cell, Cave::Entity::Direction::DOWN);
+	if (inBounds(below) && getEntityType(below) == Cave::Entity::Type::MagicBoulder) {
+		if (caveEntities[below].fallPending) return OUT_OF_BOUNDS_INDEX;
+		return below;
+	}
+
+	return OUT_OF_BOUNDS_INDEX;
+}
+
 void Cave::Map::updateFallableEntity(const int& index) {
 	updateEntityAnimation(index);
-	if (m_editorPreview) return;
+	if (editorIdle()) return;
 
 	const Cave::Entity::Direction gravity = (getEntityType(index) == Cave::Entity::Type::MagicBoulder)
 		? Cave::Entity::Direction::UP
@@ -53,7 +72,8 @@ bool Cave::Map::handleEntityFalling(const int& index, const int& ahead, const Ca
 			if (!getEntityFalling(ahead)) {
 			const bool gem = hasTrait(Cave::Entity::Trait::Collectable, ahead)
 				|| getEntityType(ahead) == Cave::Entity::Type::HollowDiamond
-				|| getEntityType(ahead) == Cave::Entity::Type::Ruby;
+				|| getEntityType(ahead) == Cave::Entity::Type::Ruby
+				|| getEntityType(ahead) == Cave::Entity::Type::Pyrobe;
 				gem ?
 					m_game->soundManager.play(Sound::Effect::DiamondDrop) :
 					m_game->soundManager.play(Sound::Effect::Drop);
@@ -75,11 +95,10 @@ bool Cave::Map::handleEntityFalling(const int& index, const int& ahead, const Ca
 
 	if (caveEntities[index].fallPending) {
 		caveEntities[index].fallPending = false;
-		// Occupied hole: only keep the drop if someone walked under it.
-		// Resting on another fallable must not promote to a standstill land/crush.
-		if (inBounds(ahead)
-			&& (Cave::Entity::isPlayer(getEntityType(ahead))
-				|| (hasTrait(Cave::Entity::Trait::Crushable, ahead) && !isFallableEntity(ahead)))) {
+		// Occupied hole after the delay tick: Jim who walked under can still be crushed
+		// because fallables cannot enter an occupied cell. A monster that filled the gap
+		// is support, not a landing — only a real fall (airborne) should crush it.
+		if (inBounds(ahead) && Cave::Entity::isPlayer(getEntityType(ahead))) {
 			setEntityFalling(index, true);
 			caveEntities[index].airborne = true;
 		}
@@ -133,11 +152,22 @@ bool Cave::Map::handleEntityLanding(const int& index, const int& ahead) {
 	}
 
 	const Cave::Entity::Type landingType = getEntityType(index);
-	if ((landingType == Cave::Entity::Type::HotBoulder
+	const Cave::Entity::Type destType = getEntityType(ahead);
+	if ((landingType == Cave::Entity::Type::Bomb
+		|| landingType == Cave::Entity::Type::HotBoulder
 		|| landingType == Cave::Entity::Type::HotBoulderCracked
-		|| getEntityType(ahead) == Cave::Entity::Type::HotBoulder
-		|| getEntityType(ahead) == Cave::Entity::Type::HotBoulderCracked)
+		|| landingType == Cave::Entity::Type::FragileDiamond
+		|| destType == Cave::Entity::Type::HotBoulder
+		|| destType == Cave::Entity::Type::HotBoulderCracked
+		|| destType == Cave::Entity::Type::FragileDiamond)
 		&& !caveEntities[index].isFullyInTile()) {
+		return true;
+	}
+
+	if ((landingType == Cave::Entity::Type::FragileDiamond
+		|| destType == Cave::Entity::Type::FragileDiamond)
+		&& inBounds(ahead)
+		&& (getEntityFalling(ahead) || caveEntities[ahead].airborne)) {
 		return true;
 	}
 
@@ -185,7 +215,8 @@ bool Cave::Map::handleEntityLanding(const int& index, const int& ahead) {
 		if (aheadIsJim && (isJimInvincible(ahead) || jimSteppedIntoCellThisTick(ahead))) {
 			hasTrait(Cave::Entity::Trait::Collectable, index)
 				|| type == Cave::Entity::Type::HollowDiamond
-				|| type == Cave::Entity::Type::Ruby ?
+				|| type == Cave::Entity::Type::Ruby
+				|| type == Cave::Entity::Type::Pyrobe ?
 				m_game->soundManager.play(Sound::Effect::DiamondLand) :
 				m_game->soundManager.play(Sound::Effect::Land);
 			notifyFusion5Stimulus(index);
@@ -195,7 +226,8 @@ bool Cave::Map::handleEntityLanding(const int& index, const int& ahead) {
 			&& (getEntityTransitioning(ahead) || jimlinSteppedIntoCellThisTick(ahead))) {
 			hasTrait(Cave::Entity::Trait::Collectable, index)
 				|| type == Cave::Entity::Type::HollowDiamond
-				|| type == Cave::Entity::Type::Ruby ?
+				|| type == Cave::Entity::Type::Ruby
+				|| type == Cave::Entity::Type::Pyrobe ?
 				m_game->soundManager.play(Sound::Effect::DiamondLand) :
 				m_game->soundManager.play(Sound::Effect::Land);
 			notifyFusion5Stimulus(index);
@@ -254,7 +286,8 @@ bool Cave::Map::handleEntityLanding(const int& index, const int& ahead) {
 	if (!landedOnFragileDiamond) {
 		hasTrait(Cave::Entity::Trait::Collectable, index)
 			|| type == Cave::Entity::Type::HollowDiamond
-			|| type == Cave::Entity::Type::Ruby ?
+			|| type == Cave::Entity::Type::Ruby
+			|| type == Cave::Entity::Type::Pyrobe ?
 			m_game->soundManager.play(Sound::Effect::DiamondLand) :
 			m_game->soundManager.play(Sound::Effect::Land);
 	}
@@ -386,13 +419,13 @@ void Cave::Map::updateJimlinBlock(const int& index) {
 		}
 	}
 	updateEntityAnimation(index);
-	if (m_editorPreview) return;
+	if (editorIdle()) return;
 	if (active)
 		tryJimlinBlockTransport(index);
 }
 
 bool Cave::Map::tryJimlinBlockTransport(const int& block) {
-	if (m_editorPreview) return false;
+	if (editorIdle()) return false;
 	if (!jimlinBlockAvailable(block))
 		return false;
 

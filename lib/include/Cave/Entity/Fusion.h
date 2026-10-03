@@ -16,7 +16,7 @@ namespace Cave::Entity {
      * Fusion 2 dies in a 5-wide horizontal blast with a 3-tile vertical arm at the center.
      * Fusion 3 survives one explosion and then uses a damaged look.
      * Fusion 4 plants timed bombs on bombable tiles in the 3x3 around a
-     * diamond variant or exit, then waits outside the blast. It never steps
+     * diamond (including hollow and fragile), or an exit, then waits outside the blast. It never steps
      * into the 3x3 of any primed time bomb. If those plant targets are
      * unreachable and there is no open path to Jim, it wanders like a Protozo.
      * Fusion 5 idles like a half-speed Protozo and aggro-pathfinds to cave events.

@@ -3,8 +3,13 @@
 void Cave::Map::killPlayerAt(const int& index) {
 	if (!inBounds(index)) return;
 	const int pid = caveEntities[index].spawnCredit;
-	if (pid >= 0 && pid < Net::MaxPlayers) m_playerInvincible[static_cast<size_t>(pid)] = 0;
+	if (pid >= 0 && pid < Net::MaxPlayers) {
+		m_playerInvincible[static_cast<size_t>(pid)] = 0;
+		m_playerPyrobe[static_cast<size_t>(pid)] = 0;
+		m_playerPyrobeShootWait[static_cast<size_t>(pid)] = 0;
+	}
 	m_jimInvincibleFrames = 0;
+	m_jimPyrobeFrames = 0;
 	caveEntities[index].removeTrait(Cave::Entity::Trait::Indestructible);
 	createExplosion(index);
 }
@@ -19,7 +24,10 @@ void Cave::Map::updateJim(const int& index) {
 	}
 	updateEntityAnimation(index);
 
-	if (!isJimInvincible(index) && isAdjacentTo(index, Cave::Entity::Type::Lava)) {
+	if (pid >= 0 && pid < Net::MaxPlayers && m_playerPyrobeShootWait[static_cast<size_t>(pid)] > 0)
+		m_playerPyrobeShootWait[static_cast<size_t>(pid)]--;
+
+	if (!isJimHazardImmune(index) && isAdjacentTo(index, Cave::Entity::Type::Lava)) {
 		killPlayerAt(index);
 		return;
 	}
@@ -34,6 +42,17 @@ void Cave::Map::updateJim(const int& index) {
 		moveDir = Cave::Entity::Direction::RIGHT;
 	else if (in.left)
 		moveDir = Cave::Entity::Direction::LEFT;
+
+	if (isJimPyrobe(index) && collect && moveDir != Cave::Entity::Direction::NO_DIRECTION) {
+		const int inFront = getIndex(index, moveDir);
+		const bool gateAhead = inFront != OUT_OF_BOUNDS_INDEX
+			&& getEntityType(inFront) == Cave::Entity::Type::Gate;
+		if (!gateAhead) {
+			tryJimShootFireball(index, moveDir);
+			updateJimIdle(index);
+			return;
+		}
+	}
 
 	bool comboActive = false;
 	if (collect && moveDir != Cave::Entity::Direction::NO_DIRECTION) {
@@ -180,17 +199,26 @@ bool Cave::Map::tryJimWrapPush(const int& index, const int& pushed, const int& d
 
 bool Cave::Map::tryJimWrapWalk(const int& index, const int& dest, const Cave::Entity::Direction& direction, bool snapCamera) {
 	if (!isBorderOpening(dest) || dest == index) return false;
+	if (fallableReservingCell(dest) != OUT_OF_BOUNDS_INDEX) return false;
 	if (getEntityTransitioning(index) || getEntityTransitioning(dest)) return false;
 	const bool inShip = Cave::Entity::isActiveJimlinShip(getEntityType(index));
-	if (inShip && hasTrait(Cave::Entity::Trait::Collectable, dest)) return false;
+	if (inShip && (hasTrait(Cave::Entity::Trait::Collectable, dest)
+		|| getEntityType(dest) == Cave::Entity::Type::Ruby
+		|| getEntityType(dest) == Cave::Entity::Type::Pyrobe))
+		return false;
 	const bool intoFire = getEntityType(dest) == Cave::Entity::Type::Fire;
+	const bool intoPyrobe = getEntityType(dest) == Cave::Entity::Type::Pyrobe;
 	applyJimWrapLandingEffects(dest);
 	setJimMoveAmination(index);
 	if (!moveEntityTo(index, dest, direction, digSlideInc(dest))) return false;
 	noteJimMoved(dest);
 	m_jimMovedThisTick = true;
 	if (snapCamera) m_snapCameraToJim = true;
-	if (intoFire && !isJimInvincible(dest))
+	if (intoPyrobe) {
+		grantPyrobe(dest);
+		m_game->soundManager.play(Sound::Effect::Collect);
+	}
+	if (intoFire && !isJimHazardImmune(dest))
 		killPlayerAt(dest);
 	return true;
 }
@@ -223,12 +251,17 @@ bool Cave::Map::handleJimTraverse(const int& index, const int& inFront, const bo
 		(facing == Cave::Entity::Facing::NEUTRAL) ? setJimMoveAmination(index) : setJimPushAmination(index);
 		return false;
 	}
+	if (fallableReservingCell(inFront) != OUT_OF_BOUNDS_INDEX) {
+		(facing == Cave::Entity::Facing::NEUTRAL) ? setJimMoveAmination(index) : setJimPushAmination(index);
+		return true;
+	}
 	const bool inShip = Cave::Entity::isActiveJimlinShip(getEntityType(index));
 	bool collectable = hasTrait(Cave::Entity::Trait::Collectable, inFront);
 	bool hollow = getEntityType(inFront) == Cave::Entity::Type::HollowDiamond;
 	bool timeBomb = getEntityType(inFront) == Cave::Entity::Type::TimeBomb;
 	bool ruby = getEntityType(inFront) == Cave::Entity::Type::Ruby;
-	if (inShip && (collectable || ruby || hollow || timeBomb)) {
+	bool pyrobe = getEntityType(inFront) == Cave::Entity::Type::Pyrobe;
+	if (inShip && (collectable || ruby || pyrobe || hollow || timeBomb)) {
 		return true;
 	}
 	setJimMoveAmination(index);
@@ -248,6 +281,10 @@ bool Cave::Map::handleJimTraverse(const int& index, const int& inFront, const bo
 					m_playerInvincible[static_cast<size_t>(pid)] = Cave::Entity::Ruby::INVINCIBLE_FRAMES;
 				m_game->soundManager.play(Sound::Effect::Collect);
 				m_game->sendSignal(GameSignal::CollectRuby);
+			}
+			else if (pyrobe) {
+				grantPyrobe(index);
+				m_game->soundManager.play(Sound::Effect::Collect);
 			}
 			else if (hollow) {
 				m_hollowCarried++;
@@ -296,6 +333,10 @@ bool Cave::Map::handleJimTraverse(const int& index, const int& inFront, const bo
 			m_game->soundManager.play(Sound::Effect::Collect);
 			m_game->sendSignal(GameSignal::CollectRuby);
 		}
+		else if (pyrobe) {
+			grantPyrobe(inFront);
+			m_game->soundManager.play(Sound::Effect::Collect);
+		}
 		else if (hollow) {
 			m_hollowCarried++;
 			m_game->soundManager.play(Sound::Effect::Collect);
@@ -308,14 +349,67 @@ bool Cave::Map::handleJimTraverse(const int& index, const int& inFront, const bo
 		else if (digging) {
 			m_traversingDirt = true;
 		}
-		if (intoFire && !isJimInvincible(inFront))
+		if (intoFire && !isJimHazardImmune(inFront))
 			killPlayerAt(inFront);
 		return true;
 	}
 	return false;
 }
 
+void Cave::Map::grantPyrobe(const int& jimIndex) {
+	m_jimPyrobeFrames = Cave::Entity::Pyrobe::ABILITY_FRAMES;
+	if (!inBounds(jimIndex)) return;
+	const int pid = caveEntities[jimIndex].spawnCredit;
+	if (pid >= 0 && pid < Net::MaxPlayers)
+		m_playerPyrobe[static_cast<size_t>(pid)] = Cave::Entity::Pyrobe::ABILITY_FRAMES;
+}
+
+bool Cave::Map::tryJimShootFireball(const int& index, const Cave::Entity::Direction& direction) {
+	if (!isJimPyrobe(index)) return false;
+	if (direction == Cave::Entity::Direction::NO_DIRECTION) return false;
+	if (getEntityTransitioning(index)) return false;
+
+	const int pid = caveEntities[index].spawnCredit;
+	const int slot = (pid >= 0 && pid < Net::MaxPlayers) ? pid : 0;
+	if (m_playerPyrobeShootWait[static_cast<size_t>(slot)] > 0) return false;
+
+	const int dest = getIndex(index, direction);
+	if (dest == OUT_OF_BOUNDS_INDEX) return false;
+	if (getEntityType(dest) == Cave::Entity::Type::Jim) return false;
+	if (getEntityTransitioning(dest)) return false;
+
+	setEntityDirection(index, direction);
+	m_playerPyrobeShootWait[static_cast<size_t>(slot)] = Cave::Entity::Pyrobe::SHOOT_COOLDOWN_TICKS;
+	if (hasTrait(Cave::Entity::Trait::Empty, dest)) {
+		setEntity(dest, Cave::Entity::Fireball(direction));
+		m_game->soundManager.play(Sound::Effect::Drop);
+		return true;
+	}
+	m_game->soundManager.play(Sound::Effect::Drop);
+	createExplosion(dest);
+	return true;
+}
+
 bool Cave::Map::handleJimPush(const int& index, const int& inFront, const bool& collectMode, const Cave::Entity::Direction& direction) {
+	const int reserved = fallableReservingCell(inFront);
+	if (reserved != OUT_OF_BOUNDS_INDEX) {
+		if ((direction == Cave::Entity::Direction::UP || direction == Cave::Entity::Direction::DOWN)
+			&& getEntityType(reserved) != Cave::Entity::Type::Fan) {
+			setJimMoveAmination(index);
+			return true;
+		}
+		if (!hasTrait(Cave::Entity::Trait::Empty, inFront, direction)) {
+			if (collectMode) {
+				setJimMoveAmination(index);
+				return true;
+			}
+			setJimPushAmination(index);
+			return true;
+		}
+		m_game->inputSystem.increasePushTimer();
+		setJimPushAmination(index);
+		return true;
+	}
 	if (!hasTrait(Cave::Entity::Trait::Pushable, inFront)) {
 		return false;
 	}

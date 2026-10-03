@@ -1,5 +1,6 @@
 #include "Cave/Map/Map.h"
 #include "Utils/Random.h"
+#include <algorithm>
 
 void Cave::Map::handleBoulderRoll(const int& index, const Cave::Entity::Direction& direction) {
 	if ((direction == Cave::Entity::Direction::LEFT || direction == Cave::Entity::Direction::RIGHT) && getEntityType(index) == Cave::Entity::Type::Boulder) {
@@ -86,8 +87,20 @@ void Cave::Map::createSingularityExplosion(const int& origin) {
 
 	std::vector<int> bombIndices;
 	std::vector<int> fusion2Indices;
+	std::vector<int> wormFollowup;
 	const int ox = origin % width;
 	const int oy = origin / width;
+
+	for (int dy = -1; dy <= 1; ++dy) {
+		for (int dx = -1; dx <= 1; ++dx) {
+			const int nx = ox + dx;
+			const int ny = oy + dy;
+			if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+			const int explosionIndex = ny * width + nx;
+			if (Cave::Entity::isWorm(getEntityType(explosionIndex)))
+				collectWormParts(explosionIndex, wormFollowup);
+		}
+	}
 
 	for (int dy = -1; dy <= 1; ++dy) {
 		for (int dx = -1; dx <= 1; ++dx) {
@@ -99,7 +112,7 @@ void Cave::Map::createSingularityExplosion(const int& origin) {
 			if (explosionIndex != origin && hasTrait(Cave::Entity::Trait::Indestructible, explosionIndex))
 				continue;
 
-			if (getEntityType(explosionIndex) == Cave::Entity::Type::Jim && isJimInvincible(explosionIndex))
+			if (getEntityType(explosionIndex) == Cave::Entity::Type::Jim && isJimHazardImmune(explosionIndex))
 				continue;
 
 			if (isFusion3Armored(explosionIndex)) {
@@ -116,6 +129,9 @@ void Cave::Map::createSingularityExplosion(const int& origin) {
 				caveEntities[previousIndex].terminatePreviousTransition();
 			caveEntities[explosionIndex].terminateCurrentTransition();
 
+			if (absorbObsidianExplosion(explosionIndex))
+				continue;
+
 			const Cave::Entity::Type type = getEntityType(explosionIndex);
 			const bool playerPilotShip = Cave::Entity::isActiveJimlinShip(type)
 				&& !isJimlinPilotShip(explosionIndex);
@@ -130,7 +146,6 @@ void Cave::Map::createSingularityExplosion(const int& origin) {
 			if (type == Cave::Entity::Type::Jim || playerPilotShip) {
 				m_game->sendSignal(GameSignal::CaveFail);
 				m_state = Cave::State::Fail;
-				m_resetCameraPosition = false;
 			}
 		}
 	}
@@ -142,11 +157,44 @@ void Cave::Map::createSingularityExplosion(const int& origin) {
 		createExplosion(bombIndex, false);
 	for (int fusion2Index : fusion2Indices)
 		createHorizontalExplosion(fusion2Index);
+
+	if (!wormFollowup.empty()) {
+		std::sort(wormFollowup.begin(), wormFollowup.end());
+		wormFollowup.erase(std::unique(wormFollowup.begin(), wormFollowup.end()), wormFollowup.end());
+		for (int part : wormFollowup) {
+			if (inBounds(part) && Cave::Entity::isWorm(getEntityType(part)))
+				createExplosion(part);
+		}
+	}
+}
+
+bool Cave::Map::absorbObsidianExplosion(const int& index) {
+	if (!inBounds(index) || getEntityType(index) != Cave::Entity::Type::ObsidianWall)
+		return false;
+	int variant = 0;
+	const auto& anim = caveEntities[index].animation();
+	if (!anim.frames.empty()) {
+		int frame = anim.currentFrame;
+		if (frame < 0 || frame >= static_cast<int>(anim.frames.size()))
+			frame = 0;
+		variant = std::clamp(
+			anim.frames[static_cast<size_t>(frame)] - Cave::Entity::ObsidianWall::FRAME_BASE,
+			0, Cave::Entity::ObsidianWall::FRAME_COUNT - 1);
+	}
+	setEntity(index, Cave::Entity::ObsidianWallCracked(variant));
+	return true;
 }
 
 void Cave::Map::detonateCells(const int& origin, const std::vector<int>& cells, bool caveGullExplosion, bool rubyExplosion) {
 	std::vector<int> bombIndices;
 	std::vector<int> fusion2Indices;
+	std::vector<int> wormFollowup;
+
+	for (int explosionIndex : cells) {
+		if (!inBounds(explosionIndex)) continue;
+		if (Cave::Entity::isWorm(getEntityType(explosionIndex)))
+			collectWormParts(explosionIndex, wormFollowup);
+	}
 
 	for (int explosionIndex : cells) {
 		if (!inBounds(explosionIndex) || !inBounds(origin) || width <= 0) continue;
@@ -164,7 +212,7 @@ void Cave::Map::detonateCells(const int& origin, const std::vector<int>& cells, 
 			continue;
 		}
 
-		if (getEntityType(explosionIndex) == Cave::Entity::Type::Jim && isJimInvincible(explosionIndex)) {
+		if (getEntityType(explosionIndex) == Cave::Entity::Type::Jim && isJimHazardImmune(explosionIndex)) {
 			continue;
 		}
 
@@ -183,6 +231,9 @@ void Cave::Map::detonateCells(const int& origin, const std::vector<int>& cells, 
 			caveEntities[previousIndex].terminatePreviousTransition();
 		}
 		caveEntities[explosionIndex].terminateCurrentTransition();
+
+		if (absorbObsidianExplosion(explosionIndex))
+			continue;
 
 		Cave::Entity::Type type = getEntityType(explosionIndex);
 		const bool playerPilotShip = Cave::Entity::isActiveJimlinShip(type)
@@ -207,7 +258,6 @@ void Cave::Map::detonateCells(const int& origin, const std::vector<int>& cells, 
 		if (type == Cave::Entity::Type::Jim || playerPilotShip) {
 			m_game->sendSignal(GameSignal::CaveFail);
 			m_state = Cave::State::Fail;
-			m_resetCameraPosition = false;
 		}
 	}
 
@@ -219,6 +269,15 @@ void Cave::Map::detonateCells(const int& origin, const std::vector<int>& cells, 
 	}
 	for (int fusion2Index : fusion2Indices) {
 		createHorizontalExplosion(fusion2Index);
+	}
+
+	if (!wormFollowup.empty()) {
+		std::sort(wormFollowup.begin(), wormFollowup.end());
+		wormFollowup.erase(std::unique(wormFollowup.begin(), wormFollowup.end()), wormFollowup.end());
+		for (int part : wormFollowup) {
+			if (inBounds(part) && Cave::Entity::isWorm(getEntityType(part)))
+				createExplosion(part);
+		}
 	}
 }
 

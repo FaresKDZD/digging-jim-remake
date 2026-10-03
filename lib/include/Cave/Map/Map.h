@@ -206,8 +206,8 @@ namespace Cave {
          * @brief Checks and manages the camera reset flag.
          *
          * Ensures that the camera reset logic only triggers once.
-         * Only scenario in which we do not want the camera to be reset,
-         * is if Jim died and we are restarting the cave.
+         * After a death cover animation, this is true so the camera teleports
+         * near the start door before the respawn load animation, same as a fresh cave.
          *
          * @return true if the camera should be reset on this call, false otherwise.
          */
@@ -242,6 +242,15 @@ namespace Cave {
         /// @brief True while the cave is shown in the level editor (paused preview).
         bool isEditorPreview() const { return m_editorPreview; }
 
+        /// @brief True when the editor preview is frozen (no physics/AI). False during Simulate.
+        bool editorIdle() const { return m_editorPreview && !m_editorSimulate; }
+
+        /// @brief Run or stop in-editor physics simulation without leaving the editor.
+        void setEditorSimulate(bool enabled);
+
+        /// @brief True while the editor Simulate toggle is active.
+        bool isEditorSimulate() const { return m_editorSimulate; }
+
         /**
          * @brief Converts editor-state entities to their correct in-game initial states.
          *
@@ -253,6 +262,10 @@ namespace Cave {
         /// @brief True if Jim cannot currently be killed by explosions or falling objects.
         bool isJimInvincible() const;
         bool isJimInvincible(const int& index) const;
+        bool isJimPyrobe() const;
+        bool isJimPyrobe(const int& index) const;
+        bool isJimHazardImmune() const;
+        bool isJimHazardImmune(const int& index) const;
 
         /// @brief Remaining ruby invincibility frames, or 0.
         int getJimInvincibleFrames() const;
@@ -620,7 +633,8 @@ namespace Cave {
          */
         void updateActiveEntity(const std::vector<int> indicies);
 
-        /// @brief Expand horizontal/vertical walls before plasma so they win empty cells.
+        /// @brief Fallables claim empty cells before expanding walls; walls still run before plasma.
+        void updateFallableEntities(const std::vector<int>& indicies);
         void updateExpandingWalls(const std::vector<int>& indicies);
         
         /**
@@ -715,6 +729,8 @@ namespace Cave {
          * @return True if traversal was successful, false otherwise.
          */
         bool handleJimTraverse(const int& index, const int& inFront, const bool& collectMode, const Cave::Entity::Facing& facing, const Cave::Entity::Direction& direction);
+        void grantPyrobe(const int& jimIndex);
+        bool tryJimShootFireball(const int& index, const Cave::Entity::Direction& direction);
 
         /// Walk off a border opening and appear in the matching hole on the opposite edge.
         bool handleJimBorderWrap(const int& index, const int& inFront, const bool& collectMode, const Cave::Entity::Facing& facing, const Cave::Entity::Direction& direction);
@@ -1063,6 +1079,19 @@ namespace Cave {
          */
         void updateCaveGull(const int& index);
         void updateHellgull(const int& index);
+        void updateWorm(const int& index);
+        void updateWormBody(const int& index);
+        bool tryMoveWorm(const int& index, Cave::Entity::Direction direction);
+        int reverseWorm(const int& head);
+        void linkWormBodies(const int& head);
+        void applyWormTailPose(const int& head);
+        void spawnWormBodies(const int& head);
+        void clearWorm(const int& index, int keepIndex = OUT_OF_BOUNDS_INDEX);
+        int wormHeadOf(const int& index) const;
+        void collectWormParts(const int& index, std::vector<int>& out) const;
+        std::vector<int> collectWormBodies(const int& head) const;
+        int findWormBodySpot(const int& from, const int& head, Cave::Entity::Direction prefer) const;
+        Cave::Entity::Direction directionBetween(const int& from, const int& to) const;
         
         /**
          * @brief Updates the Spinner enemy's behavior.
@@ -1107,6 +1136,8 @@ namespace Cave {
          * @param index The entity index of the Boulder Eater.
          */
         void updateBoulderEater(const int& index);
+        void updateHotBoulderEater(const int& index);
+        bool tryWanderBoulderEater(const int& index, bool canEat);
         
        /**
          * @brief Updates the Aggressor enemy's behavior.
@@ -1426,6 +1457,9 @@ namespace Cave {
          */
         bool tryMoveEnemy(const int& index, const Cave::Entity::Type& type, const Cave::Entity::Direction& direction);
 
+        /// @brief Classic left/right wall-follow into empty.
+        void tryWallFollowEmpty(const int& index, bool clockwise, int slideInc = 4);
+
         // -----------------------------
         // - Static Tile-Type Behavior -
         // -----------------------------
@@ -1585,6 +1619,10 @@ namespace Cave {
 
         bool isOpenForFall(const int& index) const;
 
+        /// @brief Fallable still sitting in the gravity-source cell of an empty hole.
+        /// @return That fallable's index, or OUT_OF_BOUNDS_INDEX.
+        int fallableReservingCell(const int& cell) const;
+
         bool handleEntityFalling(const int& index, const int& ahead, const Cave::Entity::Direction& gravity);
 
         bool handleEntityLanding(const int& index, const int& ahead);
@@ -1668,6 +1706,9 @@ namespace Cave {
         void createRubyExplosion(const int& index);
         void createSingularityExplosion(const int& index);
         void detonateCells(const int& origin, const std::vector<int>& cells, bool caveGullExplosion, bool rubyExplosion = false);
+
+        /// @brief Intact obsidian cracks instead of exploding. Returns true if the cell absorbed the blast.
+        bool absorbObsidianExplosion(const int& index);
         
         /**
          * @brief Updates the texture (animation) of a tube entity based on adjacent walls.
@@ -1721,11 +1762,14 @@ namespace Cave {
 
         /// @brief White seconds remaining drawn above Jim during ruby invincibility.
         Renderer::TextRenderer m_invincibleText;
+        /// @brief Seconds remaining drawn above Jim during Pyrobe fire ability.
+        Renderer::TextRenderer m_pyrobeText;
         std::vector<Renderer::TextRenderer> m_playerNameText;
         std::vector<bool> m_showPlayerName;
 
         /// @brief True when the invincibility countdown should be drawn this frame.
         bool m_showInvincibleText = false;
+        bool m_showPyrobeText = false;
 
         /// @brief Map tick counter.
         Utils::TickCounter m_TickCounter = Utils::TickCounter();
@@ -1759,6 +1803,7 @@ namespace Cave {
 
         /// @brief Remaining frames of ruby invincibility.
         int m_jimInvincibleFrames = 0;
+        int m_jimPyrobeFrames = 0;
 
         /// @brief Space and a direction into a gate were both held on the previous Jim tick.
         bool m_jimGateComboHeld = false;
@@ -1826,6 +1871,9 @@ namespace Cave {
         /// @brief True when this map is the editor cave preview.
         bool m_editorPreview = false;
 
+        /// @brief True when the editor is simulating physics/AI in place.
+        bool m_editorSimulate = false;
+
         /// @brief After a Pegul is crushed, remaining Peguls hunt other variants to fuse.
         bool m_pegulFuseHunt = false;
 
@@ -1857,6 +1905,9 @@ namespace Cave {
         /// @brief Cells emptied this tick by digging or an explosion finishing.
         std::vector<char> m_supportDugOrExploded;
 
+        /// @brief Cells a fallable left this tick. Expanding walls wait one tick before claiming them.
+        std::vector<char> m_fallableVacated;
+
         /// @brief Whether the cave needs to be reset
         bool m_reset = false;
 
@@ -1869,6 +1920,8 @@ namespace Cave {
         std::vector<char> m_jimlinAtTickStart;
         std::array<bool, Net::MaxPlayers> m_playerExited{};
         std::array<int, Net::MaxPlayers> m_playerInvincible{};
+        std::array<int, Net::MaxPlayers> m_playerPyrobe{};
+        std::array<int, Net::MaxPlayers> m_playerPyrobeShootWait{};
         std::array<int, Net::MaxPlayers> m_playerHollow{};
         std::array<int, Net::MaxPlayers> m_playerBombs{};
         std::array<bool, Net::MaxPlayers> m_playerGateCombo{};

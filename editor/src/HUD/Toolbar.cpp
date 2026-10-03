@@ -137,6 +137,7 @@ void HUD::Editor::Toolbar::drawFileMenu()
         if (ImGui::MenuItem("Settings..."))          m_editor->actionShowSettings();
         ImGui::Separator();
         if (ImGui::MenuItem("Test Level", "Ctrl+T")) m_editor->actionTest();
+        if (ImGui::MenuItem("Simulate", nullptr, m_editor->isSimulating())) m_editor->actionSimulate();
         ImGui::Separator();
         if (ImGui::MenuItem("Exit"))                 m_editor->actionExit();
         ImGui::Unindent(m_menuIndent);
@@ -295,6 +296,9 @@ void HUD::Editor::Toolbar::drawToolItems(HUD::Editor::Panel* editorPanel)
     tool("Pyrozo",                   "",  HUD::Editor::Panel::PyrozoSlotX, HUD::Editor::Panel::PyrozoSlotY, Cave::Entity::Type::Pyrozo);
     tool("Hellgull",                 "",  1, 21, Cave::Entity::Type::Hellgull);
     tool("Charia",                   "",  2, 21, Cave::Entity::Type::Charia);
+    tool("Obsidian Wall",            "",  0, 22, Cave::Entity::Type::ObsidianWall);
+    tool("Worm",                     "",  1, 22, Cave::Entity::Type::Worm);
+    tool("Pyrobe",                   "",  2, 22, Cave::Entity::Type::Pyrobe);
 }
 
 void HUD::Editor::Toolbar::drawToolsMenu(HUD::Editor::Panel* editorPanel)

@@ -14,6 +14,11 @@ static constexpr float SELECT_X     = 88.f;
 static constexpr float SELECT_Y     = 461.f;
 static constexpr float SELECT_S     = 24.f;
 static constexpr float TEST_Y       = 434.f;
+static constexpr float TEST_X       = 4.f;
+static constexpr float TEST_W       = 42.f;
+static constexpr float SIM_X        = 50.f;
+static constexpr float SIM_W        = 66.f;
+static constexpr float SIM_H        = 20.f;
 static constexpr float CORDS_BASE_X = (PANEL_W - 60.f) / 2.f;
 static constexpr float CORDS_BASE_Y = 348.f;
 
@@ -89,7 +94,14 @@ void HUD::Editor::Panel::load()
     initDigit(m_digitY2, 61.f, 3.f);
 
     m_testBtn.emplace(testTex, sf::IntRect({0, 0}, {42, 20}));
-    m_testBtn->setPosition({(PANEL_W - 42.f) / 2.f, TEST_Y});
+    m_testBtn->setPosition({TEST_X, TEST_Y});
+
+    if (!m_simFont.openFromFile("./assets/fonts/tahoma.ttf"))
+        throw std::runtime_error("Error: Unable to load editor button font.\n");
+    m_simLabel.emplace(m_simFont);
+    m_simLabel->setString("Simulate");
+    m_simLabel->setCharacterSize(11);
+    m_simLabel->setFillColor(sf::Color::Black);
 
     m_fillBtnL.emplace(fillTex, sf::IntRect({0,  0}, {24, 26}));  m_fillBtnL->setPosition({FILL_LX, FILL_Y});
     m_fillBtnC.emplace(fillTex, sf::IntRect({24, 0}, {24, 26}));  m_fillBtnC->setPosition({FILL_CX, FILL_Y});
@@ -182,6 +194,12 @@ int HUD::Editor::Panel::miniTileIndex(Cave::Entity::Type type)
     case T::PyrozoExtinguished: return 92;
     case T::Hellgull:         return 90;
     case T::Charia:           return 91;
+    case T::ObsidianWall:     return 93;
+    case T::ObsidianWallCracked: return 94;
+    case T::Worm:             return 95;
+    case T::WormBody:         return 96;
+    case T::HotBoulderEater:  return 97;
+    case T::Pyrobe:           return 98;
     case T::Jimlin1:         return 67;
     case T::Jimlin2:         return 68;
     case T::Jimlin3:         return 69;
@@ -435,6 +453,49 @@ void HUD::Editor::Panel::draw(sf::RenderTarget& target, sf::RenderStates states)
     target.draw(viewRect, noShader);
 
     if (m_testBtn)    target.draw(*m_testBtn,    noShader);
+
+    {
+        const bool simOn = m_editor && m_editor->isSimulating();
+        const bool pressed = m_simPressed || simOn;
+        const sf::Color face(212, 208, 200);
+        const sf::Color hi(255, 255, 255);
+        const sf::Color sh(128, 128, 128);
+        const sf::Color dk(0, 0, 0);
+        auto edge = [&](float x, float y, float w, float h, sf::Color c) {
+            sf::RectangleShape r({ w, h });
+            r.setPosition({ x, y });
+            r.setFillColor(c);
+            target.draw(r, noShader);
+        };
+        edge(SIM_X, TEST_Y, SIM_W, SIM_H, face);
+        if (!pressed) {
+            edge(SIM_X, TEST_Y, SIM_W, 1.f, hi);
+            edge(SIM_X, TEST_Y, 1.f, SIM_H, hi);
+            edge(SIM_X, TEST_Y + SIM_H - 1.f, SIM_W, 1.f, dk);
+            edge(SIM_X + SIM_W - 1.f, TEST_Y, 1.f, SIM_H, dk);
+            edge(SIM_X + 1.f, TEST_Y + SIM_H - 2.f, SIM_W - 2.f, 1.f, sh);
+            edge(SIM_X + SIM_W - 2.f, TEST_Y + 1.f, 1.f, SIM_H - 2.f, sh);
+        } else {
+            edge(SIM_X, TEST_Y, SIM_W, 1.f, dk);
+            edge(SIM_X, TEST_Y, 1.f, SIM_H, dk);
+            edge(SIM_X, TEST_Y + SIM_H - 1.f, SIM_W, 1.f, hi);
+            edge(SIM_X + SIM_W - 1.f, TEST_Y, 1.f, SIM_H, hi);
+            edge(SIM_X + 1.f, TEST_Y + 1.f, SIM_W - 2.f, 1.f, sh);
+            edge(SIM_X + 1.f, TEST_Y + 1.f, 1.f, SIM_H - 2.f, sh);
+        }
+        if (m_simLabel) {
+            sf::Text label = *m_simLabel;
+            const sf::FloatRect b = label.getLocalBounds();
+            const float ox = pressed ? 1.f : 0.f;
+            const float oy = pressed ? 1.f : 0.f;
+            label.setPosition({
+                SIM_X + (SIM_W - b.size.x) * 0.5f - b.position.x + ox,
+                TEST_Y + (SIM_H - b.size.y) * 0.5f - b.position.y + oy - 1.f
+            });
+            target.draw(label, noShader);
+        }
+    }
+
     if (m_fillBtnL)   target.draw(*m_fillBtnL,   noShader);
     if (m_fillBtnC)   target.draw(*m_fillBtnC,   noShader);
     if (m_fillBtnR)   target.draw(*m_fillBtnR,   noShader);
@@ -482,17 +543,24 @@ void HUD::Editor::Panel::handleClick(sf::Vector2f vp, float panelX, float toolba
     else if (lx >= FILL_CX && lx < FILL_CX+24.f && ly >= FILL_Y && ly < FILL_Y+26.f) m_fillSelected = 1;
     else if (lx >= FILL_RX && lx < FILL_RX+24.f && ly >= FILL_Y && ly < FILL_Y+26.f) m_fillSelected = 2;
     else if (lx >= SELECT_X && lx < SELECT_X+SELECT_S && ly >= SELECT_Y && ly < SELECT_Y+SELECT_S) m_fillSelected = 3;
-    else if (lx >= (PANEL_W-42.f)/2.f && lx < (PANEL_W-42.f)/2.f+42.f &&
-             ly >= TEST_Y && ly < TEST_Y+20.f)
+    else if (lx >= TEST_X && lx < TEST_X + TEST_W &&
+             ly >= TEST_Y && ly < TEST_Y + 20.f)
     {
         m_testPressed = true;
         m_editor->actionTest();
+    }
+    else if (lx >= SIM_X && lx < SIM_X + SIM_W &&
+             ly >= TEST_Y && ly < TEST_Y + SIM_H)
+    {
+        m_simPressed = true;
+        m_editor->actionSimulate();
     }
 }
 
 void HUD::Editor::Panel::handleRelease()
 {
     m_testPressed = false;
+    m_simPressed = false;
     m_sbDragging = false;
 }
 
@@ -763,6 +831,9 @@ Cave::Entity::Type HUD::Editor::Panel::getType(const int& x, const int& y) {
     case 63: return m_pyrozoType;
     case 64: return Cave::Entity::Type::Hellgull;
     case 65: return Cave::Entity::Type::Charia;
+    case 66: return Cave::Entity::Type::ObsidianWall;
+    case 67: return Cave::Entity::Type::Worm;
+    case 68: return Cave::Entity::Type::Pyrobe;
     default: return Cave::Entity::Type::NoType;
     }
 }
@@ -860,6 +931,12 @@ Cave::Entity::Base HUD::Editor::Panel::getNewEntity(Cave::Entity::Type type) {
     case Cave::Entity::Type::PyrozoExtinguished: return Cave::Entity::Pyrozo(Cave::Entity::Type::PyrozoExtinguished);
     case Cave::Entity::Type::Hellgull:           return Cave::Entity::Hellgull();
     case Cave::Entity::Type::Charia:             return Cave::Entity::Charia();
+    case Cave::Entity::Type::ObsidianWall:       return Cave::Entity::ObsidianWall();
+    case Cave::Entity::Type::ObsidianWallCracked: return Cave::Entity::ObsidianWallCracked();
+    case Cave::Entity::Type::Worm:               return Cave::Entity::Worm();
+    case Cave::Entity::Type::WormBody:           return Cave::Entity::WormBody();
+    case Cave::Entity::Type::HotBoulderEater:    return Cave::Entity::HotBoulderEater();
+    case Cave::Entity::Type::Pyrobe:             return Cave::Entity::Pyrobe();
     case Cave::Entity::Type::Singularity:
     case Cave::Entity::Type::Ostia:
     case Cave::Entity::Type::Murus:

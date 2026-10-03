@@ -29,6 +29,113 @@
 #include <string>
 #include <cctype>
 #include <system_error>
+#ifdef _WIN32
+#include <cwchar>
+#endif
+
+namespace {
+
+#ifdef _WIN32
+WNDPROC g_prevWndProc = nullptr;
+bool g_appActive = true;
+
+bool isSmallWindow(HWND hwnd, int maxW, int maxH) {
+    RECT rc{};
+    if (!GetWindowRect(hwnd, &rc)) return false;
+    return (rc.right - rc.left) < maxW && (rc.bottom - rc.top) < maxH;
+}
+
+bool isShellOverlayWindow(HWND hwnd) {
+    if (!hwnd) return true;
+    wchar_t cls[256]{};
+    if (GetClassNameW(hwnd, cls, 256) <= 0) return false;
+
+    static const wchar_t* kAlwaysOverlay[] = {
+        L"ForegroundStaging",
+        L"DummyDWMListenerWindow",
+        L"NativeHWNDHost",
+        L"Xaml_WindowedPopupClass",
+        L"Windows.Internal.Shell.TabProxyWindow",
+        L"Windows.UI.Input.InputSite.WindowClass",
+        L"Windows.UI.Composition.DesktopWindowContentBridge",
+        L"Shell_TrayWnd",
+        L"Shell_SecondaryTrayWnd",
+        L"NotifyIconOverflowWindow",
+        L"CiceroUIWndFrame",
+        L"IME",
+        L"MSCTFIME UI",
+        L"tooltips_class32",
+        L"ToolTips_Class32",
+        L"SysShadow",
+        L"Auto-Suggest Dropdown",
+        L"OfficeTooltip",
+        L"Shell_InputSwitchTopLevelWindow",
+        L"InputSwitcher_WinUIDesktopWin32Window",
+        L"TaskListThumbnailWnd",
+        L"TaskListOverlayWnd",
+        L"TopLevelWindowForOverflowXamlIsland",
+        L"ApplicationManager_DesktopShellWindow",
+        L"#32768",
+        L"GDI+ Hook Window Class",
+        L"OleMainThreadWndClass",
+        L"MultitaskingViewFrame",
+        L"XamlExplorerHostIslandWindow",
+        L"Windows.UI.Core.CoreWindow",
+    };
+    for (const wchar_t* name : kAlwaysOverlay) {
+        if (_wcsicmp(cls, name) == 0) return true;
+    }
+    if (wcsncmp(cls, L"ATL:", 4) == 0) return true;
+
+    const LONG_PTR ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+    const LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+    if (ex & WS_EX_NOACTIVATE) return true;
+    if ((ex & WS_EX_TOOLWINDOW) && isSmallWindow(hwnd, 900, 600)) return true;
+    if ((ex & WS_EX_TOPMOST) && !(style & WS_CAPTION) && isSmallWindow(hwnd, 900, 600))
+        return true;
+    return false;
+}
+
+LRESULT CALLBACK gameWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    switch (msg) {
+    case WM_ACTIVATEAPP:
+        g_appActive = (wParam != FALSE);
+        if (g_appActive)
+            LockSetForegroundWindow(LSFW_LOCK);
+        break;
+    default:
+        break;
+    }
+    if (g_prevWndProc)
+        return CallWindowProc(g_prevWndProc, hWnd, msg, wParam, lParam);
+    return DefWindowProc(hWnd, msg, wParam, lParam);
+}
+
+bool shouldAcceptGameplayInput(HWND gameHwnd) {
+    if (!gameHwnd) return true;
+    if (IsIconic(gameHwnd)) return false;
+
+    // Real Alt+Tab / click-away is WM_ACTIVATEAPP, not a toast stealing WM_KILLFOCUS.
+    if (g_appActive) return true;
+
+    HWND fg = GetForegroundWindow();
+    if (!fg || fg == gameHwnd) return true;
+    if (GetAncestor(fg, GA_ROOTOWNER) == gameHwnd) return true;
+
+    DWORD fgPid = 0;
+    GetWindowThreadProcessId(fg, &fgPid);
+    if (fgPid == GetCurrentProcessId()) return true;
+    // Toast / task-switcher overlays still deactivate the app; keep playing.
+    if (isShellOverlayWindow(fg)) return true;
+    return false;
+}
+#else
+bool shouldAcceptGameplayInput(const sf::Window& window) {
+    return window.hasFocus();
+}
+#endif
+
+}
 
 // ----------------------------------------------------------------------------------
 // Construction
@@ -317,6 +424,15 @@ void Game::mainGameLoop() {
         : sf::RenderWindow(sf::VideoMode({ SCREEN_WIDTH, SCREEN_HEIGHT }), APPLICATION_NAME);
     setRefreshrate();
     window.setMouseCursorVisible(false);
+#ifdef _WIN32
+    HWND gameHwnd = static_cast<HWND>(window.getNativeHandle());
+    if (gameHwnd) {
+        g_prevWndProc = reinterpret_cast<WNDPROC>(
+            SetWindowLongPtr(gameHwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(gameWndProc)));
+        g_appActive = true;
+        LockSetForegroundWindow(LSFW_LOCK);
+    }
+#endif
 
     imageManager.loadAllImages();
     soundManager.loadAllSounds();
@@ -481,6 +597,22 @@ void Game::mainGameLoop() {
 
         while (const std::optional event = window.pollEvent())
         {
+            if (event->is<sf::Event::FocusLost>()) {
+                inputSystem.suppressSelfDestructUntilTabReleased();
+#ifdef _WIN32
+                if (g_appActive)
+                    (void)window.setActive(true);
+#endif
+            }
+            if (event->is<sf::Event::FocusGained>()) {
+                inputSystem.suppressSelfDestructUntilTabReleased();
+                (void)window.setActive(true);
+#ifdef _WIN32
+                g_appActive = true;
+                LockSetForegroundWindow(LSFW_LOCK);
+#endif
+            }
+
             if (showProps) {
                 if (!event) continue;
                 ImGui::SFML::ProcessEvent(window, *event);
@@ -502,9 +634,20 @@ void Game::mainGameLoop() {
             }
         }
 
+#ifdef _WIN32
+        const bool acceptInput = shouldAcceptGameplayInput(static_cast<HWND>(window.getNativeHandle()));
+#else
+        const bool acceptInput = shouldAcceptGameplayInput(window);
+#endif
         if (showProps) ImGui::SFML::Update(window, deltaClock.restart());
         else {
-            inputSystem.handleJoystick();
+            inputSystem.syncKeyboard(acceptInput);
+            if (acceptInput)
+                inputSystem.handleJoystick();
+        }
+
+        if (acceptInput) {
+            (void)window.setActive(true);
         }
 
 
@@ -569,7 +712,7 @@ void Game::mainGameLoop() {
 
         setCaveCount(static_cast<int>(caveManager.numCaves(getCaveFileIndex())));
 
-        window.setMouseCursorVisible(showProps);
+        window.setMouseCursorVisible(showProps || !acceptInput);
 
         if (showProps) Cave::editCaveProperties(window, m_caveProperties, getCaveProperties(), map.getDiamondCount(), showtrigger);
 
@@ -579,6 +722,14 @@ void Game::mainGameLoop() {
 
         if (caveActive) {
             map.update(camera);
+            if (map.requiresReset()) {
+                caveManager.startCave(getCaveFileIndex(), getCaveNumber(), &m_caveProperties, &map);
+                map.prepareForPlay();
+                camera.setBounds(map.getCameraBounds());
+                if (map.resetCameraPosition()) camera.setCentre(map.getCameraStartLocation());
+                cameraOffset = { 0, 0 };
+                map.updateVisibleTiles(camera);
+            }
             cameraTarget = map.updateCameraLocation(camera, cameraOffset);
             if (m_freeCamera) {
                 cameraOffset.x += camera.getCenter().x - cameraTarget.x;
@@ -668,17 +819,18 @@ void Game::mainGameLoop() {
             cameraOffset = { 0, 0 };
         }
 
-        if (map.requiresReset()) {
-            caveManager.startCave(getCaveFileIndex(), getCaveNumber(), &m_caveProperties, &map);
-            map.prepareForPlay();
-            camera.setBounds(map.getCameraBounds());
-            if (map.resetCameraPosition()) camera.setCentre(map.getCameraStartLocation());
-            cameraOffset = { 0, 0 };
-        }
-
         if (!(isMultiplayer() && m_net.waitingForTick()))
             Utils::incrementGlobalCounter();
     }
+
+#ifdef _WIN32
+    LockSetForegroundWindow(LSFW_UNLOCK);
+    HWND hwnd = static_cast<HWND>(window.getNativeHandle());
+    if (hwnd && g_prevWndProc) {
+        SetWindowLongPtr(hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(g_prevWndProc));
+        g_prevWndProc = nullptr;
+    }
+#endif
 }
 
 void Game::update() {

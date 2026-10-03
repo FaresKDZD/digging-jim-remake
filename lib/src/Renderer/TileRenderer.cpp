@@ -1,7 +1,10 @@
 #include <algorithm>
 #include <memory>
+#include <vector>
 #include "Renderer/TileRenderer.h"
 #include "Cave/Entity/Base.h"
+#include "Cave/Entity/Space.h"
+#include "Cave/Entity/Type.h"
 
 namespace {
 
@@ -45,8 +48,18 @@ bool Renderer::TileRenderer::load(const Image::Texture& texture, const sf::Vecto
 }
 
 void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>& entities, const sf::Vector2i& position, const sf::IntRect& gridRange, int gap, sf::Color jimTint) {
+    struct WormSlide {
+        float px = 0.f;
+        float py = 0.f;
+        int tileIndex = Cave::Entity::NO_TEXTURE_INDEX;
+        sf::Color tint = sf::Color::White;
+    };
+    WormSlide wormSlides[48];
+    int wormSlideCount = 0;
+
     int index = 0;
-    m_vertices.resize(gridRange.size.x * gridRange.size.y * 12);
+    const int cellCount = gridRange.size.x * gridRange.size.y;
+    m_vertices.resize(static_cast<std::size_t>(cellCount) * 12);
     for (int y = gridRange.position.y; y < gridRange.position.y + gridRange.size.y; ++y) {
         for (int x = gridRange.position.x; x < gridRange.position.x + gridRange.size.x; ++x) {
             const Cave::Entity::Base& entity = entities[index];
@@ -59,6 +72,33 @@ void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>
                 ? (float)(y * (int)m_tilesize.y + position.y)
                 : (float)((y - gridRange.position.y) * ((int)m_tilesize.y + gap) + gap + position.y);
             const sf::Color tint = (entity.getType() == Cave::Entity::Type::Jim) ? jimTint : sf::Color::White;
+
+            const bool wormSlide = Cave::Entity::isWorm(entity.getType()) && entity.isIntoTransition();
+            if (wormSlide) {
+                const int floorIndex = Cave::Entity::Space::TEXTURE_INDEX;
+                const sf::Vector2i floorCoords = { floorIndex % m_tilesetCols, floorIndex / m_tilesetCols };
+                writeTileQuad(tri,
+                    baseX, baseY, baseX + (float)m_tilesize.x, baseY + (float)m_tilesize.y,
+                    (float)(floorCoords.x * (int)m_tilesize.x), (float)(floorCoords.y * (int)m_tilesize.y),
+                    (float)((floorCoords.x + 1) * (int)m_tilesize.x), (float)((floorCoords.y + 1) * (int)m_tilesize.y),
+                    sf::Color::White);
+                clearTileVerts(&m_vertices[index * 12 + 6], 6);
+
+                const int disp = entity.getTransitionDisplacement();
+                float ox = 0.f;
+                float oy = 0.f;
+                switch (entity.getTransitionDirection()) {
+                case Cave::Entity::Direction::RIGHT: ox = (float)(disp - 32); break;
+                case Cave::Entity::Direction::LEFT:  ox = (float)(32 - disp); break;
+                case Cave::Entity::Direction::DOWN:  oy = (float)(disp - 32); break;
+                case Cave::Entity::Direction::UP:    oy = (float)(32 - disp); break;
+                default: break;
+                }
+                if (wormSlideCount < 48)
+                    wormSlides[wormSlideCount++] = { baseX + ox, baseY + oy, entity.getCurrentTextureIndex(), tint };
+                index++;
+                continue;
+            }
 
             int tileIndex = entity.getCurrentTextureIndex();
             if (tileIndex == Cave::Entity::NO_TEXTURE_INDEX) {
@@ -100,6 +140,26 @@ void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>
             }
 
             index++;
+        }
+    }
+
+    if (wormSlideCount > 0) {
+        const std::size_t base = static_cast<std::size_t>(cellCount) * 12;
+        m_vertices.resize(base + static_cast<std::size_t>(wormSlideCount) * 6);
+        for (int i = 0; i < wormSlideCount; ++i) {
+            const WormSlide& slide = wormSlides[i];
+            if (slide.tileIndex == Cave::Entity::NO_TEXTURE_INDEX) {
+                clearTileVerts(&m_vertices[base + i * 6], 6);
+                continue;
+            }
+            const sf::Vector2i textureCoords = { slide.tileIndex % m_tilesetCols, slide.tileIndex / m_tilesetCols };
+            const float tw = (float)m_tilesize.x;
+            const float th = (float)m_tilesize.y;
+            writeTileQuad(&m_vertices[base + i * 6],
+                slide.px, slide.py, slide.px + tw, slide.py + th,
+                (float)(textureCoords.x * (int)m_tilesize.x), (float)(textureCoords.y * (int)m_tilesize.y),
+                (float)((textureCoords.x + 1) * (int)m_tilesize.x), (float)((textureCoords.y + 1) * (int)m_tilesize.y),
+                slide.tint);
         }
     }
 }

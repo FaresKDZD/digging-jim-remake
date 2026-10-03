@@ -117,7 +117,7 @@ void Cave::Map::refreshJimlinBlockCache() {
 	m_jimlinPrivateGatesCached = false;
 	if (cellCount <= 0) return;
 
-	const bool tickBusy = !m_editorPreview && m_state == Cave::State::Play;
+	const bool tickBusy = !editorIdle() && m_state == Cave::State::Play;
 	for (int i = 0; i < cellCount; ++i) {
 		const Cave::Entity::Type type = getEntityType(i);
 		if (type == Cave::Entity::Type::JimlinDock) {
@@ -1550,7 +1550,7 @@ void Cave::Map::jimlinPickAction(const int& index) {
 }
 
 void Cave::Map::updateJimlin(const int& index) {
-	if (m_editorPreview) {
+	if (editorIdle()) {
 		if (!jimlinInShip(index))
 			updateEntityAnimation(index);
 		return;

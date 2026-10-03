@@ -134,7 +134,29 @@ namespace Cave::Entity {
         PyrozoExtinguished,
         Hellgull,
         Charia,
+        ObsidianWall,
+        ObsidianWallCracked,
+        Worm,
+        WormBody,
+        HotBoulderEater,
+        Pyrobe,
     };
+
+    inline bool isHotBoulder(Type type) {
+        return type == Type::HotBoulder || type == Type::HotBoulderCracked;
+    }
+
+    inline bool isBoulderEater(Type type) {
+        return type == Type::BoulderEater || type == Type::HotBoulderEater;
+    }
+
+    inline bool isObsidianWall(Type type) {
+        return type == Type::ObsidianWall || type == Type::ObsidianWallCracked;
+    }
+
+    inline bool isWorm(Type type) {
+        return type == Type::Worm || type == Type::WormBody;
+    }
 
     inline bool isDirtLike(Type type) {
         return type == Type::Dirt || type == Type::Chum || type == Type::Magma;
@@ -142,12 +164,14 @@ namespace Cave::Entity {
 
     inline bool isLavaImmune(Type type) {
         return type == Type::Pyrozo || type == Type::PyrozoExtinguished
-            || type == Type::Hellgull || type == Type::Charia;
+            || type == Type::Hellgull || type == Type::Charia
+            || type == Type::Worm || type == Type::WormBody;
     }
 
     inline bool isFireImmune(Type type) {
         return type == Type::Chaos || type == Type::Pyrozo || type == Type::PyrozoExtinguished
-            || type == Type::Hellgull || type == Type::Charia;
+            || type == Type::Hellgull || type == Type::Charia
+            || type == Type::Worm || type == Type::WormBody;
     }
 
     inline bool isPegul(Type type) {
@@ -226,6 +250,7 @@ namespace Cave::Entity {
         case Type::CaveGull:
         case Type::Spinner:
         case Type::BoulderEater:
+        case Type::HotBoulderEater:
         case Type::Tetrapus:
         case Type::Binocule:
         case Type::Creep:
@@ -266,6 +291,8 @@ namespace Cave::Entity {
         case Type::PyrozoExtinguished:
         case Type::Hellgull:
         case Type::Charia:
+        case Type::Worm:
+        case Type::WormBody:
             return true;
         default:
             return false;

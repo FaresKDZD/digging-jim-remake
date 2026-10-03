@@ -142,6 +142,12 @@ public:
     /// @brief Save the current file and launch the game to test from the current cave.
     void actionTest();
 
+    /// @brief Toggle in-editor physics simulation. A second press restores the cave.
+    void actionSimulate();
+
+    /// @brief True while in-editor Simulate is running.
+    bool isSimulating() const { return m_simulating; }
+
     // ----------------------------------------------------------------------------------
     // Undo
     // ----------------------------------------------------------------------------------
@@ -176,11 +182,11 @@ public:
     /// @param map The cave map to clear.
     void clearLevel(Cave::Map& map);
 
-    /// @brief Copy the current map's tile data into the internal clipboard.
+    /// @brief Copy the current map's tiles, wells, portals, cosmics, and cave properties.
     /// @param map The cave map to copy from.
     void copyLevel(const Cave::Map& map);
 
-    /// @brief Paste the clipboard tile data into the current map.
+    /// @brief Paste the clipboard into the current map, including cave properties.
     /// @param map The cave map to paste into.
     void pasteLevel(Cave::Map& map);
 
@@ -321,6 +327,9 @@ private:
     /// @brief Whether small (16px) block mode is active.
     bool m_smallBlocks     = false;
 
+    /// @brief Cave view zoom. 1 = normal (640x480 world), 0.5 = small blocks, >1 zoomed in.
+    float m_viewZoom       = 1.f;
+
     /// @brief Set by actionUndo(); handled each frame in run().
     bool m_doUndo          = false;
 
@@ -330,6 +339,12 @@ private:
     /// @brief Set by actionTest(); handled each frame in run().
     bool m_doTest          = false;
 
+    /// @brief Set by actionSimulate(); handled each frame in run().
+    bool m_doSimulate      = false;
+
+    /// @brief True while in-editor Simulate is running.
+    bool m_simulating      = false;
+
     // ----------------------------------------------------------------------------------
     // Undo / redo state
     // ----------------------------------------------------------------------------------
@@ -337,10 +352,14 @@ private:
     struct EditorSnapshot {
         std::vector<Cave::Data> caves;
         int currentCaveIndex = 0;
+        std::vector<Cave::Entity::Animation> previewAnims;
     };
 
     std::vector<EditorSnapshot> m_undoStack;
     std::vector<EditorSnapshot> m_redoStack;
+
+    /// @brief Cave state captured when Simulate was turned on.
+    EditorSnapshot m_simulateSnap;
 
     Cave::File* m_activeFile = nullptr;
     int* m_activeCaveIndex = nullptr;
@@ -358,6 +377,8 @@ private:
 
     void clearUndoHistory();
     void applyEditorSnapshot(const EditorSnapshot& snap, Cave::Map& map, Cave::File& loadedFile, int& currentCaveIndex);
+    void startSimulate(Cave::Map& map);
+    void stopSimulate(Cave::Map& map, Cave::File& loadedFile, int& currentCaveIndex);
     void drawCavesListWindow(int currentCaveIndex, Cave::File& loadedFile);
     void reorderCaves(Cave::File& loadedFile, int& currentCaveIndex, int from, int to);
 
@@ -379,6 +400,7 @@ private:
     std::vector<Cave::WellRecord> m_clipboardWells;
     std::vector<Cave::PortalRecord> m_clipboardPortals;
     std::vector<Cave::CosmicRecord> m_clipboardCosmics;
+    Cave::Properties m_clipboardProperties{};
 
     bool m_hasSelection = false;
     int  m_selX0 = 0, m_selY0 = 0, m_selX1 = 0, m_selY1 = 0;

@@ -1,9 +1,10 @@
 #include "Cave/Map/Map.h"
+#include <algorithm>
 #include <cmath>
 #include <string>
 
 std::vector<int> Cave::Map::preUpdateCaveEntities() {
-	if (!m_editorPreview)
+	if (!editorIdle())
 		hoistWandererCosmics();
 	ensureCosmicUnder();
 	for (int index = 0; index < width * height; ++index) {
@@ -26,6 +27,7 @@ std::vector<int> Cave::Map::preUpdateCaveEntities() {
 	m_playerJimIndexAtTickStart = m_playerJimIndex;
 	if (m_TickCounter.onTick()) {
 		m_supportDugOrExploded.assign(static_cast<size_t>(width * height), 0);
+		m_fallableVacated.assign(static_cast<size_t>(width * height), 0);
 		m_jimlinAtTickStart.assign(static_cast<size_t>(width * height), 0);
 		for (int i = 0; i < width * height; ++i) {
 			if (Cave::Entity::isJimlin(getEntityType(i)))
@@ -42,7 +44,7 @@ std::vector<int> Cave::Map::preUpdateCaveEntities() {
 
 void Cave::Map::updateCaveEntities(const std::vector<int> indicies) {
 	refreshJimlinBlockCache();
-	if (Utils::TickCounter::onTick() && !m_editorPreview && m_state == Cave::State::Play)
+	if (Utils::TickCounter::onTick() && !editorIdle() && m_state == Cave::State::Play)
 		tickCoveredPrivateGates();
 	m_cameraSpeed = 4;
 	switch (m_state) {
@@ -67,7 +69,7 @@ void Cave::Map::updateCaveEntities(const std::vector<int> indicies) {
 		break;
 	}
 
-	if (m_editorPreview) {
+	if (editorIdle()) {
 		if (m_game->soundManager.isPlaying(Sound::Effect::Dig))
 			m_game->soundManager.stop(Sound::Effect::Dig);
 		if (m_game->soundManager.isPlaying(Sound::Effect::MagicWall))
@@ -130,12 +132,30 @@ void Cave::Map::updateCaveEntities(const std::vector<int> indicies) {
 		m_game->soundManager.stop(Sound::Effect::Amoeba);
 	}
 
-	if (!m_editorPreview && (m_state == Cave::State::Play || m_state == Cave::State::Pass)) {
+	if (!editorIdle() && (m_state == Cave::State::Play || m_state == Cave::State::Pass)) {
 		if (m_chaosFreezeTicks > 0) {
 			--m_chaosFreezeTicks;
 			if (m_chaosFreezeTicks == 0)
 				chaosPetrifyMonsters();
 		}
+	}
+}
+
+void Cave::Map::updateFallableEntities(const std::vector<int>& indicies) {
+	for (int index : indicies) {
+		if (getEntityUpdated(index)) continue;
+		if (!isFallableEntity(index)) continue;
+		setEntityUpdated(index, true);
+		Cave::Entity::Type type = getEntityType(index);
+		if (m_chaosFreezeTicks > 0 && isChaosFreezeTarget(type)) {
+			updateEntityAnimation(index);
+			continue;
+		}
+		auto it = m_entityUpdateMap.find(type);
+		if (it != m_entityUpdateMap.end())
+			it->second(index);
+		else
+			updateFallableEntity(index);
 	}
 }
 
@@ -173,6 +193,12 @@ void Cave::Map::updateActiveEntity(const std::vector<int> indicies) {
 	for (int i = 0; i < width * height; ++i) {
 		const Cave::Entity::Type type = getEntityType(i);
 		if (!Cave::Entity::isPlayer(type)) continue;
+		if (m_editorSimulate && type == Cave::Entity::Type::Jim) {
+			setEntityUpdated(i, true);
+			updateJimIdle(i);
+			updateEntityAnimation(i);
+			continue;
+		}
 		if (getEntityUpdated(i)) continue;
 		setEntityUpdated(i, true);
 		auto playerUpdate = m_entityUpdateMap.find(type);
@@ -180,6 +206,7 @@ void Cave::Map::updateActiveEntity(const std::vector<int> indicies) {
 			playerUpdate->second(i);
 	}
 
+	updateFallableEntities(indicies);
 	updateExpandingWalls(indicies);
 
 	for (int index : indicies) {
@@ -234,6 +261,7 @@ void Cave::Map::updateInactiveEntity(const std::vector<int> indicies) {
 }
 
 void Cave::Map::updateEntityDuringIntro(const std::vector<int> indicies) {
+	updateFallableEntities(indicies);
 	updateExpandingWalls(indicies);
 
 	for (int index : indicies) {
@@ -296,11 +324,14 @@ void Cave::Map::initEntityUpdateMaps() {
 	m_entityUpdateMap[Cave::Entity::Type::Chaos] = [this](int i) { updateChaos(i); };
 	m_entityUpdateMap[Cave::Entity::Type::CaveGull] = [this](int i) { updateCaveGull(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Hellgull] = [this](int i) { updateHellgull(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Worm] = [this](int i) { updateWorm(i); };
+	m_entityUpdateMap[Cave::Entity::Type::WormBody] = [this](int i) { updateWormBody(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Spinner] = [this](int i) { updateSpinner(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Cilia] = [this](int i) { updateCilia(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Charia] = [this](int i) { updateCharia(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Eater] = [this](int i) { updateEater(i); };
 	m_entityUpdateMap[Cave::Entity::Type::BoulderEater] = [this](int i) { updateBoulderEater(i); };
+	m_entityUpdateMap[Cave::Entity::Type::HotBoulderEater] = [this](int i) { updateHotBoulderEater(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Aggressor] = [this](int i) { updateAggressor(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Tetrapus] = [this](int i) { updateTetrapus(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Binocule] = [this](int i) { updateBinocule(i); };
@@ -355,6 +386,7 @@ void Cave::Map::initEntityUpdateMaps() {
 	m_entityUpdateMap[Cave::Entity::Type::FragileDiamond] = [this](int i) { updateFallableEntity(i); };
 	m_entityUpdateMap[Cave::Entity::Type::HollowDiamond] = [this](int i) { updateFallableEntity(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Ruby] = [this](int i) { updateFallableEntity(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Pyrobe] = [this](int i) { updateFallableEntity(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Ore] = [this](int i) { updateFallableEntity(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Boulder] = [this](int i) { updateFallableEntity(i); };
 	m_entityUpdateMap[Cave::Entity::Type::HotBoulder] = [this](int i) { updateFallableEntity(i); };
@@ -425,6 +457,12 @@ void Cave::Map::update(Camera camera) {
 		break;
 	}
 
+	if (m_editorSimulate) {
+		m_state = Cave::State::Play;
+		if (!m_loaded.empty())
+			std::fill(m_loaded.begin(), m_loaded.end(), true);
+	}
+
 	if (!m_editorPreview && m_game->inputSystem.wasPressed(Input::Action::Quit) && m_state != Cave::State::Exit) {
 		if (m_game->isQuitConfirmOpen())
 			m_game->sendSignal(GameSignal::CloseQuitConfirm);
@@ -459,14 +497,21 @@ void Cave::Map::update(Camera camera) {
 	if (m_state == Cave::State::Play && m_jimInvincibleFrames > 0) {
 		m_jimInvincibleFrames--;
 	}
+	if (m_state == Cave::State::Play && m_jimPyrobeFrames > 0) {
+		m_jimPyrobeFrames--;
+	}
 	if (m_state == Cave::State::Play) {
 		for (int i = 0; i < Net::MaxPlayers; ++i) {
 			if (m_playerInvincible[static_cast<size_t>(i)] > 0)
 				m_playerInvincible[static_cast<size_t>(i)]--;
+			if (m_playerPyrobe[static_cast<size_t>(i)] > 0)
+				m_playerPyrobe[static_cast<size_t>(i)]--;
 		}
 		const int local = m_game->mpLocalId();
-		if (local >= 0 && local < Net::MaxPlayers)
+		if (local >= 0 && local < Net::MaxPlayers) {
 			m_jimInvincibleFrames = m_playerInvincible[static_cast<size_t>(local)];
+			m_jimPyrobeFrames = m_playerPyrobe[static_cast<size_t>(local)];
+		}
 	}
 
 	// Visible tiles are refreshed each frame based on the camera position
@@ -492,6 +537,11 @@ void Cave::Map::updateVisibleTiles(Camera camera) {
 		const float pulse = 0.5f + 0.5f * std::sin(static_cast<float>(m_jimInvincibleFrames) * 0.28f);
 		const unsigned char glow = static_cast<unsigned char>(170 + 85 * pulse);
 		jimTint = sf::Color(255, glow, 255);
+	}
+	else if (isJimPyrobe()) {
+		const float pulse = 0.5f + 0.5f * std::sin(static_cast<float>(m_jimPyrobeFrames) * 0.28f);
+		const unsigned char glow = static_cast<unsigned char>(140 + 80 * pulse);
+		jimTint = sf::Color(255, glow, 40);
 	}
 
 	if (m_state == Cave::State::Load) {
@@ -539,20 +589,37 @@ void Cave::Map::updateVisibleTiles(Camera camera) {
 	m_cosmicRenderer.updateTexture(cosmics, { 0, 0 }, sf::IntRect({ min_x, min_y }, { max_x - min_x,max_y - min_y }), 0);
 
 	m_showInvincibleText = false;
-	if (isJimInvincible() && m_jimIndex != OUT_OF_BOUNDS_INDEX && getEntityType(m_jimIndex) == Cave::Entity::Type::Jim
+	m_showPyrobeText = false;
+	if (m_jimIndex != OUT_OF_BOUNDS_INDEX && getEntityType(m_jimIndex) == Cave::Entity::Type::Jim
 		&& m_state != Cave::State::Load && m_state != Cave::State::End) {
-		const int seconds = (m_jimInvincibleFrames + 63) / 64;
-		if (seconds > 0) {
-			const sf::IntRect ep = caveEntities[m_jimIndex].getCurrentPosition();
-			const int jx = m_jimIndex % width;
-			const int jy = m_jimIndex / width;
-			const std::string label = std::to_string(seconds);
-			const int textW = static_cast<int>(label.size()) * 16;
-			const int px = jx * 32 + ep.position.x + 16 - textW / 2;
-			const int py = jy * 32 + ep.position.y - 30;
-			m_invincibleText.updateText(px, py, label);
-			m_invincibleText.setColor(sf::Color::White);
-			m_showInvincibleText = true;
+		const sf::IntRect ep = caveEntities[m_jimIndex].getCurrentPosition();
+		const int jx = m_jimIndex % width;
+		const int jy = m_jimIndex / width;
+		const bool showRuby = isJimInvincible();
+		const bool showPyrobe = isJimPyrobe();
+		if (showRuby) {
+			const int seconds = (m_jimInvincibleFrames + 63) / 64;
+			if (seconds > 0) {
+				const std::string label = std::to_string(seconds);
+				const int textW = static_cast<int>(label.size()) * 16;
+				const int px = jx * 32 + ep.position.x + 16 - textW / 2;
+				const int py = jy * 32 + ep.position.y + (showPyrobe ? -48 : -30);
+				m_invincibleText.updateText(px, py, label);
+				m_invincibleText.setColor(sf::Color::White);
+				m_showInvincibleText = true;
+			}
+		}
+		if (showPyrobe) {
+			const int seconds = (m_jimPyrobeFrames + 63) / 64;
+			if (seconds > 0) {
+				const std::string label = std::to_string(seconds);
+				const int textW = static_cast<int>(label.size()) * 16;
+				const int px = jx * 32 + ep.position.x + 16 - textW / 2;
+				const int py = jy * 32 + ep.position.y - 30;
+				m_pyrobeText.updateText(px, py, label);
+				m_pyrobeText.setColor(sf::Color(255, 160, 40));
+				m_showPyrobeText = true;
+			}
 		}
 	}
 
@@ -587,6 +654,9 @@ void Cave::Map::draw(sf::RenderTarget& target, sf::RenderStates states) const {
 	}
 	if (m_showInvincibleText) {
 		m_invincibleText.render(target, noShaderStates);
+	}
+	if (m_showPyrobeText) {
+		m_pyrobeText.render(target, noShaderStates);
 	}
 	for (int i = 0; i < static_cast<int>(m_playerNameText.size()); ++i) {
 		if (i < static_cast<int>(m_showPlayerName.size()) && m_showPlayerName[static_cast<size_t>(i)])

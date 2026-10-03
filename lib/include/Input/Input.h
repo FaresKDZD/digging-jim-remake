@@ -79,6 +79,22 @@ namespace Input {
         void handleEvent(const sf::Event& event);
 
         /**
+         * @brief Sync keyboard hold/press from hardware key state.
+         *
+         * SFML key events stop when the window loses focus (toasts, overlays).
+         * Polling keeps controls working unless @p acceptInput is false (real app switch).
+         */
+        void syncKeyboard(bool acceptInput);
+
+        /**
+         * @brief Ignore Tab self-destruct until Tab is physically released.
+         *
+         * Alt+Tab delivers a Tab key to the game; this swallows that press
+         * and any leftover Tab when focus returns.
+         */
+        void suppressSelfDestructUntilTabReleased();
+
+        /**
          * @brief Handle joystick input for movement and actions.
          *
          * Polls the given joystick for axis movement and button presses.
@@ -238,6 +254,12 @@ namespace Input {
 
         /// @brief When true, W/A/S/D are not treated as movement (menus use arrows only).
         bool m_ignoreWasd = false;
+
+        /// @brief Drop Tab self-destruct until Tab is released (Alt+Tab / focus return).
+        bool m_blockSelfDestructUntilTabUp = false;
+
+        /// @brief Extra frames to ignore Tab after Alt+Tab / focus change.
+        int m_selfDestructSuppressFrames = 0;
 
         /// @brief ID of the joystick (0 - 7 for SFML).
         int m_joystickId = -1;

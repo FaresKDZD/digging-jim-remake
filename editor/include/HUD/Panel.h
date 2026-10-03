@@ -298,7 +298,7 @@ namespace HUD::Editor {
 
         /// @brief Current scroll row offset for the entity palette.
         int                       m_scrollRow    = 0;
-        static constexpr int      TOTAL_PALETTE_ROWS   = 22;
+        static constexpr int      TOTAL_PALETTE_ROWS   = 23;
         static constexpr int      VISIBLE_PALETTE_ROWS = 10;
         static constexpr int      MAX_SCROLL_ROW       = TOTAL_PALETTE_ROWS - VISIBLE_PALETTE_ROWS;
 
@@ -371,6 +371,15 @@ namespace HUD::Editor {
 
         /// @brief Sprite for the Test button (normal and pressed frames).
         std::optional<sf::Sprite> m_testBtn;
+
+        /// @brief Font used to label the Simulate button.
+        sf::Font m_simFont;
+
+        /// @brief "Simulate" label drawn on the toggle button.
+        std::optional<sf::Text> m_simLabel;
+
+        /// @brief True while the Simulate button is held down.
+        bool m_simPressed = false;
 
         /// @brief Sprites for the three fill mode buttons (single / row / rect).
         std::optional<sf::Sprite> m_fillBtnL, m_fillBtnC, m_fillBtnR;
