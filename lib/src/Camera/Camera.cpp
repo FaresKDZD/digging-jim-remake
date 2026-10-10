@@ -1,5 +1,6 @@
 #include "Camera/Camera.h"
 #include <algorithm>
+#include <cmath>
 
 Camera::Camera(sf::Vector2f screenSize, sf::Vector2f bounds)
     : m_view({ 0, 0 }, screenSize), m_bounds(bounds) {
@@ -36,6 +37,14 @@ void Camera::setCentre(sf::Vector2f location) {
     if (m_bounds.y <= getSize().y)
         location.y = getSize().y / 2;
     else
+        location.y = std::clamp(location.y, halfSize.y, m_bounds.y - halfSize.y);
+
+    location.x = std::round(location.x);
+    location.y = std::round(location.y);
+
+    if (m_bounds.x > getSize().x)
+        location.x = std::clamp(location.x, halfSize.x, m_bounds.x - halfSize.x);
+    if (m_bounds.y > getSize().y)
         location.y = std::clamp(location.y, halfSize.y, m_bounds.y - halfSize.y);
 
     m_view.setCenter(location);

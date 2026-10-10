@@ -139,6 +139,8 @@ Cave::File Cave::File::loadFromFile(const std::string& directory, const std::str
         const bool isPort = magic[0] == 'P' && magic[1] == 'O' && magic[2] == 'R' && magic[3] == 'T';
         const bool isChum = magic[0] == 'C' && magic[1] == 'H' && magic[2] == 'U' && magic[3] == 'M';
         const bool isLava = magic[0] == 'L' && magic[1] == 'A' && magic[2] == 'V' && magic[3] == 'A';
+        const bool isPlan = magic[0] == 'P' && magic[1] == 'L' && magic[2] == 'A' && magic[3] == 'N';
+        const bool isMoss = magic[0] == 'M' && magic[1] == 'O' && magic[2] == 'S' && magic[3] == 'S';
         const bool isCosm = magic[0] == 'C' && magic[1] == 'O' && magic[2] == 'S' && magic[3] == 'M';
         const bool isName = magic[0] == 'N' && magic[1] == 'A' && magic[2] == 'M' && magic[3] == 'E';
         if (isName) {
@@ -169,7 +171,8 @@ Cave::File Cave::File::loadFromFile(const std::string& directory, const std::str
                 cosmic.settings.maxWalls = static_cast<uint8_t>(rec[5]);
                 cosmic.settings.maxDiamonds = static_cast<uint8_t>(rec[6]);
                 cosmic.settings.maxMonsters = static_cast<uint8_t>(rec[7]);
-                cosmic.settings.monsterMask = readReversedUint32(&rec[8]);
+                cosmic.settings.monsterMask = static_cast<uint64_t>(readReversedUint32(&rec[8]))
+                    | (static_cast<uint64_t>(readReversedUint32(&rec[12])) << 32);
                 caveFile.caves[caveIndex].cosmics.push_back(cosmic);
             }
             continue;
@@ -199,8 +202,14 @@ Cave::File Cave::File::loadFromFile(const std::string& directory, const std::str
             else if (isLava) {
                 caveFile.caves[caveIndex].properties.lavaGrowthSpeed = readReversedUint32(&rec[4]);
             }
+            else if (isPlan) {
+                caveFile.caves[caveIndex].properties.planktonGrowthMax = readReversedUint32(&rec[4]);
+            }
+            else if (isMoss) {
+                caveFile.caves[caveIndex].properties.mossGrowthSpeed = readReversedUint32(&rec[4]);
+            }
         }
-        if (!isWell && !isPort && !isChum && !isLava) break;
+        if (!isWell && !isPort && !isChum && !isLava && !isPlan && !isMoss) break;
     }
 
     return caveFile;
@@ -311,11 +320,15 @@ void Cave::File::saveToFile(const Cave::File& caveFile, const std::string& fullP
                 bytes[5] = static_cast<char>(rec.settings.maxWalls);
                 bytes[6] = static_cast<char>(rec.settings.maxDiamonds);
                 bytes[7] = static_cast<char>(rec.settings.maxMonsters);
-                const uint32_t mask = rec.settings.monsterMask;
+                const uint64_t mask = rec.settings.monsterMask;
                 bytes[8] = static_cast<char>(mask & 0xFF);
                 bytes[9] = static_cast<char>((mask >> 8) & 0xFF);
                 bytes[10] = static_cast<char>((mask >> 16) & 0xFF);
                 bytes[11] = static_cast<char>((mask >> 24) & 0xFF);
+                bytes[12] = static_cast<char>((mask >> 32) & 0xFF);
+                bytes[13] = static_cast<char>((mask >> 40) & 0xFF);
+                bytes[14] = static_cast<char>((mask >> 48) & 0xFF);
+                bytes[15] = static_cast<char>((mask >> 56) & 0xFF);
                 file.write(bytes, 16);
             }
         }
@@ -340,6 +353,42 @@ void Cave::File::saveToFile(const Cave::File& caveFile, const std::string& fullP
             rec[3] = static_cast<char>((nameLen >> 8) & 0xFF);
             file.write(rec, 4);
             file.write(name.data(), nameLen);
+        }
+    }
+
+    if (chumCount > 0) {
+        const char planMagic[4] = { 'P', 'L', 'A', 'N' };
+        file.write(planMagic, 4);
+        writeUint32LE(file, 1);
+        writeUint32LE(file, chumCount);
+        for (uint16_t caveIndex = 0; caveIndex < static_cast<uint16_t>(chumCount); ++caveIndex) {
+            char bytes[8] = {};
+            bytes[0] = static_cast<char>(caveIndex & 0xFF);
+            bytes[1] = static_cast<char>((caveIndex >> 8) & 0xFF);
+            const uint32_t max = caveFile.caves[caveIndex].properties.planktonGrowthMax;
+            bytes[4] = static_cast<char>(max & 0xFF);
+            bytes[5] = static_cast<char>((max >> 8) & 0xFF);
+            bytes[6] = static_cast<char>((max >> 16) & 0xFF);
+            bytes[7] = static_cast<char>((max >> 24) & 0xFF);
+            file.write(bytes, 8);
+        }
+    }
+
+    if (chumCount > 0) {
+        const char mossMagic[4] = { 'M', 'O', 'S', 'S' };
+        file.write(mossMagic, 4);
+        writeUint32LE(file, 1);
+        writeUint32LE(file, chumCount);
+        for (uint16_t caveIndex = 0; caveIndex < static_cast<uint16_t>(chumCount); ++caveIndex) {
+            char bytes[8] = {};
+            bytes[0] = static_cast<char>(caveIndex & 0xFF);
+            bytes[1] = static_cast<char>((caveIndex >> 8) & 0xFF);
+            const uint32_t speed = caveFile.caves[caveIndex].properties.mossGrowthSpeed;
+            bytes[4] = static_cast<char>(speed & 0xFF);
+            bytes[5] = static_cast<char>((speed >> 8) & 0xFF);
+            bytes[6] = static_cast<char>((speed >> 16) & 0xFF);
+            bytes[7] = static_cast<char>((speed >> 24) & 0xFF);
+            file.write(bytes, 8);
         }
     }
 }

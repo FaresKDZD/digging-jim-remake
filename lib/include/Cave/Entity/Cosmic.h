@@ -218,15 +218,20 @@ namespace Cave::Entity {
             { "Hellgull", Type::Hellgull },
             { "Charia", Type::Charia },
             { "Extinguished Pyrozo", Type::PyrozoExtinguished },
+            { "Predator", Type::Predator },
+            { "Plankton", Type::Plankton },
+            { "Macow", Type::Macow },
+            { "Caterpillar", Type::Caterpillar },
+            { "Butterfly", Type::Butterfly },
         };
 
         static constexpr int VITUS_OPTION_COUNT =
             static_cast<int>(sizeof(VITUS_OPTIONS) / sizeof(VITUS_OPTIONS[0]));
 
-        static constexpr uint32_t defaultVitusMask() {
-            return VITUS_OPTION_COUNT >= 32
-                ? 0xffffffffu
-                : ((1u << VITUS_OPTION_COUNT) - 1u);
+        static constexpr uint64_t defaultVitusMask() {
+            return VITUS_OPTION_COUNT >= 64
+                ? ~0ull
+                : ((1ull << VITUS_OPTION_COUNT) - 1ull);
         }
 
         struct Settings {
@@ -234,7 +239,7 @@ namespace Cave::Entity {
             uint8_t maxWalls = static_cast<uint8_t>(MAX_WALLS);
             uint8_t maxDiamonds = static_cast<uint8_t>(MAX_DIAMONDS);
             uint8_t maxMonsters = static_cast<uint8_t>(MAX_MONSTERS);
-            uint32_t monsterMask = defaultVitusMask();
+            uint64_t monsterMask = defaultVitusMask();
 
             bool operator==(const Settings& o) const {
                 return maxBoulders == o.maxBoulders

@@ -299,6 +299,13 @@ void HUD::Editor::Toolbar::drawToolItems(HUD::Editor::Panel* editorPanel)
     tool("Obsidian Wall",            "",  0, 22, Cave::Entity::Type::ObsidianWall);
     tool("Worm",                     "",  1, 22, Cave::Entity::Type::Worm);
     tool("Pyrobe",                   "",  2, 22, Cave::Entity::Type::Pyrobe);
+    tool("Predator",                 "",  0, 23, Cave::Entity::Type::Predator);
+    tool("Plankton",                 "",  1, 23, Cave::Entity::Type::Plankton);
+    tool("Macow",                    "",  2, 23, Cave::Entity::Type::Macow);
+    tool("Macow Egg",                "",  0, 24, Cave::Entity::Type::MacowEgg);
+    tool("Moss",                     "",  1, 24, Cave::Entity::Type::Moss);
+    tool("Caterpillar",              "",  2, 24, Cave::Entity::Type::Caterpillar);
+    tool("Butterfly",                "",  0, 25, Cave::Entity::Type::Butterfly);
 }
 
 void HUD::Editor::Toolbar::drawToolsMenu(HUD::Editor::Panel* editorPanel)

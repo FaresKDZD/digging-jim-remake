@@ -30,6 +30,19 @@ void Image::Manager::loadAllImages() {
     loadTexture(Image::Texture::EditorMiniTiles, "./assets/textures/Editor/mini_tiles.png");
 }
 
+void Image::Manager::loadEditorImages() {
+    loadTexture(Image::Texture::CaveTiles, "./assets/textures/Cave/tiles.png");
+    loadTexture(Image::Texture::CaveLoadingTiles, "./assets/textures/Cave/loading_tiles.png");
+    loadTexture(Image::Texture::GameFont, "./assets/textures/Game/font.png");
+    loadTexture(Image::Texture::EditorFill,     "./assets/textures/Editor/fill.png");
+    loadTexture(Image::Texture::EditorLineFill,    "./assets/textures/Editor/linefill.png");
+    loadTexture(Image::Texture::EditorEllipseFill, "./assets/textures/Editor/ellipsefill.png");
+    loadTexture(Image::Texture::EditorCoords, "./assets/textures/Editor/coords.png");
+    loadTexture(Image::Texture::EditorTestButton, "./assets/textures/Editor/test_button.png");
+    loadTexture(Image::Texture::EditorSelect, "./assets/textures/Editor/select.png");
+    loadTexture(Image::Texture::EditorMiniTiles, "./assets/textures/Editor/mini_tiles.png");
+}
+
 void Image::Manager::loadIcon(const Image::Icon& icon, const std::string& filename) {
     sf::Image image;
     if (!image.loadFromFile(filename)) {
@@ -39,6 +52,8 @@ void Image::Manager::loadIcon(const Image::Icon& icon, const std::string& filena
 }
 
 void Image::Manager::loadTexture(const Image::Texture& texture, const std::string& filename) {
+    if (m_textures.find(texture) != m_textures.end())
+        return;
     sf::Texture tex;
     if (!tex.loadFromFile(filename)) {
         throw std::runtime_error("Error: Unable to load texture: " + filename + "\n");

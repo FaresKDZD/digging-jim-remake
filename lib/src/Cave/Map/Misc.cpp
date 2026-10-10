@@ -29,7 +29,8 @@ void Cave::Map::createExplosion(const int& index) {
 	bool caveGullExplosion = getEntityType(index) == Cave::Entity::Type::CaveGull
 		|| getEntityType(index) == Cave::Entity::Type::SaturatedSludg
 		|| getEntityType(index) == Cave::Entity::Type::GallopQueen
-		|| getEntityType(index) == Cave::Entity::Type::Gallop;
+		|| getEntityType(index) == Cave::Entity::Type::Gallop
+		|| getEntityType(index) == Cave::Entity::Type::Butterfly;
 	createExplosion(index, caveGullExplosion);
 }
 
@@ -162,7 +163,9 @@ void Cave::Map::createSingularityExplosion(const int& origin) {
 		std::sort(wormFollowup.begin(), wormFollowup.end());
 		wormFollowup.erase(std::unique(wormFollowup.begin(), wormFollowup.end()), wormFollowup.end());
 		for (int part : wormFollowup) {
-			if (inBounds(part) && Cave::Entity::isWorm(getEntityType(part)))
+			if (!inBounds(part)) continue;
+			const Cave::Entity::Type type = getEntityType(part);
+			if (Cave::Entity::isWorm(type))
 				createExplosion(part);
 		}
 	}
@@ -275,7 +278,9 @@ void Cave::Map::detonateCells(const int& origin, const std::vector<int>& cells, 
 		std::sort(wormFollowup.begin(), wormFollowup.end());
 		wormFollowup.erase(std::unique(wormFollowup.begin(), wormFollowup.end()), wormFollowup.end());
 		for (int part : wormFollowup) {
-			if (inBounds(part) && Cave::Entity::isWorm(getEntityType(part)))
+			if (!inBounds(part)) continue;
+			const Cave::Entity::Type type = getEntityType(part);
+			if (Cave::Entity::isWorm(type))
 				createExplosion(part);
 		}
 	}

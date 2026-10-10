@@ -487,6 +487,9 @@ bool Cave::Map::jimlinIsLethalFallable(const int& index) const {
 	case Cave::Entity::Type::TimeBomb:
 	case Cave::Entity::Type::Ore:
 	case Cave::Entity::Type::GallopEgg:
+	case Cave::Entity::Type::MacowEgg:
+	case Cave::Entity::Type::MacowEggCooked:
+	case Cave::Entity::Type::Chrysalis:
 	case Cave::Entity::Type::JimlinShipInactive:
 	case Cave::Entity::Type::KingShipInactive:
 		return true;
@@ -526,6 +529,7 @@ bool Cave::Map::canJimlinDodgeWalk(const int& self, const int& cell, const int& 
 	if (!inBounds(cell) || cell == self) return false;
 	if (getEntityTransitioning(cell)) return false;
 	if (inBounds(threat) && cell == threat) return false;
+	if (jimlinCellTouchesLava(cell)) return false;
 	if (jimlinIsLethalFallable(cell)) return false;
 	if (hasTrait(Cave::Entity::Trait::Empty, cell) || isPassableGate(cell)) return true;
 	if (Cave::Entity::isDirtLike(getEntityType(cell))) return true;
@@ -556,6 +560,10 @@ bool Cave::Map::tryJimlinDodgeStep(const int& index, const Cave::Entity::Directi
 
 	const int pipeDest = findBlobPipeExit(index, direction);
 	if (pipeDest != OUT_OF_BOUNDS_INDEX) {
+		if (jimlinCellTouchesLava(pipeDest)) {
+			setJimlinAnimation(index, false, false);
+			return false;
+		}
 		setJimlinAnimation(index, true, false);
 		const int from = index;
 		if (warpEntity(index, direction)) {
@@ -677,9 +685,16 @@ bool Cave::Map::tryJimlinDodgeCrush(const int& index) {
 	return tryJimlinDodgeStep(index, stepDir);
 }
 
+bool Cave::Map::jimlinCellTouchesLava(const int& cell) const {
+	if (!inBounds(cell)) return false;
+	return getEntityType(cell) == Cave::Entity::Type::Lava
+		|| isAdjacentTo(cell, Cave::Entity::Type::Lava);
+}
+
 bool Cave::Map::canJimlinWalk(const int& cell, const int& self, bool inShip, bool throughClosedPrivate) const {
 	if (!inBounds(cell)) return false;
 	if (getEntityTransitioning(cell)) return false;
+	if (cell != self && jimlinCellTouchesLava(cell)) return false;
 	if (cell != self && jimlinHasCrushAbove(cell)) return false;
 	if (hasTrait(Cave::Entity::Trait::Empty, cell) || isPassableGate(cell)) return true;
 	if (Cave::Entity::isDirtLike(getEntityType(cell))) return true;
@@ -695,6 +710,7 @@ bool Cave::Map::canJimlinWalk(const int& cell, const int& self, bool inShip, boo
 bool Cave::Map::canJimlinOccupy(const int& cell, const int& self, int goal, bool inShip, bool throughClosedPrivate) const {
 	if (!inBounds(cell)) return false;
 	if (cell == self) return true;
+	if (jimlinCellTouchesLava(cell)) return false;
 	if (jimlinHasCrushAbove(cell)) return false;
 	if (canJimlinWalk(cell, self, inShip, throughClosedPrivate)) return true;
 	if (cell != goal) return false;
@@ -881,68 +897,21 @@ int Cave::Map::nearestJimlinThreat(const int& index) const {
 	const int y0 = sy > range ? sy - range : 0;
 	const int y1 = sy + range < height ? sy + range : height - 1;
 
-	int candidates[121];
-	int nCand = 0;
+	int best = OUT_OF_BOUNDS_INDEX;
+	int bestDist = 0x7fffffff;
 	for (int y = y0; y <= y1; ++y) {
 		for (int x = x0; x <= x1; ++x) {
 			const int i = y * width + x;
 			if (!isJimlinThreat(i)) continue;
-			if (chebyshev(index, i, width) > range) continue;
+			const int dist = chebyshev(index, i, width);
+			if (dist > range) continue;
 			if (i == index) return index;
-			if (nCand < 121)
-				candidates[nCand++] = i;
-		}
-	}
-	if (nCand == 0) return OUT_OF_BOUNDS_INDEX;
-
-	const bool inShip = jimlinInShip(index);
-	jimlinSearchBegin();
-	jimlinSearchVisit(index, index, Cave::Entity::Direction::NO_DIRECTION);
-	m_jimlinBfsQueue.push_back(index);
-
-	int best = OUT_OF_BOUNDS_INDEX;
-	int bestDist = 0x7fffffff;
-	int found = 0;
-
-	auto isCandidate = [&](int cell) {
-		for (int k = 0; k < nCand; ++k) {
-			if (candidates[k] == cell) return true;
-		}
-		return false;
-	};
-
-	while (m_jimlinBfsQueueHead < m_jimlinBfsQueue.size()) {
-		const int current = m_jimlinBfsQueue[m_jimlinBfsQueueHead++];
-		if (current != index && isCandidate(current)) {
-			const int dist = manhattan(index, current, width);
-			if (dist < bestDist) {
-				bestDist = dist;
-				best = current;
-			}
-			++found;
-			if (found >= nCand) break;
-			continue;
-		}
-		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
-			const int hop = findBlobPipeExit(current, dir);
-			if (hop != OUT_OF_BOUNDS_INDEX && !jimlinSearchSeen(hop)
-				&& (isCandidate(hop)
-					? canJimlinOccupy(hop, index, hop, inShip, true)
-					: canJimlinWalk(hop, index, inShip, true))) {
-				jimlinSearchVisit(hop, current, dir);
-				m_jimlinBfsQueue.push_back(hop);
-			}
-			const int next = getIndex(current, dir);
-			if (next == OUT_OF_BOUNDS_INDEX) continue;
-			if (jimlinSearchSeen(next)) continue;
-			if (isCandidate(next)) {
-				if (!canJimlinOccupy(next, index, next, inShip, true)) continue;
-			}
-			else if (!canJimlinWalk(next, index, inShip, true)) {
-				continue;
-			}
-			jimlinSearchVisit(next, current, dir);
-			m_jimlinBfsQueue.push_back(next);
+			if (dist >= bestDist) continue;
+			jimlinFillThreatReach(i, m_jimlinThreatReach);
+			if (static_cast<int>(m_jimlinThreatReach.size()) != width * height) continue;
+			if (m_jimlinThreatReach[static_cast<size_t>(index)] == 0) continue;
+			bestDist = dist;
+			best = i;
 		}
 	}
 	return best;
@@ -1234,7 +1203,7 @@ bool Cave::Map::tryJimlinStep(const int& index, const Cave::Entity::Direction& d
 
 	const int pipeDest = findBlobPipeExit(index, direction);
 	if (pipeDest != OUT_OF_BOUNDS_INDEX) {
-		if (jimlinHasCrushAbove(pipeDest)) {
+		if (jimlinHasCrushAbove(pipeDest) || jimlinCellTouchesLava(pipeDest)) {
 			setJimlinAnimation(index, false, false);
 			return false;
 		}
@@ -1394,6 +1363,7 @@ bool Cave::Map::tryJimlinExitShip(const int& index, const Cave::Entity::Directio
 	const bool empty = hasTrait(Cave::Entity::Trait::Empty, dest);
 	const bool dirt = Cave::Entity::isDirtLike(getEntityType(dest));
 	if (!empty && !dirt) return false;
+	if (jimlinCellTouchesLava(dest)) return false;
 
 	const Cave::Entity::Type look = jimlinLook(index);
 	const int extra = caveEntities[index].extra;
@@ -1557,6 +1527,10 @@ void Cave::Map::updateJimlin(const int& index) {
 	}
 	if (!jimlinInShip(index) && jimlinMode(index) != Cave::Entity::Jimlin::MODE_REST)
 		updateEntityAnimation(index);
+	if (!jimlinInShip(index) && isAdjacentTo(index, Cave::Entity::Type::Lava)) {
+		createExplosion(index);
+		return;
+	}
 	if (getEntityTransitioning(index)) return;
 	if (tryJimlinDodgeCrush(index)) return;
 
@@ -1571,6 +1545,13 @@ void Cave::Map::updateJimlin(const int& index) {
 		}
 	}
 	else if (jimlinMode(index) == Cave::Entity::Jimlin::MODE_FLEE) {
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(index, dir);
+			if (inBounds(next)
+				&& getEntityType(next) == Cave::Entity::Type::Gate
+				&& caveEntities[next].spawnCredit == Cave::Entity::Gate::MODE_OPEN)
+				toggleGate(next);
+		}
 		if (jimlinReadyToGoHome(index))
 			jimlinBeginHome(index);
 		else
@@ -1718,7 +1699,6 @@ void Cave::Map::updateJimlin(const int& index) {
 		std::vector<char>& threatReach = m_jimlinThreatReach;
 		jimlinFillThreatReach(threat, threatReach);
 		if (threatReach[static_cast<size_t>(index)] == 0) {
-			caveEntities[index].targetIndex = index;
 			for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
 				const int next = getIndex(index, dir);
 				if (inBounds(next)
@@ -1726,8 +1706,10 @@ void Cave::Map::updateJimlin(const int& index) {
 					&& caveEntities[next].spawnCredit == Cave::Entity::Gate::MODE_OPEN)
 					toggleGate(next);
 			}
-			setJimlinAnimation(index, false, false);
-			setEntityMoving(index, false);
+			if (jimlinReadyToGoHome(index))
+				jimlinBeginHome(index);
+			else
+				jimlinBeginIdle(index);
 			return;
 		}
 		int goal = caveEntities[index].targetIndex;

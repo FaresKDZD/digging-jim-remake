@@ -10,6 +10,7 @@
 #include "Cave/Map/Map.h"
 #include "Cave/Manager/Manager.h"
 #include "Utils/Random.h"
+#include "Utils/Prescale.h"
 #include "Net/Session.h"
 #include <chrono>
 
@@ -174,6 +175,8 @@ void Game::sendSignal(const GameSignal& signal) {
         m_gameIsPaused = false;
         return;
     }
+
+    const GameState previousState = m_gameState;
     if (signal == GameSignal::GotoMainMenu) {
         m_quitConfirmOpen = false;
         m_gameIsPaused = false;
@@ -189,6 +192,23 @@ void Game::sendSignal(const GameSignal& signal) {
     case GameState::CaveFail: handleCaveFail(signal); break;
     case GameState::GameDone: handleGameDone(signal); break;
     case GameState::GameOver: handleGameOver(signal); break;
+    }
+
+    // Always leave the cave after Quit, even if death/respawn already changed state.
+    if (signal == GameSignal::GotoMainMenu) {
+        if (m_editorMode) {
+            m_closeWindow = true;
+            return;
+        }
+        m_gameState = GameState::MainMenu;
+        m_caveActive = false;
+        m_revealCaveHUD = false;
+        m_makeHUDDisappear = true;
+        m_exitedFromCave = true;
+        soundManager.stop(Sound::Effect::Amoeba);
+        soundManager.stop(Sound::Effect::MagicWall);
+        if (previousState == GameState::GameDone || previousState == GameState::GameOver)
+            setCaveNumber(m_chosenCaveNumber);
     }
 }
 
@@ -252,6 +272,7 @@ void Game::handleCaveLoad(const GameSignal& signal) {
 
     case GameSignal::GameCompleted:
         m_gameState = GameState::GameDone;
+        m_caveActive = false;
         break;
 
     case GameSignal::GotoMainMenu:
@@ -301,6 +322,7 @@ void Game::handleCavePlay(const GameSignal& signal) {
 
     case GameSignal::GameCompleted:
         m_gameState = GameState::GameDone;
+        m_caveActive = false;
         break;
 
     case GameSignal::GotoMainMenu:
@@ -328,6 +350,7 @@ void Game::handleCavePass(const GameSignal& signal) {
 
     case GameSignal::GameCompleted:
         m_gameState = GameState::GameDone;
+        m_caveActive = false;
         break;
 
     case GameSignal::GotoMainMenu:
@@ -351,13 +374,11 @@ void Game::handleCaveFail(const GameSignal& signal) {
         m_lives--;
         if (m_lives == 0) {
             m_gameState = GameState::GameOver;
+            m_caveActive = false;
+            m_revealCaveHUD = false;
             break;
         }
         resetCaveState();
-        break;
-
-    case GameSignal::GameCompleted:
-        m_gameState = GameState::GameDone;
         break;
 
     case GameSignal::GotoMainMenu:
@@ -566,8 +587,14 @@ void Game::mainGameLoop() {
     Camera camera({ SCREEN_WIDTH, SCREEN_HEIGHT }, { 0.f, 0.f }, { 640.f, 480.f });
 
     // Fixed-size virtual render texture — all game content draws here,
-    // then the texture is stretched to fill whatever size the window is.
+    // then sharp-bilinear sampling fills the window without pixel crawl.
     sf::RenderTexture rt(sf::Vector2u(SCREEN_WIDTH, SCREEN_HEIGHT));
+    rt.setSmooth(false);
+
+    sf::Shader presentShader;
+    sf::Shader* presentShaderPtr = nullptr;
+    if (presentShader.loadFromFile("./assets/shaders/present.frag", sf::Shader::Type::Fragment))
+        presentShaderPtr = &presentShader;
 
     // View that maps the virtual screen (640x480) to fill the entire window.
     auto makeWindowView = [&]() -> sf::View {
@@ -722,7 +749,11 @@ void Game::mainGameLoop() {
 
         if (caveActive) {
             map.update(camera);
-            if (map.requiresReset()) {
+            if (map.requiresReset()
+                && m_caveActive
+                && !onMainMenu()
+                && !isGameOver()
+                && !isGameCompleted()) {
                 caveManager.startCave(getCaveFileIndex(), getCaveNumber(), &m_caveProperties, &map);
                 map.prepareForPlay();
                 camera.setBounds(map.getCameraBounds());
@@ -783,10 +814,8 @@ void Game::mainGameLoop() {
 
         inputSystem.update();
 
-        // ---- Stretch virtual screen to fill the real window -----------------
-        window.setView(makeWindowView());
-        window.clear(sf::Color::Black);
-        window.draw(sf::Sprite(rt.getTexture()));
+        // ---- Integer upscale, then fill the real window ---------------------
+        Utils::presentPrescaled(window, rt, SCREEN_WIDTH, SCREEN_HEIGHT, presentShaderPtr);
         if (showProps) ImGui::SFML::Render(window);
         window.display();
 
@@ -813,6 +842,7 @@ void Game::mainGameLoop() {
         }
 
         if ((!m_caveActive && caveActive)) {
+            map.abortToMenu();
             camera.setCentre({ 0, 0 });
             caveActive = false;
             m_freeCamera = false;
@@ -984,6 +1014,10 @@ bool Game::isGameOver() const {
 
 bool Game::onMainMenu() const {
     return m_gameState == GameState::MainMenu;
+}
+
+bool Game::onCavePass() const {
+    return m_gameState == GameState::CavePass;
 }
 
 int Game::getCaveFileIndex() {

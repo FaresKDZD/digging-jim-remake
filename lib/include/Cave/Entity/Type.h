@@ -140,6 +140,19 @@ namespace Cave::Entity {
         WormBody,
         HotBoulderEater,
         Pyrobe,
+        Predator,
+        Plankton,
+        Macow,
+        MacowEgg,
+        MacowEggHatch,
+        MacowEggCook,
+        MacowEggCooked,
+        Moss,
+        Caterpillar,
+        CaterpillarChrysalize,
+        Chrysalis,
+        ButterflyRelease,
+        Butterfly,
     };
 
     inline bool isHotBoulder(Type type) {
@@ -159,7 +172,21 @@ namespace Cave::Entity {
     }
 
     inline bool isDirtLike(Type type) {
-        return type == Type::Dirt || type == Type::Chum || type == Type::Magma;
+        return type == Type::Dirt || type == Type::Chum || type == Type::Magma
+            || type == Type::Moss;
+    }
+
+    inline bool isMacowEgg(Type type) {
+        return type == Type::MacowEgg || type == Type::MacowEggCooked;
+    }
+
+    inline bool isMacowFood(Type type) {
+        return type == Type::Plankton || type == Type::Moss;
+    }
+
+    inline bool isMacowNestSupport(Type type) {
+        return type == Type::Dirt || type == Type::Moss
+            || type == Type::SolidWall || type == Type::Magma;
     }
 
     inline bool isLavaImmune(Type type) {
@@ -293,6 +320,11 @@ namespace Cave::Entity {
         case Type::Charia:
         case Type::Worm:
         case Type::WormBody:
+        case Type::Predator:
+        case Type::Plankton:
+        case Type::Macow:
+        case Type::Caterpillar:
+        case Type::Butterfly:
             return true;
         default:
             return false;

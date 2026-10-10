@@ -93,6 +93,8 @@ void HUD::MainMenu::MainMenu::update() {
         m_section = HUD::MainMenu::Section::Main;
         m_selected = HUD::MainMenu::Selection::Play;
         m_caveBegin = false;
+        m_gameOverTilesHide = false;
+        m_loadRate = 0;
         m_game->sendSignal(GameSignal::StartMusic);
         for (int index = 0; index < 20 * 15; index++) loadingTiles[index] = true;
         m_creditsPositionX = 800;

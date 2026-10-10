@@ -22,8 +22,12 @@ namespace Sound {
         /// @brief Construct a new Sound Manager instance.
         Manager();
 
-        /// @brief Load all game sound effects into memory.
-        void loadAllSounds();
+        /// @brief Load game sound effects into memory.
+        /// @param includeMusic If false, skip the main-menu music track.
+        void loadAllSounds(bool includeMusic = true);
+
+        /// @brief True after loadAllSounds has loaded effect buffers.
+        bool soundsLoaded() const { return !m_buffers.empty(); }
 
         /**
          * @brief Play a sound effect once.

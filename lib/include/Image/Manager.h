@@ -23,6 +23,9 @@ namespace Image {
         /// @brief Load all game images and textures.
         void loadAllImages();
 
+        /// @brief Load only textures needed to show the cave editor.
+        void loadEditorImages();
+
         /**
          * @brief Retrieve an icon by its identifier.
          * 

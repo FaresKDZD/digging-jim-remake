@@ -29,9 +29,12 @@ std::vector<int> Cave::Map::preUpdateCaveEntities() {
 		m_supportDugOrExploded.assign(static_cast<size_t>(width * height), 0);
 		m_fallableVacated.assign(static_cast<size_t>(width * height), 0);
 		m_jimlinAtTickStart.assign(static_cast<size_t>(width * height), 0);
+		m_planktonCount = 0;
 		for (int i = 0; i < width * height; ++i) {
 			if (Cave::Entity::isJimlin(getEntityType(i)))
 				m_jimlinAtTickStart[static_cast<size_t>(i)] = 1;
+			if (getEntityType(i) == Cave::Entity::Type::Plankton)
+				m_planktonCount++;
 		}
 	}
 
@@ -249,6 +252,10 @@ void Cave::Map::updateInactiveEntity(const std::vector<int> indicies) {
 		case Cave::Entity::Type::DetonatorTriggered: updateTransientEntity(index, Cave::Entity::DetonatorUsed()); break;
 		case Cave::Entity::Type::BreakingFragileDiamond: updateTransientEntity(index, Cave::Entity::Space()); break;
 		case Cave::Entity::Type::GallopEggPop: updateTransientEntity(index, Cave::Entity::Gallop()); break;
+		case Cave::Entity::Type::MacowEggHatch: updateTransientEntity(index, Cave::Entity::Macow()); break;
+		case Cave::Entity::Type::MacowEggCook: updateMacowEggCook(index); break;
+		case Cave::Entity::Type::CaterpillarChrysalize: updateCaterpillarChrysalize(index); break;
+		case Cave::Entity::Type::ButterflyRelease: updateButterflyRelease(index); break;
 		case Cave::Entity::Type::Puffer: updatePuffer(index); break;
 		case Cave::Entity::Type::PufferBody: updatePufferBody(index); break;
 		case Cave::Entity::Type::Charger: updateCharger(index); break;
@@ -288,7 +295,8 @@ void Cave::Map::updateEntityDuringIntro(const std::vector<int> indicies) {
 	}
 	updateOverlayCosmics();
 	m_introDelayOccurred = true;
-	if (!m_editorPreview && m_state == Cave::State::Intro && !anyStartDoorPending()) {
+	if (!m_editorPreview && m_state == Cave::State::Intro && !anyStartDoorPending()
+		&& !m_game->isQuitConfirmOpen() && !m_game->onMainMenu()) {
 		enterCavePlay();
 	}
 }
@@ -323,6 +331,19 @@ void Cave::Map::initEntityUpdateMaps() {
 	m_entityUpdateMap[Cave::Entity::Type::God] = [this](int i) { updateGod(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Chaos] = [this](int i) { updateChaos(i); };
 	m_entityUpdateMap[Cave::Entity::Type::CaveGull] = [this](int i) { updateCaveGull(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Predator] = [this](int i) { updatePredator(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Plankton] = [this](int i) { updatePlankton(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Macow] = [this](int i) { updateMacow(i); };
+	m_entityUpdateMap[Cave::Entity::Type::MacowEgg] = [this](int i) { updateMacowEgg(i); };
+	m_entityUpdateMap[Cave::Entity::Type::MacowEggHatch] = [this](int i) { updateTransientEntity(i, Cave::Entity::Macow()); };
+	m_entityUpdateMap[Cave::Entity::Type::MacowEggCook] = [this](int i) { updateMacowEggCook(i); };
+	m_entityUpdateMap[Cave::Entity::Type::MacowEggCooked] = [this](int i) { updateMacowEgg(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Moss] = [this](int i) { updateMoss(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Caterpillar] = [this](int i) { updateCaterpillar(i); };
+	m_entityUpdateMap[Cave::Entity::Type::CaterpillarChrysalize] = [this](int i) { updateCaterpillarChrysalize(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Chrysalis] = [this](int i) { updateChrysalis(i); };
+	m_entityUpdateMap[Cave::Entity::Type::ButterflyRelease] = [this](int i) { updateButterflyRelease(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Butterfly] = [this](int i) { updateButterfly(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Hellgull] = [this](int i) { updateHellgull(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Worm] = [this](int i) { updateWorm(i); };
 	m_entityUpdateMap[Cave::Entity::Type::WormBody] = [this](int i) { updateWormBody(i); };
@@ -406,15 +427,20 @@ void Cave::Map::initEntityUpdateMaps() {
 }
 
 void Cave::Map::update(Camera camera) {
+	const bool freezeLoadEnd = m_game->isQuitConfirmOpen() || m_game->onMainMenu();
 	switch (m_state) {
 	case Cave::State::Load:
+		if (m_game->isGameCompleted() || m_game->isGameOver())
+			break;
 		// Handle loading tiles disappearing
-		for (int index = 0; index < width * height; index++) {
-			if (Utils::cosmeticRandom(0, std::max(m_loadRate - CAVE_LOAD_THTRESHOLD, 0)) == 0) m_loaded[index] = true;
+		if (!freezeLoadEnd) {
+			for (int index = 0; index < width * height; index++) {
+				if (Utils::cosmeticRandom(0, std::max(m_loadRate - CAVE_LOAD_THTRESHOLD, 0)) == 0) m_loaded[index] = true;
+			}
+			// Enter the Intro state once the loading has finished
+			if (m_loadRate > 0) m_loadRate--;
+			else m_state = Cave::State::Intro;
 		}
-		// Enter the Intro state once the loading has finished
-		if (m_loadRate > 0) m_loadRate--;
-		else m_state = Cave::State::Intro;
 		break;
 	case Cave::State::Play:
 		// Handle game being paused
@@ -432,7 +458,8 @@ void Cave::Map::update(Camera camera) {
 		break;
 	case Cave::State::Pass:
 		// Handle cave end once bonus points have been calculated and the cave timer has reached 0
-		if (m_game->getTime() == 0 || m_game->unlimitedCaveTime()) m_state = Cave::State::End;
+		if (!freezeLoadEnd && (m_game->getTime() == 0 || m_game->unlimitedCaveTime()))
+			m_state = Cave::State::End;
 		break;
 	case Cave::State::Fail:
 		// Handle cave end when the player enters a confirm action
@@ -440,17 +467,22 @@ void Cave::Map::update(Camera camera) {
 			m_state = Cave::State::End;
 		break;
 	case Cave::State::End:
-		// Handle loading tiles covering the entity tiles
-		if (m_loadRate < CAVE_LOAD_RATE - CAVE_UNLOAD_RATE) m_loadRate = CAVE_LOAD_RATE - CAVE_UNLOAD_RATE;
-		for (int index = 0; index < width * height; index++) {
-			if (Utils::cosmeticRandom(m_loadRate, CAVE_LOAD_RATE) == CAVE_LOAD_RATE) m_loaded[index] = false;
-		}
-		// Enter the Load state once the unloading has finished
-		if (m_loadRate < CAVE_LOAD_RATE) m_loadRate++;
-		else {
-			m_reset = true;
-			m_state = Cave::State::Load;
-			m_game->sendSignal(GameSignal::CaveLoad);
+		if (!freezeLoadEnd) {
+			// Handle loading tiles covering the entity tiles
+			if (m_loadRate < CAVE_LOAD_RATE - CAVE_UNLOAD_RATE) m_loadRate = CAVE_LOAD_RATE - CAVE_UNLOAD_RATE;
+			for (int index = 0; index < width * height; index++) {
+				if (Utils::cosmeticRandom(m_loadRate, CAVE_LOAD_RATE) == CAVE_LOAD_RATE) m_loaded[index] = false;
+			}
+			// Enter the Load state once the unloading has finished
+			if (m_loadRate < CAVE_LOAD_RATE) m_loadRate++;
+			else if (m_game->onCavePass() && m_game->getCaveNumber() == m_game->getCaveCount()) {
+				m_game->sendSignal(GameSignal::GameCompleted);
+			}
+			else {
+				m_reset = true;
+				m_state = Cave::State::Load;
+				m_game->sendSignal(GameSignal::CaveLoad);
+			}
 		}
 		break;
 	default:

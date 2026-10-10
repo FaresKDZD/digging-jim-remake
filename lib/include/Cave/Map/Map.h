@@ -230,6 +230,9 @@ namespace Cave {
          */
         void markForReset();
 
+        /// @brief Stop load/end/play so quitting during death or respawn can leave the cave.
+        void abortToMenu();
+
         /**
          * @brief Put the map into editor mode.
          *
@@ -250,6 +253,10 @@ namespace Cave {
 
         /// @brief True while the editor Simulate toggle is active.
         bool isEditorSimulate() const { return m_editorSimulate; }
+
+        /// @brief Copy growth speeds/limits from cave properties onto the live map
+        /// without regenerating entities. Used when the editor changes props or starts Simulate.
+        void applyRuntimeProperties(const Cave::Properties& properties);
 
         /**
          * @brief Converts editor-state entities to their correct in-game initial states.
@@ -811,6 +818,7 @@ namespace Cave {
         bool jimlinShipOnJimlinBlock(const int& cell) const;
         bool jimlinShipStable(const int& cell) const;
         bool jimlinShipPreferredSupport(const int& cell, int self = OUT_OF_BOUNDS_INDEX) const;
+        bool jimlinCellTouchesLava(const int& cell) const;
         bool canJimlinWalk(const int& cell, const int& self, bool inShip, bool throughClosedPrivate = false) const;
         bool canJimlinOccupy(const int& cell, const int& self, int goal, bool inShip, bool throughClosedPrivate = false) const;
         bool privateGatesUsable() const;
@@ -1078,6 +1086,26 @@ namespace Cave {
          * @param index The entity index of the Protozo.
          */
         void updateCaveGull(const int& index);
+        void updatePredator(const int& index);
+        bool isPredatorPrey(const int& index) const;
+        Cave::Entity::Direction predatorHuntStep(const int& index);
+        bool tryMovePredator(const int& index, const Cave::Entity::Direction& direction);
+        void updatePlankton(const int& index);
+        void updateMacow(const int& index);
+        Cave::Entity::Direction macowHuntStep(const int& index);
+        Cave::Entity::Direction macowNestStep(const int& index);
+        bool tryMoveMacow(const int& index, const Cave::Entity::Direction& direction);
+        void updateCaterpillar(const int& index);
+        Cave::Entity::Direction caterpillarHuntStep(const int& index);
+        bool tryMoveCaterpillar(const int& index, const Cave::Entity::Direction& direction);
+        void updateCaterpillarChrysalize(const int& index);
+        void updateChrysalis(const int& index);
+        void updateButterflyRelease(const int& index);
+        void updateButterfly(const int& index);
+        bool isMacowSolidGround(const int& index) const;
+        bool isMacowNestCell(const int& nest, const int& macow) const;
+        bool isMacowLayStand(const int& stand) const;
+        bool tryLayMacowEgg(const int& index);
         void updateHellgull(const int& index);
         void updateWorm(const int& index);
         void updateWormBody(const int& index);
@@ -1273,6 +1301,12 @@ namespace Cave {
 
         /// @brief Boulder physics plus a hatch timer that plays the pop animation, then a Gallop.
         void updateGallopEgg(const int& index);
+
+        /// @brief Boulder physics, hatch timer, and magma cooking into a cooked egg.
+        void updateMacowEgg(const int& index);
+
+        /// @brief Plays the cook sheet once and holds the last frame as a cooked egg.
+        void updateMacowEggCook(const int& index);
 
         /// @brief Fetches accessible diamonds to the nearest Queen nest, else Cave-Gull wander.
         void updateGallop(const int& index);
@@ -1514,6 +1548,7 @@ namespace Cave {
          */
         void updateChum(const int& index);
         void updateLava(const int& index);
+        void updateMoss(const int& index);
         void updateFire(const int& index);
         void updateFireball(const int& index);
         void updateExplosion(const int& index);
@@ -1801,6 +1836,12 @@ namespace Cave {
         /// @brief Time bombs currently carried by Jim.
         int m_timeBombsCarried = 0;
 
+        /// @brief Unhatched Macow eggs currently carried by Jim.
+        int m_macowEggsCarried = 0;
+
+        /// @brief Cooked Macow eggs currently carried by Jim.
+        int m_macowCookedEggsCarried = 0;
+
         /// @brief Remaining frames of ruby invincibility.
         int m_jimInvincibleFrames = 0;
         int m_jimPyrobeFrames = 0;
@@ -1825,6 +1866,12 @@ namespace Cave {
         
         /// @brief The maximum amount of growth of the amoeba before turning into boulders.
         int m_amoebaGrowthMax = 0;
+
+        /// @brief Max live Plankton before splitting stops. 0 means unlimited.
+        int m_planktonGrowthMax = 0;
+
+        /// @brief Live Plankton count, rebuilt each logic tick.
+        int m_planktonCount = 0;
 
         /// @brief The growth speed of the amoeba.
         int m_amoebaGrowthSpeed = 0;
@@ -1852,6 +1899,9 @@ namespace Cave {
 
         /// @brief The lava growth speed.
         int m_lavaGrowthSpeed = 0;
+
+        /// @brief The moss growth speed.
+        int m_mossGrowthSpeed = 0;
 
         /// @brief Whether the detonator has been triggered or not.
         bool m_detonatorTriggered = false;
@@ -1901,6 +1951,13 @@ namespace Cave {
         mutable size_t m_jimlinBfsQueueHead = 0;
         mutable bool m_jimlinPrivateGatesCached = false;
         mutable bool m_jimlinPrivateGatesUsable = false;
+
+        /// @brief Reused Predator pathfinding scratch (generation-stamped).
+        std::vector<int> m_predatorHuntVisit;
+        std::vector<Cave::Entity::Direction> m_predatorHuntFirst;
+        std::vector<int> m_predatorHuntQueue;
+        int m_predatorHuntGen = 0;
+        size_t m_predatorHuntQueueHead = 0;
 
         /// @brief Cells emptied this tick by digging or an explosion finishing.
         std::vector<char> m_supportDugOrExploded;

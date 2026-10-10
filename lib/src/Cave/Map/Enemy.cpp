@@ -1,4 +1,4 @@
-﻿#include "Cave/Map/Map.h"
+#include "Cave/Map/Map.h"
 #include "Utils/Counter.h"
 #include "Utils/Random.h"
 #include <algorithm>
@@ -579,7 +579,7 @@ Cave::Entity::Base Cave::Map::randomVitusMonster() const {
 	std::vector<Cave::Entity::Type> pool;
 	pool.reserve(static_cast<size_t>(C::VITUS_OPTION_COUNT));
 	for (int i = 0; i < C::VITUS_OPTION_COUNT; ++i) {
-		if (m_cosmicSettings.monsterMask & (1u << i))
+		if (m_cosmicSettings.monsterMask & (1ull << i))
 			pool.push_back(C::VITUS_OPTIONS[i].type);
 	}
 	if (pool.empty())
@@ -695,7 +695,8 @@ void Cave::Map::updatePegul(const int& index) {
 		updateEntityAnimation(index);
 		return;
 	}
-	if (isAdjacentTo(index, Cave::Entity::Type::Amoeba)) {
+	if (isAdjacentTo(index, Cave::Entity::Type::Amoeba)
+		|| isAdjacentTo(index, Cave::Entity::Type::Lava)) {
 		createExplosion(index);
 		return;
 	}
@@ -2094,6 +2095,600 @@ void Cave::Map::updateCaveGull(const int& index) {
 	tryWallFollowEmpty(index, true);
 }
 
+void Cave::Map::updateButterfly(const int& index) {
+	if (handleEnemyBasicUpdate(index)) return;
+	tryWallFollowEmpty(index, true);
+}
+
+Cave::Entity::Direction Cave::Map::caterpillarHuntStep(const int& index) {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (index < 0 || index >= cellCount) return Cave::Entity::Direction::NO_DIRECTION;
+
+	if (static_cast<int>(m_predatorHuntVisit.size()) != cellCount
+		|| static_cast<int>(m_predatorHuntFirst.size()) != cellCount) {
+		m_predatorHuntVisit.assign(static_cast<size_t>(cellCount), 0);
+		m_predatorHuntFirst.assign(static_cast<size_t>(cellCount), Cave::Entity::Direction::NO_DIRECTION);
+		m_predatorHuntGen = 0;
+	}
+	++m_predatorHuntGen;
+	if (m_predatorHuntGen == 0) {
+		std::fill(m_predatorHuntVisit.begin(), m_predatorHuntVisit.end(), 0);
+		m_predatorHuntGen = 1;
+	}
+
+	m_predatorHuntQueue.clear();
+	if (m_predatorHuntQueue.capacity() < static_cast<size_t>(cellCount))
+		m_predatorHuntQueue.reserve(static_cast<size_t>(cellCount));
+	m_predatorHuntQueueHead = 0;
+
+	const int gen = m_predatorHuntGen;
+	m_predatorHuntVisit[static_cast<size_t>(index)] = gen;
+	m_predatorHuntQueue.push_back(index);
+
+	while (m_predatorHuntQueueHead < m_predatorHuntQueue.size()) {
+		const int current = m_predatorHuntQueue[m_predatorHuntQueueHead++];
+		for (Cave::Entity::Direction step : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, step);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (m_predatorHuntVisit[static_cast<size_t>(next)] == gen) continue;
+
+			const bool prey = getEntityType(next) == Cave::Entity::Type::MacowEggCooked;
+			if (!prey && !isMonsterWalkable(next)) continue;
+
+			m_predatorHuntVisit[static_cast<size_t>(next)] = gen;
+			const Cave::Entity::Direction first = (current == index)
+				? step
+				: m_predatorHuntFirst[static_cast<size_t>(current)];
+			m_predatorHuntFirst[static_cast<size_t>(next)] = first;
+			if (prey)
+				return first;
+
+			m_predatorHuntQueue.push_back(next);
+		}
+	}
+	return Cave::Entity::Direction::NO_DIRECTION;
+}
+
+bool Cave::Map::tryMoveCaterpillar(const int& index, const Cave::Entity::Direction& direction) {
+	if (editorIdle()) return false;
+	if (direction == Cave::Entity::Direction::NO_DIRECTION) return false;
+	setEntityDirection(index, direction);
+	const int dest = getIndex(index, direction);
+	if (dest == OUT_OF_BOUNDS_INDEX) return false;
+
+	const bool empty = hasTrait(Cave::Entity::Trait::Empty, dest) || isPassableGate(dest);
+	const bool prey = getEntityType(dest) == Cave::Entity::Type::MacowEggCooked;
+	if (!empty && !prey) return false;
+
+	if (!moveEntity(index, direction, Cave::Entity::Caterpillar::SLIDE_INC)) return false;
+
+	setEntityMoving(dest, true);
+	if (prey) {
+		caveEntities[dest].spawnCredit = Cave::Entity::Caterpillar::MODE_REST;
+		caveEntities[dest].extra = 0;
+		m_game->soundManager.play(Sound::Effect::Drop);
+		notifyFusion5Stimulus(dest);
+	}
+	return true;
+}
+
+void Cave::Map::updateCaterpillar(const int& index) {
+	updateEntityAnimation(index);
+	if (editorIdle()) return;
+	if (handleEnemyDeath(index)) return;
+
+	using C = Cave::Entity::Caterpillar;
+	int& mode = caveEntities[index].spawnCredit;
+	int& timer = caveEntities[index].extra;
+
+	if (mode == C::MODE_REST) {
+		if (getEntityTransitioning(index)) return;
+		setEntityMoving(index, false);
+		if (timer < C::REST_TICKS)
+			timer++;
+		if (timer < C::REST_TICKS) return;
+		setEntity(index, Cave::Entity::CaterpillarChrysalize());
+		return;
+	}
+
+	if (getEntityTransitioning(index)) return;
+
+	for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+		const int next = getIndex(index, dir);
+		if (next == OUT_OF_BOUNDS_INDEX) continue;
+		if (getEntityType(next) != Cave::Entity::Type::MacowEggCooked) continue;
+		if (tryMoveCaterpillar(index, dir))
+			return;
+	}
+
+	const Cave::Entity::Direction hunt = caterpillarHuntStep(index);
+	if (hunt != Cave::Entity::Direction::NO_DIRECTION) {
+		mode = C::MODE_HUNT;
+		if (tryMoveCaterpillar(index, hunt))
+			return;
+	}
+	else {
+		mode = C::MODE_WANDER;
+	}
+
+	tryWallFollowEmpty(index, false, C::SLIDE_INC);
+}
+
+bool Cave::Map::isPredatorPrey(const int& index) const {
+	if (!inBounds(index)) return false;
+	const Cave::Entity::Type type = getEntityType(index);
+	if (type == Cave::Entity::Type::Predator) return false;
+	if (Cave::Entity::isActiveJimlinShip(type)) return false;
+	if (type == Cave::Entity::Type::God || type == Cave::Entity::Type::Chaos) return false;
+	if (Cave::Entity::isWorm(type)) return false;
+	if (type == Cave::Entity::Type::Puffer || type == Cave::Entity::Type::PufferBody) return false;
+	if (type == Cave::Entity::Type::Charger || type == Cave::Entity::Type::ChargerBody) return false;
+	if (Cave::Entity::isCosmic(type) || type == Cave::Entity::Type::Singularity) return false;
+	if (Cave::Entity::isHuntTarget(type)) {
+		if (type == Cave::Entity::Type::Jim)
+			return !isJimInvincible(index);
+		return true;
+	}
+	return Cave::Entity::isMonster(type);
+}
+
+Cave::Entity::Direction Cave::Map::predatorHuntStep(const int& index) {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (index < 0 || index >= cellCount) return Cave::Entity::Direction::NO_DIRECTION;
+
+	if (static_cast<int>(m_predatorHuntVisit.size()) != cellCount
+		|| static_cast<int>(m_predatorHuntFirst.size()) != cellCount) {
+		m_predatorHuntVisit.assign(static_cast<size_t>(cellCount), 0);
+		m_predatorHuntFirst.assign(static_cast<size_t>(cellCount), Cave::Entity::Direction::NO_DIRECTION);
+		m_predatorHuntGen = 0;
+	}
+	++m_predatorHuntGen;
+	if (m_predatorHuntGen == 0) {
+		std::fill(m_predatorHuntVisit.begin(), m_predatorHuntVisit.end(), 0);
+		m_predatorHuntGen = 1;
+	}
+
+	m_predatorHuntQueue.clear();
+	if (m_predatorHuntQueue.capacity() < static_cast<size_t>(cellCount))
+		m_predatorHuntQueue.reserve(static_cast<size_t>(cellCount));
+	m_predatorHuntQueueHead = 0;
+
+	const int gen = m_predatorHuntGen;
+	m_predatorHuntVisit[static_cast<size_t>(index)] = gen;
+	m_predatorHuntQueue.push_back(index);
+
+	while (m_predatorHuntQueueHead < m_predatorHuntQueue.size()) {
+		const int current = m_predatorHuntQueue[m_predatorHuntQueueHead++];
+		for (Cave::Entity::Direction step : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, step);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (m_predatorHuntVisit[static_cast<size_t>(next)] == gen) continue;
+
+			const bool prey = isPredatorPrey(next);
+			if (!prey && !isMonsterWalkable(next)) continue;
+
+			m_predatorHuntVisit[static_cast<size_t>(next)] = gen;
+			const Cave::Entity::Direction first = (current == index)
+				? step
+				: m_predatorHuntFirst[static_cast<size_t>(current)];
+			m_predatorHuntFirst[static_cast<size_t>(next)] = first;
+			if (prey)
+				return first;
+
+			m_predatorHuntQueue.push_back(next);
+		}
+	}
+	return Cave::Entity::Direction::NO_DIRECTION;
+}
+
+bool Cave::Map::tryMovePredator(const int& index, const Cave::Entity::Direction& direction) {
+	if (editorIdle()) return false;
+	if (direction == Cave::Entity::Direction::NO_DIRECTION) return false;
+	setEntityDirection(index, direction);
+	const int dest = getIndex(index, direction);
+	if (dest == OUT_OF_BOUNDS_INDEX) return false;
+
+	const Cave::Entity::Type destType = getEntityType(dest);
+	const bool empty = hasTrait(Cave::Entity::Trait::Empty, dest) || isPassableGate(dest);
+	const bool prey = isPredatorPrey(dest);
+	if (!empty && !prey) return false;
+
+	const bool atePlayer = Cave::Entity::isPlayer(destType);
+	if (!moveEntity(index, direction)) return false;
+
+	setEntityMoving(dest, true);
+	if (prey) {
+		m_game->soundManager.play(Sound::Effect::Drop);
+		notifyFusion5Stimulus(dest);
+		if (atePlayer) {
+			m_game->sendSignal(GameSignal::CaveFail);
+			m_state = Cave::State::Fail;
+		}
+	}
+	return true;
+}
+
+void Cave::Map::updatePredator(const int& index) {
+	if (editorIdle()) {
+		updateEntityAnimation(index);
+		return;
+	}
+
+	using P = Cave::Entity::Predator;
+	int& mode = caveEntities[index].spawnCredit;
+	int& frame = caveEntities[index].extra;
+	int& target = caveEntities[index].targetIndex;
+	const bool transforming = mode == P::MODE_TO_AGGRO || mode == P::MODE_TO_IDLE;
+	if (!transforming)
+		updateEntityAnimation(index);
+
+	bool adjacentPrey = false;
+	if (!transforming) {
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(index, dir);
+			if (next == OUT_OF_BOUNDS_INDEX || !isPredatorPrey(next)) continue;
+			adjacentPrey = true;
+			if (mode == P::MODE_AGGRO && tryMovePredator(index, dir))
+				return;
+		}
+	}
+
+	if (isAdjacentTo(index, Cave::Entity::Type::Lava)) {
+		createExplosion(index);
+		return;
+	}
+	if (isJimInvincible() && isRubyPrey(index) && isAdjacentTo(index, Cave::Entity::Type::Jim)) {
+		setEntity(index, Cave::Entity::Space());
+		m_game->soundManager.play(Sound::Effect::Drop);
+		return;
+	}
+	if (transforming || adjacentPrey) {
+		if (isAdjacentTo(index, Cave::Entity::Type::Amoeba)) {
+			createExplosion(index);
+			return;
+		}
+	}
+	else if (handleEnemyDeath(index)) {
+		return;
+	}
+
+	if (transforming) {
+		if (getEntityTransitioning(index)) return;
+		if (frame == 0)
+			caveEntities[index].clearTransition();
+		caveEntities[index].setAnimationFrame(frame);
+		frame++;
+		if (frame >= P::FRAME_COUNT_TURN) {
+			if (mode == P::MODE_TO_AGGRO) {
+				mode = P::MODE_AGGRO;
+				setEntityAnimation(index, P::aggroAnimation());
+			}
+			else {
+				mode = P::MODE_IDLE;
+				target = OUT_OF_BOUNDS_INDEX;
+				setEntityAnimation(index, P::idleAnimation());
+			}
+			frame = 0;
+		}
+		setEntityMoving(index, false);
+		return;
+	}
+
+	if (getEntityTransitioning(index)) return;
+
+	const Cave::Entity::Direction dir = predatorHuntStep(index);
+	if (mode == P::MODE_IDLE) {
+		if (dir != Cave::Entity::Direction::NO_DIRECTION) {
+			frame = 0;
+			mode = P::MODE_TO_AGGRO;
+			caveEntities[index].clearTransition();
+			setEntityAnimation(index, P::turnAggroAnimation(false));
+			caveEntities[index].setAnimationFrame(0);
+			setEntityMoving(index, false);
+			return;
+		}
+		tryWallFollowEmpty(index, true);
+		return;
+	}
+
+	if (dir == Cave::Entity::Direction::NO_DIRECTION) {
+		target = OUT_OF_BOUNDS_INDEX;
+		frame = 0;
+		mode = P::MODE_TO_IDLE;
+		caveEntities[index].clearTransition();
+		setEntityAnimation(index, P::turnAggroAnimation(true));
+		caveEntities[index].setAnimationFrame(0);
+		setEntityMoving(index, false);
+		return;
+	}
+
+	if (tryMovePredator(index, dir))
+		return;
+	tryWallFollowEmpty(index, true);
+}
+
+void Cave::Map::updatePlankton(const int& index) {
+	updateEntityAnimation(index);
+	if (editorIdle()) return;
+	if (handleEnemyDeath(index)) return;
+
+	int& timer = caveEntities[index].extra;
+	using P = Cave::Entity::Plankton;
+	if (timer < P::SPLIT_TICKS)
+		timer++;
+
+	if (getEntityTransitioning(index)) return;
+
+		if (timer >= P::SPLIT_TICKS) {
+		const bool atCap = m_planktonGrowthMax > 0 && m_planktonCount >= m_planktonGrowthMax;
+		if (!atCap) {
+			int empties[4];
+			int count = 0;
+			for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+				const int next = getIndex(index, dir);
+				if (next == OUT_OF_BOUNDS_INDEX) continue;
+				if (!hasTrait(Cave::Entity::Trait::Empty, next)) continue;
+				if (getEntityTransitioning(next)) continue;
+				empties[count++] = next;
+			}
+			if (count > 0) {
+				const int dest = empties[Utils::randomInteger(0, count - 1)];
+				setEntity(dest, Cave::Entity::Plankton());
+				timer = 0;
+				m_planktonCount++;
+			}
+		}
+	}
+
+	tryWallFollowEmpty(index, false);
+}
+
+Cave::Entity::Direction Cave::Map::macowHuntStep(const int& index) {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (index < 0 || index >= cellCount) return Cave::Entity::Direction::NO_DIRECTION;
+
+	if (static_cast<int>(m_predatorHuntVisit.size()) != cellCount
+		|| static_cast<int>(m_predatorHuntFirst.size()) != cellCount) {
+		m_predatorHuntVisit.assign(static_cast<size_t>(cellCount), 0);
+		m_predatorHuntFirst.assign(static_cast<size_t>(cellCount), Cave::Entity::Direction::NO_DIRECTION);
+		m_predatorHuntGen = 0;
+	}
+	++m_predatorHuntGen;
+	if (m_predatorHuntGen == 0) {
+		std::fill(m_predatorHuntVisit.begin(), m_predatorHuntVisit.end(), 0);
+		m_predatorHuntGen = 1;
+	}
+
+	m_predatorHuntQueue.clear();
+	if (m_predatorHuntQueue.capacity() < static_cast<size_t>(cellCount))
+		m_predatorHuntQueue.reserve(static_cast<size_t>(cellCount));
+	m_predatorHuntQueueHead = 0;
+
+	const int gen = m_predatorHuntGen;
+	m_predatorHuntVisit[static_cast<size_t>(index)] = gen;
+	m_predatorHuntQueue.push_back(index);
+
+	while (m_predatorHuntQueueHead < m_predatorHuntQueue.size()) {
+		const int current = m_predatorHuntQueue[m_predatorHuntQueueHead++];
+		for (Cave::Entity::Direction step : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, step);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (m_predatorHuntVisit[static_cast<size_t>(next)] == gen) continue;
+
+			const bool prey = Cave::Entity::isMacowFood(getEntityType(next));
+			if (!prey && !isMonsterWalkable(next)) continue;
+
+			m_predatorHuntVisit[static_cast<size_t>(next)] = gen;
+			const Cave::Entity::Direction first = (current == index)
+				? step
+				: m_predatorHuntFirst[static_cast<size_t>(current)];
+			m_predatorHuntFirst[static_cast<size_t>(next)] = first;
+			if (prey)
+				return first;
+
+			m_predatorHuntQueue.push_back(next);
+		}
+	}
+	return Cave::Entity::Direction::NO_DIRECTION;
+}
+
+bool Cave::Map::isMacowSolidGround(const int& index) const {
+	if (!inBounds(index)) return false;
+	if (getEntityTransitioning(index)) return false;
+	return Cave::Entity::isMacowNestSupport(getEntityType(index));
+}
+
+bool Cave::Map::isMacowNestCell(const int& nest, const int& macow) const {
+	if (!inBounds(nest) || nest == macow) return false;
+	if (!hasTrait(Cave::Entity::Trait::Empty, nest)) return false;
+	if (getEntityTransitioning(nest)) return false;
+	const int below = getIndex(nest, Cave::Entity::Direction::DOWN);
+	if (below == macow) return false;
+	return isMacowSolidGround(below);
+}
+
+bool Cave::Map::isMacowLayStand(const int& stand) const {
+	if (!inBounds(stand)) return false;
+	for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+		if (isMacowNestCell(getIndex(stand, dir), stand))
+			return true;
+	}
+	return false;
+}
+
+bool Cave::Map::tryLayMacowEgg(const int& index) {
+	const int down = getIndex(index, Cave::Entity::Direction::DOWN);
+	if (isMacowNestCell(down, index)) {
+		setEntity(down, Cave::Entity::MacowEgg());
+		return true;
+	}
+	int nests[4];
+	int count = 0;
+	for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+		if (dir == Cave::Entity::Direction::DOWN) continue;
+		const int nest = getIndex(index, dir);
+		if (!isMacowNestCell(nest, index)) continue;
+		nests[count++] = nest;
+	}
+	if (count <= 0) return false;
+	const int dest = nests[Utils::randomInteger(0, count - 1)];
+	setEntity(dest, Cave::Entity::MacowEgg());
+	return true;
+}
+
+Cave::Entity::Direction Cave::Map::macowNestStep(const int& index) {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (index < 0 || index >= cellCount) return Cave::Entity::Direction::NO_DIRECTION;
+	if (isMacowLayStand(index)) return Cave::Entity::Direction::NO_DIRECTION;
+
+	if (static_cast<int>(m_predatorHuntVisit.size()) != cellCount
+		|| static_cast<int>(m_predatorHuntFirst.size()) != cellCount) {
+		m_predatorHuntVisit.assign(static_cast<size_t>(cellCount), 0);
+		m_predatorHuntFirst.assign(static_cast<size_t>(cellCount), Cave::Entity::Direction::NO_DIRECTION);
+		m_predatorHuntGen = 0;
+	}
+	++m_predatorHuntGen;
+	if (m_predatorHuntGen == 0) {
+		std::fill(m_predatorHuntVisit.begin(), m_predatorHuntVisit.end(), 0);
+		m_predatorHuntGen = 1;
+	}
+
+	m_predatorHuntQueue.clear();
+	if (m_predatorHuntQueue.capacity() < static_cast<size_t>(cellCount))
+		m_predatorHuntQueue.reserve(static_cast<size_t>(cellCount));
+	m_predatorHuntQueueHead = 0;
+
+	const int gen = m_predatorHuntGen;
+	m_predatorHuntVisit[static_cast<size_t>(index)] = gen;
+	m_predatorHuntQueue.push_back(index);
+
+	while (m_predatorHuntQueueHead < m_predatorHuntQueue.size()) {
+		const int current = m_predatorHuntQueue[m_predatorHuntQueueHead++];
+		for (Cave::Entity::Direction step : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, step);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (m_predatorHuntVisit[static_cast<size_t>(next)] == gen) continue;
+			if (!isMonsterWalkable(next)) continue;
+
+			m_predatorHuntVisit[static_cast<size_t>(next)] = gen;
+			const Cave::Entity::Direction first = (current == index)
+				? step
+				: m_predatorHuntFirst[static_cast<size_t>(current)];
+			m_predatorHuntFirst[static_cast<size_t>(next)] = first;
+			if (isMacowLayStand(next))
+				return first;
+
+			m_predatorHuntQueue.push_back(next);
+		}
+	}
+	return Cave::Entity::Direction::NO_DIRECTION;
+}
+
+bool Cave::Map::tryMoveMacow(const int& index, const Cave::Entity::Direction& direction) {
+	if (editorIdle()) return false;
+	if (direction == Cave::Entity::Direction::NO_DIRECTION) return false;
+	setEntityDirection(index, direction);
+	const int dest = getIndex(index, direction);
+	if (dest == OUT_OF_BOUNDS_INDEX) return false;
+
+	const bool empty = hasTrait(Cave::Entity::Trait::Empty, dest) || isPassableGate(dest);
+	const bool prey = Cave::Entity::isMacowFood(getEntityType(dest));
+	if (!empty && !prey) return false;
+
+	if (!moveEntity(index, direction)) return false;
+
+	setEntityMoving(dest, true);
+	if (prey) {
+		caveEntities[dest].spawnCredit = Cave::Entity::Macow::MODE_REST;
+		caveEntities[dest].extra = 0;
+		m_game->soundManager.play(Sound::Effect::Drop);
+		notifyFusion5Stimulus(dest);
+	}
+	return true;
+}
+
+void Cave::Map::updateMacow(const int& index) {
+	updateEntityAnimation(index);
+	if (editorIdle()) return;
+	if (handleEnemyDeath(index)) return;
+
+	using M = Cave::Entity::Macow;
+	int& mode = caveEntities[index].spawnCredit;
+	int& timer = caveEntities[index].extra;
+
+	if (mode == M::MODE_REST) {
+		if (timer < M::REST_TICKS)
+			timer++;
+		if (getEntityTransitioning(index)) return;
+		setEntityMoving(index, false);
+		if (timer < M::REST_TICKS) return;
+
+		if (tryLayMacowEgg(index)) {
+			mode = M::MODE_WANDER;
+			timer = 0;
+			return;
+		}
+		mode = M::MODE_SEEK_NEST;
+	}
+
+	if (mode == M::MODE_SEEK_NEST) {
+		if (getEntityTransitioning(index)) return;
+		if (tryLayMacowEgg(index)) {
+			mode = M::MODE_WANDER;
+			timer = 0;
+			return;
+		}
+		const Cave::Entity::Direction nestDir = macowNestStep(index);
+		if (nestDir != Cave::Entity::Direction::NO_DIRECTION) {
+			const int dest = getIndex(index, nestDir);
+			if (isMonsterWalkable(dest) && tryMoveMacow(index, nestDir))
+				return;
+		}
+		tryWallFollowEmpty(index, true);
+		return;
+	}
+
+	if (mode == M::MODE_HUNT) {
+		if (getEntityTransitioning(index)) return;
+
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(index, dir);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (!Cave::Entity::isMacowFood(getEntityType(next))) continue;
+			if (tryMoveMacow(index, dir))
+				return;
+		}
+
+		const Cave::Entity::Direction dir = macowHuntStep(index);
+		if (dir == Cave::Entity::Direction::NO_DIRECTION) {
+			mode = M::MODE_WANDER;
+			timer = 0;
+			tryWallFollowEmpty(index, true);
+			return;
+		}
+		if (tryMoveMacow(index, dir))
+			return;
+		tryWallFollowEmpty(index, true);
+		return;
+	}
+
+	if (timer < M::HUNT_TICKS)
+		timer++;
+	if (getEntityTransitioning(index)) return;
+
+	if (timer >= M::HUNT_TICKS) {
+		timer = 0;
+		const Cave::Entity::Direction dir = macowHuntStep(index);
+		if (dir != Cave::Entity::Direction::NO_DIRECTION) {
+			mode = M::MODE_HUNT;
+			if (tryMoveMacow(index, dir))
+				return;
+		}
+	}
+
+	tryWallFollowEmpty(index, true);
+}
+
 void Cave::Map::updateWorm(const int& index) {
 	if (handleEnemyBasicUpdate(index)) return;
 	if (m_state == Cave::State::Load || m_state == Cave::State::End) return;
@@ -2769,7 +3364,10 @@ bool Cave::Map::tryWanderBoulderEater(const int& index, bool canEat) {
 	auto eatFood = [this, index](Cave::Entity::Direction dir) {
 		return tryMoveEnemy(index, Cave::Entity::Type::Boulder, dir)
 			|| tryMoveEnemy(index, Cave::Entity::Type::MagicBoulder, dir)
-			|| tryMoveEnemy(index, Cave::Entity::Type::GallopEgg, dir);
+			|| tryMoveEnemy(index, Cave::Entity::Type::GallopEgg, dir)
+			|| tryMoveEnemy(index, Cave::Entity::Type::MacowEgg, dir)
+			|| tryMoveEnemy(index, Cave::Entity::Type::MacowEggCooked, dir)
+			|| tryMoveEnemy(index, Cave::Entity::Type::Chrysalis, dir);
 	};
 	for (int i = 0; i < 3; ++i) {
 		if (canEat && i == 1) {
@@ -2903,7 +3501,9 @@ bool Cave::Map::godTileUnsafe(const int& cell) const {
 		scan != OUT_OF_BOUNDS_INDEX;
 		scan = getIndex(scan, Cave::Entity::Direction::UP)) {
 		const Cave::Entity::Type type = getEntityType(scan);
-		if (type == Cave::Entity::Type::Boulder || type == Cave::Entity::Type::GallopEgg) return true;
+		if (type == Cave::Entity::Type::Boulder || type == Cave::Entity::Type::GallopEgg
+			|| Cave::Entity::isMacowEgg(type)
+			|| type == Cave::Entity::Type::Chrysalis) return true;
 		if (type != Cave::Entity::Type::MagicBoulder
 			&& isFallableEntity(scan)
 			&& getEntityFalling(scan)) {
@@ -3071,6 +3671,11 @@ Cave::Entity::Base Cave::Map::monsterFromType(Cave::Entity::Type type) const {
 	case Cave::Entity::Type::Hellgull: return Cave::Entity::Hellgull();
 	case Cave::Entity::Type::Charia: return Cave::Entity::Charia();
 	case Cave::Entity::Type::Worm: return Cave::Entity::Worm();
+	case Cave::Entity::Type::Predator: return Cave::Entity::Predator();
+	case Cave::Entity::Type::Plankton: return Cave::Entity::Plankton();
+	case Cave::Entity::Type::Macow: return Cave::Entity::Macow();
+	case Cave::Entity::Type::Caterpillar: return Cave::Entity::Caterpillar();
+	case Cave::Entity::Type::Butterfly: return Cave::Entity::Butterfly();
 	default: return Cave::Entity::Protozo();
 	}
 }
@@ -3078,9 +3683,9 @@ Cave::Entity::Base Cave::Map::monsterFromType(Cave::Entity::Type type) const {
 Cave::Entity::Base Cave::Map::randomMonsterExceptGod() const {
 	using W = Cave::Entity::Well;
 	const int n = static_cast<int>(sizeof(W::SUMMON_OPTIONS) / sizeof(W::SUMMON_OPTIONS[0]));
-	int choices[32];
+	int choices[64];
 	int count = 0;
-	for (int i = 0; i < n && count < 32; ++i) {
+	for (int i = 0; i < n && count < 64; ++i) {
 		const Cave::Entity::Type type = W::SUMMON_OPTIONS[i].type;
 		if (type == Cave::Entity::Type::God) continue;
 		choices[count++] = i;
@@ -3690,9 +4295,9 @@ bool Cave::Map::chaosHasOtherMonsters() const {
 Cave::Entity::Base Cave::Map::randomChaosSummonMonster() const {
 	using W = Cave::Entity::Well;
 	const int n = static_cast<int>(sizeof(W::SUMMON_OPTIONS) / sizeof(W::SUMMON_OPTIONS[0]));
-	Cave::Entity::Type choices[40];
+	Cave::Entity::Type choices[64];
 	int count = 0;
-	for (int i = 0; i < n && count < 40; ++i) {
+	for (int i = 0; i < n && count < 64; ++i) {
 		const Cave::Entity::Type type = W::SUMMON_OPTIONS[i].type;
 		if (type == Cave::Entity::Type::God
 			|| type == Cave::Entity::Type::Charger
@@ -4179,13 +4784,17 @@ void Cave::Map::updateSludg(const int& index) {
 }
 
 void Cave::Map::updateSaturatedSludg(const int& index) {
-	updateEntityAnimation(index);
 	if (handleEnemyBasicUpdate(index)) return;
 	tryWallFollowEmpty(index, true);
 }
 
 void Cave::Map::updateGlutton(const int& index) {
 	updateEntityAnimation(index);
+
+	if (isAdjacentTo(index, Cave::Entity::Type::Lava)) {
+		createExplosion(index);
+		return;
+	}
 
 	for (Cave::Entity::Direction side : Cave::Entity::ALL_DIRECTIONS) {
 		const int neighbour = getIndex(index, side);
@@ -5009,6 +5618,18 @@ static bool isWanderMonster(Cave::Entity::Type type) {
 	case Cave::Entity::Type::Charia:
 	case Cave::Entity::Type::Worm:
 	case Cave::Entity::Type::WormBody:
+	case Cave::Entity::Type::Predator:
+	case Cave::Entity::Type::Plankton:
+	case Cave::Entity::Type::Macow:
+	case Cave::Entity::Type::MacowEgg:
+	case Cave::Entity::Type::MacowEggHatch:
+	case Cave::Entity::Type::MacowEggCook:
+	case Cave::Entity::Type::MacowEggCooked:
+	case Cave::Entity::Type::Caterpillar:
+	case Cave::Entity::Type::CaterpillarChrysalize:
+	case Cave::Entity::Type::Chrysalis:
+	case Cave::Entity::Type::ButterflyRelease:
+	case Cave::Entity::Type::Butterfly:
 		return true;
 	default:
 		return false;
@@ -5548,6 +6169,11 @@ bool Cave::Map::isPathfindMonster(const int& index) const {
 	case Cave::Entity::Type::Fusion3:
 	case Cave::Entity::Type::Fusion4:
 	case Cave::Entity::Type::Fusion5:
+	case Cave::Entity::Type::Predator:
+	case Cave::Entity::Type::Plankton:
+	case Cave::Entity::Type::Macow:
+	case Cave::Entity::Type::Caterpillar:
+	case Cave::Entity::Type::Butterfly:
 		return true;
 	default:
 		return false;
@@ -5632,6 +6258,9 @@ bool Cave::Map::isFallableEntity(const int& index) const {
 	case Cave::Entity::Type::Ruby:
 	case Cave::Entity::Type::Pyrobe:
 	case Cave::Entity::Type::GallopEgg:
+	case Cave::Entity::Type::MacowEgg:
+	case Cave::Entity::Type::MacowEggCooked:
+	case Cave::Entity::Type::Chrysalis:
 	case Cave::Entity::Type::JimlinShipInactive:
 	case Cave::Entity::Type::KingShipInactive:
 		return true;

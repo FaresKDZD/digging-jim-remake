@@ -5,7 +5,10 @@
 
 Sound::Manager::Manager() {}
 
-void Sound::Manager::loadAllSounds() {
+void Sound::Manager::loadAllSounds(bool includeMusic) {
+    if (!m_buffers.empty())
+        return;
+
     // Load sound effects
     loadSound(Sound::Effect::Amoeba, "./assets/sounds/Effect/amoeba.wav");
     loadSound(Sound::Effect::Break, "./assets/sounds/Effect/break.wav");
@@ -20,6 +23,7 @@ void Sound::Manager::loadAllSounds() {
     loadSound(Sound::Effect::MagicWall, "./assets/sounds/Effect/magic_wall.wav");
     loadSound(Sound::Effect::Open, "./assets/sounds/Effect/open.wav");
     loadSound(Sound::Effect::Plasma, "./assets/sounds/Effect/plasma.wav");
+    loadSound(Sound::Effect::EggHatch, "./assets/sounds/Effect/egg_hatch.wav");
     loadSound(Sound::Effect::Chum, "./assets/sounds/Effect/plasma.wav");
     loadSound(Sound::Effect::Enrage, "./assets/sounds/Effect/enrage.wav");
     loadSound(Sound::Effect::Haze, "./assets/sounds/Effect/haze.wav");
@@ -30,8 +34,8 @@ void Sound::Manager::loadAllSounds() {
     loadSound(Sound::Effect::Yahoo, "./assets/sounds/Effect/yahoo.wav");
     loadSound(Sound::Effect::Yippee, "./assets/sounds/Effect/yippee.wav");
 
-    // Load music
-    loadMusic(Sound::Music::MainMenu, "./assets/sounds/Music/main_menu.wav");
+    if (includeMusic)
+        loadMusic(Sound::Music::MainMenu, "./assets/sounds/Music/main_menu.wav");
 }
 
 void Sound::Manager::loadSound(const Sound::Effect& effect, const std::string& filename) {

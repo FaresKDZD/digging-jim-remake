@@ -1,0 +1,17 @@
+---
+description: Add new monsters to Well, God, Chaos, and Vitus lists unless excluded
+alwaysApply: true
+---
+
+# New monster spawn lists
+
+When adding a new **placeable monster** (not a body segment, egg, hatch burst, or other non-monster tile), also add it to these lists unless the user says otherwise:
+
+1. `Well::isSummonable` and `Well::SUMMON_OPTIONS` in `lib/include/Cave/Entity/Well.h` (Well picker, God boulder transforms, and Chaos summons all use this list)
+2. `Cosmic::VITUS_OPTIONS` in `lib/include/Cave/Entity/Cosmic.h` (cosmic settings Vitus spawn list)
+
+Also add a `monsterFromType` case if that monster can be spawned from a type.
+
+Keep God/Chaos/Well choice arrays large enough for the option count. Vitus `monsterMask` is `uint64_t` (low 32 bits at COSM bytes 8–11, high 32 at 12–15).
+
+Do not add Worm **bodies**, Macow Egg, Chrysalis, transients, or similar supporting tiles unless asked.

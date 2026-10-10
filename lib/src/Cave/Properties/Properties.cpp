@@ -98,10 +98,13 @@ public:
             {
                 auto* box  = new wxStaticBoxSizer(wxVERTICAL, this, "");
                 wxWindow* p = box->GetStaticBox();
-                auto* grid = new wxFlexGridSizer(1, 2, 6, 10);
+                auto* grid = new wxFlexGridSizer(2, 2, 6, 10);
                 grid->Add(lbl(p, "Amoeba growth max:"), 0, wxALIGN_CENTER_VERTICAL | wxALIGN_RIGHT);
                 m_amoebaMax = spin(p, AMOEBA_GRWOTH_MAX_MIN, AMOEBA_GRWOTH_MAX_MAX, props.amoebaGrowthMax);
                 grid->Add(m_amoebaMax, 0, wxALIGN_CENTER_VERTICAL);
+                grid->Add(lbl(p, "Plankton growth max:"), 0, wxALIGN_CENTER_VERTICAL | wxALIGN_RIGHT);
+                m_planktonMax = spin(p, PLANKTON_GROWTH_MAX_MIN, PLANKTON_GROWTH_MAX_MAX, props.planktonGrowthMax);
+                grid->Add(m_planktonMax, 0, wxALIGN_CENTER_VERTICAL);
                 box->Add(grid, 0, wxALL, 10);
                 rightCol->Add(box, 0, wxEXPAND | wxBOTTOM, 8);
             }
@@ -109,14 +112,15 @@ public:
             {
                 auto* box  = new wxStaticBoxSizer(wxVERTICAL, this, "");
                 wxWindow* p = box->GetStaticBox();
-                auto* grid = new wxFlexGridSizer(3, 2, 6, 10);
+                auto* grid = new wxFlexGridSizer(2, 2, 6, 10);
                 grid->Add(lbl(p, "Time:"), 0, wxALIGN_CENTER_VERTICAL | wxALIGN_RIGHT);
+                auto* timeRow = new wxBoxSizer(wxHORIZONTAL);
                 m_time = spin(p, TIME_MIN, TIME_MAX, props.unlimitedTime ? TIME_MAX : props.time);
-                grid->Add(m_time, 0, wxALIGN_CENTER_VERTICAL);
-                grid->AddSpacer(0);
                 m_unlimitedTime = new wxCheckBox(p, wxID_ANY, "Unlimited time");
                 m_unlimitedTime->SetValue(props.unlimitedTime);
-                grid->Add(m_unlimitedTime, 0, wxALIGN_CENTER_VERTICAL);
+                timeRow->Add(m_time, 0, wxALIGN_CENTER_VERTICAL);
+                timeRow->Add(m_unlimitedTime, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, 10);
+                grid->Add(timeRow, 0, wxALIGN_CENTER_VERTICAL);
                 grid->Add(lbl(p, "Magic wall expire time:"), 0, wxALIGN_CENTER_VERTICAL | wxALIGN_RIGHT);
                 m_magicTime = spin(p, MAGIC_WALL_TIME_MIN, MAGIC_WALL_TIME_MAX, props.magicWallTime);
                 grid->Add(m_magicTime, 0, wxALIGN_CENTER_VERTICAL);
@@ -155,6 +159,11 @@ public:
         outer->Add(sliderGroup("Lava growth speed",
                                m_lavaSpd, props.lavaGrowthSpeed,
                                LAVA_GROWTH_SPEED_MIN, LAVA_GROWTH_SPEED_MAX, 6),
+                   0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 4);
+
+        outer->Add(sliderGroup("Moss growth speed",
+                               m_mossSpd, props.mossGrowthSpeed,
+                               MOSS_GROWTH_SPEED_MIN, MOSS_GROWTH_SPEED_MAX, 6),
                    0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 8);
 
         // ── Colors ────────────────────────────────────────────────────────────
@@ -245,6 +254,7 @@ public:
         m_props.diamondValue      = clampGet(m_diamVal,      DIAMOND_VALUE_MIN,        DIAMOND_VALUE_MAX);
         m_props.extraDiamondValue = clampGet(m_extraDiamVal, EXTRA_DIAMOND_VALUE_MIN,  EXTRA_DIAMOND_VALUE_MAX);
         m_props.amoebaGrowthMax   = clampGet(m_amoebaMax,    AMOEBA_GRWOTH_MAX_MIN,    AMOEBA_GRWOTH_MAX_MAX);
+        m_props.planktonGrowthMax = clampGet(m_planktonMax,  PLANKTON_GROWTH_MAX_MIN,  PLANKTON_GROWTH_MAX_MAX);
         m_props.unlimitedTime     = m_unlimitedTime && m_unlimitedTime->GetValue();
         m_props.time              = m_props.unlimitedTime
             ? TIME_MAX
@@ -254,6 +264,7 @@ public:
         m_props.plasmaGrowthSpeed = clampSlider(m_plasmaSpd, PLASMA_GROWTH_SPEED_MIN,  PLASMA_GROWTH_SPEED_MAX);
         m_props.chumGrowthSpeed   = clampSlider(m_chumSpd,   CHUM_GROWTH_SPEED_MIN,    CHUM_GROWTH_SPEED_MAX);
         m_props.lavaGrowthSpeed   = clampSlider(m_lavaSpd,   LAVA_GROWTH_SPEED_MIN,    LAVA_GROWTH_SPEED_MAX);
+        m_props.mossGrowthSpeed   = clampSlider(m_mossSpd,   MOSS_GROWTH_SPEED_MIN,    MOSS_GROWTH_SPEED_MAX);
         m_props.hue               = clampSlider(m_hue,       HUE_MIN,                  HUE_MAX);
         m_props.sat               = clampSlider(m_sat,       SAT_MIN,                  SAT_MAX);
         m_props.lum               = clampSlider(m_lum,       LUM_MIN,                  LUM_MAX);
@@ -303,6 +314,7 @@ private:
     wxSpinCtrl* m_diamVal      = nullptr;
     wxSpinCtrl* m_extraDiamVal = nullptr;
     wxSpinCtrl* m_amoebaMax    = nullptr;
+    wxSpinCtrl* m_planktonMax  = nullptr;
     wxSpinCtrl* m_time         = nullptr;
     wxCheckBox* m_unlimitedTime = nullptr;
     wxSpinCtrl* m_magicTime    = nullptr;
@@ -310,6 +322,7 @@ private:
     wxSlider*   m_plasmaSpd    = nullptr;
     wxSlider*   m_chumSpd      = nullptr;
     wxSlider*   m_lavaSpd      = nullptr;
+    wxSlider*   m_mossSpd      = nullptr;
     wxSlider*   m_hue          = nullptr;
     wxSlider*   m_sat          = nullptr;
     wxSlider*   m_lum          = nullptr;
@@ -379,19 +392,19 @@ public:
         return wxSize(std::max(minWidth, 180), h);
     }
 
-    void SetChecks(uint32_t mask)
+    void SetChecks(uint64_t mask)
     {
         m_mask = mask;
         ApplyChecks();
     }
 
-    uint32_t GetMask() const
+    uint64_t GetMask() const
     {
         if (!m_list) return m_mask;
-        uint32_t mask = 0;
+        uint64_t mask = 0;
         for (unsigned i = 0; i < m_list->GetCount(); ++i)
             if (m_list->IsChecked(i))
-                mask |= (1u << i);
+                mask |= (1ull << i);
         return mask;
     }
 
@@ -400,11 +413,11 @@ private:
     {
         if (!m_list) return;
         for (unsigned i = 0; i < m_list->GetCount(); ++i)
-            m_list->Check(i, (m_mask & (1u << i)) != 0);
+            m_list->Check(i, (m_mask & (1ull << i)) != 0);
     }
 
     wxCheckListBox* m_list = nullptr;
-    uint32_t m_mask = Cave::Entity::Cosmic::defaultVitusMask();
+    uint64_t m_mask = Cave::Entity::Cosmic::defaultVitusMask();
 };
 
 class CosmicSettingsDialog : public wxDialog

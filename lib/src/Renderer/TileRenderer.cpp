@@ -54,7 +54,7 @@ void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>
         int tileIndex = Cave::Entity::NO_TEXTURE_INDEX;
         sf::Color tint = sf::Color::White;
     };
-    WormSlide wormSlides[48];
+    WormSlide wormSlides[96];
     int wormSlideCount = 0;
 
     int index = 0;
@@ -94,7 +94,7 @@ void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>
                 case Cave::Entity::Direction::UP:    oy = (float)(32 - disp); break;
                 default: break;
                 }
-                if (wormSlideCount < 48)
+                if (wormSlideCount < 96)
                     wormSlides[wormSlideCount++] = { baseX + ox, baseY + oy, entity.getCurrentTextureIndex(), tint };
                 index++;
                 continue;

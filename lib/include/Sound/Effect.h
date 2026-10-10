@@ -50,6 +50,9 @@ namespace Sound {
         /// @brief Plasma spawn sound.
         Plasma,
 
+        /// @brief Macow egg hatching.
+        EggHatch,
+
         /// @brief Chum growth (pitched-down plasma).
         Chum,
 

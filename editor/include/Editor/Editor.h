@@ -18,7 +18,7 @@ const std::string EDITOR_NAME = "Digging Jim Builder";
  * @class Editor
  * @brief Central controller for the Digging Jim Builder cave editor.
  *
- * Editor owns the game instance, image manager, and cave settings used
+ * Editor owns the game instance and cave settings used throughout the editor session.
  * throughout the editor session. All user interactions (menu items, keyboard
  * shortcuts, toolbar buttons) are routed through public action*() methods that
  * set private boolean flags. Each flag is consumed once per frame inside run(),
@@ -254,9 +254,6 @@ public:
 
     /// @brief Editor-specific cave settings (animation, random dist, etc.).
     Cave::Settings   settings;
-
-    /// @brief Shared image manager for all textures used in the editor.
-    Image::Manager   imageManager;
 
 private:
 

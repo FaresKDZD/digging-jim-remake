@@ -166,6 +166,8 @@ void Cave::Map::generateMap(const Cave::Properties* properties, const std::vecto
 	m_jimMovedThisTick = false;
 	m_hollowCarried = 0;
 	m_timeBombsCarried = 0;
+	m_macowEggsCarried = 0;
+	m_macowCookedEggsCarried = 0;
 	m_jimInvincibleFrames = 0;
 	m_jimPyrobeFrames = 0;
 	m_playerInvincible.fill(0);
@@ -178,19 +180,14 @@ void Cave::Map::generateMap(const Cave::Properties* properties, const std::vecto
 	m_magicWallTimer = properties->magicWallTime * 8; // x8 to convert from ticks to seconds.
 	m_game->soundManager.stop(Sound::Effect::MagicWall);
 	
-	// Reset plasma variables
-	m_plasmaGrowthSpeed = properties->plasmaGrowthSpeed;
-	m_chumGrowthSpeed = static_cast<int>(properties->chumGrowthSpeed);
-	m_lavaGrowthSpeed = static_cast<int>(properties->lavaGrowthSpeed);
-
 	// Reset amoeba variables
 	m_amoebaGrowthCount = 0;
 	m_amoebaChecked = false;
 	m_amobeaIsTrapped = false;
 	m_amoebaIsCompletelyTrapped = false;
 	m_amoebaSurpassedMaxGrowth = false;
-	m_amoebaGrowthSpeed = properties->amoebaGrowthSpeed;
-	m_amoebaGrowthMax = properties->amoebaGrowthMax;
+
+	applyRuntimeProperties(*properties);
 
 	// Reset detonator variables
 	m_detonatorTriggered = false;
@@ -238,6 +235,16 @@ void Cave::Map::setEditorSimulate(bool enabled) {
 		m_game->soundManager.stop(Sound::Effect::MagicWall);
 	if (m_game->soundManager.isPlaying(Sound::Effect::Amoeba))
 		m_game->soundManager.stop(Sound::Effect::Amoeba);
+}
+
+void Cave::Map::applyRuntimeProperties(const Cave::Properties& properties) {
+	m_plasmaGrowthSpeed = static_cast<int>(properties.plasmaGrowthSpeed);
+	m_chumGrowthSpeed = static_cast<int>(properties.chumGrowthSpeed);
+	m_lavaGrowthSpeed = static_cast<int>(properties.lavaGrowthSpeed);
+	m_mossGrowthSpeed = static_cast<int>(properties.mossGrowthSpeed);
+	m_amoebaGrowthSpeed = static_cast<int>(properties.amoebaGrowthSpeed);
+	m_amoebaGrowthMax = static_cast<int>(properties.amoebaGrowthMax);
+	m_planktonGrowthMax = static_cast<int>(properties.planktonGrowthMax);
 }
 
 void Cave::Map::prepareForPlay() {

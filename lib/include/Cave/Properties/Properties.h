@@ -14,6 +14,8 @@ static constexpr uint32_t EXTRA_DIAMOND_VALUE_MIN = 0u;
 static constexpr uint32_t EXTRA_DIAMOND_VALUE_MAX = 99u;
 static constexpr uint32_t AMOEBA_GRWOTH_MAX_MIN = 0u;
 static constexpr uint32_t AMOEBA_GRWOTH_MAX_MAX = 9999u;
+static constexpr uint32_t PLANKTON_GROWTH_MAX_MIN = 0u;
+static constexpr uint32_t PLANKTON_GROWTH_MAX_MAX = 9999u;
 static constexpr uint32_t TIME_MIN = 0u;
 static constexpr uint32_t TIME_MAX = 999u;
 static constexpr uint32_t MAGIC_WALL_TIME_MIN = 0u;
@@ -26,6 +28,8 @@ static constexpr uint32_t CHUM_GROWTH_SPEED_MIN = 0u;
 static constexpr uint32_t CHUM_GROWTH_SPEED_MAX = 1000u;
 static constexpr uint32_t LAVA_GROWTH_SPEED_MIN = 0u;
 static constexpr uint32_t LAVA_GROWTH_SPEED_MAX = 1000u;
+static constexpr uint32_t MOSS_GROWTH_SPEED_MIN = 0u;
+static constexpr uint32_t MOSS_GROWTH_SPEED_MAX = 1000u;
 static constexpr uint32_t HUE_MIN = 0u;
 static constexpr uint32_t HUE_MAX = 200u;
 static constexpr uint32_t SAT_MIN = 0u;
@@ -70,6 +74,11 @@ namespace Cave {
         bool unlimitedTime = false;
         /// @brief Extra field (not in the 11×uint32 .cav properties blob). Persisted via LAVA chunk.
         uint32_t lavaGrowthSpeed = 0;
+        /// @brief Extra field (not in the 11×uint32 .cav properties blob). Persisted via PLAN chunk.
+        /// 0 means unlimited plankton splitting.
+        uint32_t planktonGrowthMax = 0;
+        /// @brief Extra field (not in the 11×uint32 .cav properties blob). Persisted via MOSS chunk.
+        uint32_t mossGrowthSpeed = 0;
     };
 
     /**

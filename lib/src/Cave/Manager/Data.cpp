@@ -103,6 +103,15 @@ Cave::Entity::Base Cave::Data::getTileEntity(const char& tile) {
 	case 102: return Cave::Entity::WormBody();
 	case 103: return Cave::Entity::HotBoulderEater();
 	case 104: return Cave::Entity::Pyrobe();
+	case 105: return Cave::Entity::Predator();
+	case 106: return Cave::Entity::Plankton();
+	case 107: return Cave::Entity::Macow();
+	case 108: return Cave::Entity::MacowEgg();
+	case 109: return Cave::Entity::Moss();
+	case 110: return Cave::Entity::MacowEggCooked();
+	case 111: return Cave::Entity::Caterpillar();
+	case 112: return Cave::Entity::Butterfly();
+	case 113: return Cave::Entity::Chrysalis();
 	default:
 		return Cave::Entity::Space();
 	}

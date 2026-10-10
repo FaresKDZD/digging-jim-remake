@@ -1,4 +1,5 @@
 #include "Cave/Map/Map.h"
+#include <cmath>
 
 sf::Vector2f Cave::Map::getCameraStartLocation() const {
 	if (m_startDoorIndex == OUT_OF_BOUNDS_INDEX) {
@@ -25,27 +26,35 @@ sf::Vector2f Cave::Map::updateCameraLocation(Camera& camera, const sf::Vector2f&
 	sf::Vector2f location = camera.getCenter();
 
 	if (width <= 0 || !inBounds(m_jimIndex)) return location;
-	int targetX = (m_jimIndex % width) * 32 + offset.x;
-	int targetY = (m_jimIndex / width) * 32 + offset.y + 32 / 2;
+	float targetX = static_cast<float>((m_jimIndex % width) * 32) + offset.x;
+	float targetY = static_cast<float>((m_jimIndex / width) * 32) + offset.y + 16.f;
+	const sf::IntRect jimRect = caveEntities[m_jimIndex].getCurrentPosition();
+	targetX += static_cast<float>(jimRect.position.x);
+	targetY += static_cast<float>(jimRect.position.y);
 
 	bool snapped = false;
 	if (m_snapCameraToJim) {
-		location.x = static_cast<float>(targetX);
-		location.y = static_cast<float>(targetY);
+		location.x = targetX;
+		location.y = targetY;
 		m_snapCameraToJim = false;
 		snapped = true;
 	}
 	else {
-		if (location.x < targetX) location.x += m_cameraSpeed;
-		if (location.x > targetX) location.x -= m_cameraSpeed;
-		if (location.y < targetY) location.y += m_cameraSpeed;
-		if (location.y > targetY) location.y -= m_cameraSpeed;
+		const auto approach = [](float current, float target, float speed) {
+			const float delta = target - current;
+			if (std::fabs(delta) <= speed)
+				return target;
+			return current + (delta > 0.f ? speed : -speed);
+		};
+		const float speed = static_cast<float>(m_cameraSpeed);
+		location.x = approach(location.x, targetX, speed);
+		location.y = approach(location.y, targetY, speed);
 	}
 
 	camera.setCentre(location);
 	if (snapped) updateVisibleTiles(camera);
 
-	return { static_cast<float>(targetX), static_cast<float>(targetY) };
+	return { targetX, targetY };
 }
 
 void Cave::Map::snapCameraToJim() {
@@ -71,4 +80,9 @@ bool Cave::Map::requiresReset() {
 void Cave::Map::markForReset() {
 	m_reset = true;
 	m_resetCameraPosition = true;
+}
+
+void Cave::Map::abortToMenu() {
+	m_state = Cave::State::Exit;
+	m_reset = false;
 }

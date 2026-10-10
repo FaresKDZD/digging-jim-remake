@@ -102,6 +102,18 @@ void Cave::Map::updateLava(const int& index) {
 	}
 }
 
+void Cave::Map::updateMoss(const int& index) {
+	if (editorIdle()) return;
+	if (m_mossGrowthSpeed <= 0) return;
+	for (auto& direction : Cave::Entity::ALL_DIRECTIONS) {
+		int dest = getIndex(index, direction);
+		if (getEntityType(dest) != Cave::Entity::Type::Dirt) continue;
+		if (getEntityTransitioning(dest)) continue;
+		if (Utils::randomInteger(0, 1000) <= m_mossGrowthSpeed)
+			setEntity(dest, Cave::Entity::Moss());
+	}
+}
+
 void Cave::Map::updateFire(const int& index) {
 	updateEntityAnimation(index);
 	if (editorIdle()) return;

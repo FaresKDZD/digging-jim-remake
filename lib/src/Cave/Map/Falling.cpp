@@ -159,7 +159,8 @@ bool Cave::Map::handleEntityLanding(const int& index, const int& ahead) {
 		|| landingType == Cave::Entity::Type::FragileDiamond
 		|| destType == Cave::Entity::Type::HotBoulder
 		|| destType == Cave::Entity::Type::HotBoulderCracked
-		|| destType == Cave::Entity::Type::FragileDiamond)
+		|| destType == Cave::Entity::Type::FragileDiamond
+		|| destType == Cave::Entity::Type::Ore)
 		&& !caveEntities[index].isFullyInTile()) {
 		return true;
 	}
@@ -249,7 +250,9 @@ bool Cave::Map::handleEntityLanding(const int& index, const int& ahead) {
 
 	if ((type == Cave::Entity::Type::Boulder || type == Cave::Entity::Type::MagicBoulder
 		|| type == Cave::Entity::Type::HotBoulder || type == Cave::Entity::Type::HotBoulderCracked
-		|| type == Cave::Entity::Type::GallopEgg)
+		|| type == Cave::Entity::Type::GallopEgg
+		|| Cave::Entity::isMacowEgg(type)
+		|| type == Cave::Entity::Type::Chrysalis)
 		&& aheadType == Cave::Entity::Type::Ore) {
 		setEntity(ahead, Cave::Entity::OreTransformation());
 		m_game->soundManager.play(Sound::Effect::DiamondLand);
@@ -298,7 +301,9 @@ bool Cave::Map::handleEntityLanding(const int& index, const int& ahead) {
 
 bool Cave::Map::handleEntityLandingOnMagicWall(const int& index, const Cave::Entity::Type& type, const int& ahead, const Cave::Entity::Type& aheadType, const Cave::Entity::Direction& gravity) {
 	if (type != Cave::Entity::Type::Boulder && type != Cave::Entity::Type::MagicBoulder
-		&& type != Cave::Entity::Type::GallopEgg && type != Cave::Entity::Type::Diamond) {
+		&& type != Cave::Entity::Type::GallopEgg && !Cave::Entity::isMacowEgg(type)
+		&& type != Cave::Entity::Type::Chrysalis
+		&& type != Cave::Entity::Type::Diamond) {
 		return false;
 	}
 
@@ -400,6 +405,92 @@ void Cave::Map::updateGallopEgg(const int& index) {
 	if (timer > developStart && timer <= developEnd) {
 		caveEntities[index].setAnimationFrame(timer - developStart - 1);
 	}
+}
+
+void Cave::Map::updateMacowEgg(const int& index) {
+	if (getEntityType(index) == Cave::Entity::Type::MacowEggCooked) {
+		updateFallableEntity(index);
+		return;
+	}
+	if (getEntityType(index) != Cave::Entity::Type::MacowEgg) return;
+	if (!getEntityTransitioning(index)) {
+		const int below = getIndex(index, Cave::Entity::Direction::DOWN);
+		const bool onMagma = getEntityType(below) == Cave::Entity::Type::Magma;
+		int& hatch = caveEntities[index].spawnCredit;
+		int& cook = caveEntities[index].extra;
+		if (onMagma) {
+			if (cook < Cave::Entity::MacowEgg::COOK_TICKS)
+				cook++;
+			if (cook >= Cave::Entity::MacowEgg::COOK_TICKS) {
+				setEntity(index, Cave::Entity::MacowEggCook());
+				return;
+			}
+			if (hatch < Cave::Entity::MacowEgg::HATCH_TICKS)
+				hatch++;
+			else
+				hatch = Cave::Entity::MacowEgg::HATCH_TICKS;
+		}
+		else {
+			cook = 0;
+			hatch++;
+			if (hatch >= Cave::Entity::MacowEgg::HATCH_TICKS) {
+				setEntity(index, Cave::Entity::MacowEggHatch());
+				m_game->soundManager.play(Sound::Effect::EggHatch);
+				return;
+			}
+		}
+	}
+	updateFallableEntity(index);
+}
+
+void Cave::Map::updateMacowEggCook(const int& index) {
+	if (getEntityType(index) != Cave::Entity::Type::MacowEggCook) return;
+	const int last = Cave::Entity::MacowEggCook::FRAME_COUNT - 1;
+	const int frame = caveEntities[index].getAnimation().currentFrame;
+	if (frame < last) {
+		caveEntities[index].setAnimationFrame(frame + 1);
+		return;
+	}
+	if (restoreCoveredGate(index)) return;
+	setEntity(index, Cave::Entity::MacowEggCooked());
+}
+
+void Cave::Map::updateCaterpillarChrysalize(const int& index) {
+	if (getEntityType(index) != Cave::Entity::Type::CaterpillarChrysalize) return;
+	const int last = Cave::Entity::CaterpillarChrysalize::FRAME_COUNT - 1;
+	const int frame = caveEntities[index].getAnimation().currentFrame;
+	if (frame < last) {
+		caveEntities[index].setAnimationFrame(frame + 1);
+		return;
+	}
+	if (restoreCoveredGate(index)) return;
+	setEntity(index, Cave::Entity::Chrysalis());
+}
+
+void Cave::Map::updateButterflyRelease(const int& index) {
+	if (getEntityType(index) != Cave::Entity::Type::ButterflyRelease) return;
+	const int last = Cave::Entity::ButterflyRelease::FRAME_COUNT - 1;
+	const int frame = caveEntities[index].getAnimation().currentFrame;
+	if (frame < last) {
+		caveEntities[index].setAnimationFrame(frame + 1);
+		return;
+	}
+	if (restoreCoveredGate(index)) return;
+	setEntity(index, Cave::Entity::Butterfly());
+}
+
+void Cave::Map::updateChrysalis(const int& index) {
+	if (getEntityType(index) != Cave::Entity::Type::Chrysalis) return;
+	if (!getEntityTransitioning(index)) {
+		int& timer = caveEntities[index].spawnCredit;
+		if (timer < Cave::Entity::Chrysalis::RELEASE_TICKS)
+			timer++;
+		if (timer >= Cave::Entity::Chrysalis::RELEASE_TICKS) {
+			setEntity(index, Cave::Entity::ButterflyRelease());
+			return;
+		}
+	}
+	updateFallableEntity(index);
 }
 
 void Cave::Map::updateJimlinBlock(const int& index) {

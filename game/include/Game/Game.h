@@ -189,6 +189,9 @@ public:
     /// @brief Whether the game is on the main menu
     bool onMainMenu() const;
 
+    /// @brief True while bonus time is counting after a successful cave exit.
+    bool onCavePass() const;
+
     /// @brief Get the current index of the chosen cave file.
     int getCaveFileIndex();
 

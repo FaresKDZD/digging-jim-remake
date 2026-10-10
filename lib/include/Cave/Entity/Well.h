@@ -79,6 +79,11 @@ namespace Cave::Entity {
             case Type::PyrozoExtinguished:
             case Type::Hellgull:
             case Type::Charia:
+            case Type::Predator:
+            case Type::Plankton:
+            case Type::Macow:
+            case Type::Caterpillar:
+            case Type::Butterfly:
                 return true;
             default:
                 return false;
@@ -124,6 +129,11 @@ namespace Cave::Entity {
             { "Hellgull", Type::Hellgull },
             { "Charia", Type::Charia },
             { "Extinguished Pyrozo", Type::PyrozoExtinguished },
+            { "Predator", Type::Predator },
+            { "Plankton", Type::Plankton },
+            { "Macow", Type::Macow },
+            { "Caterpillar", Type::Caterpillar },
+            { "Butterfly", Type::Butterfly },
         };
 
     private:

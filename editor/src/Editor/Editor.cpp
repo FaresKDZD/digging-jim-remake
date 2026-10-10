@@ -4,6 +4,7 @@
 #include "Camera/Camera.h"
 #include "HUD/Panel.h"
 #include "Utils/Counter.h"
+#include "Utils/Prescale.h"
 #include "HUD/Toolbar.h"
 #include "Shader/Shader.h"
 
@@ -253,10 +254,12 @@ static Cave::Properties defaultCaveProperties(uint32_t width = 50, uint32_t heig
     p.extraDiamondValue = 15;
     p.amoebaGrowthSpeed = 128;
     p.amoebaGrowthMax   = 1000;
+    p.planktonGrowthMax = 1000;
     p.magicWallTime     = 20;
     p.plasmaGrowthSpeed = 1000;
     p.chumGrowthSpeed   = 128;
     p.lavaGrowthSpeed   = 128;
+    p.mossGrowthSpeed   = 128;
     p.hue               = 100;
     p.sat               = 100;
     p.lum               = 100;
@@ -380,6 +383,18 @@ static char entityTypeToTile(Cave::Entity::Type type)
     case Cave::Entity::Type::WormBody:            return 102;
     case Cave::Entity::Type::HotBoulderEater:     return 103;
     case Cave::Entity::Type::Pyrobe:              return 104;
+    case Cave::Entity::Type::Predator:            return 105;
+    case Cave::Entity::Type::Plankton:            return 106;
+    case Cave::Entity::Type::Macow:               return 107;
+    case Cave::Entity::Type::MacowEgg:            return 108;
+    case Cave::Entity::Type::MacowEggCook:
+    case Cave::Entity::Type::MacowEggCooked:      return 110;
+    case Cave::Entity::Type::Moss:                return 109;
+    case Cave::Entity::Type::Caterpillar:
+    case Cave::Entity::Type::CaterpillarChrysalize: return 111;
+    case Cave::Entity::Type::Butterfly:
+    case Cave::Entity::Type::ButterflyRelease:    return 112;
+    case Cave::Entity::Type::Chrysalis:           return 113;
     default:                                      return 0;
     }
 }
@@ -801,8 +816,12 @@ void Editor::applyEditorSnapshot(const EditorSnapshot& snap, Cave::Map& map, Cav
 void Editor::startSimulate(Cave::Map& map)
 {
     if (m_simulating || !m_activeFile || !m_activeCaveIndex) return;
+    if (!game.soundManager.soundsLoaded())
+        game.soundManager.loadAllSounds(false);
+    game.imageManager.loadAllImages();
     syncCurrentCave(map, *m_activeFile, *m_activeCaveIndex);
     m_simulateSnap = { m_activeFile->caves, *m_activeCaveIndex, capturePreviewAnims(map) };
+    map.applyRuntimeProperties(game.getCaveProperties());
     map.prepareForPlay();
     map.setEditorSimulate(true);
     m_simulating = true;
@@ -1144,11 +1163,31 @@ static std::vector<sf::Vector2i> lineFillRight(sf::Vector2i start, sf::Vector2i 
 
 bool Editor::run()
 {
-    sf::VideoMode    windowMode(sf::Vector2u(WIN_W, WIN_H));
-    sf::RenderWindow window(windowMode, EDITOR_NAME);
+#ifdef _WIN32
+    RECT workArea{};
+    SystemParametersInfoW(SPI_GETWORKAREA, 0, &workArea, 0);
+    const unsigned startW = workArea.right > workArea.left
+        ? static_cast<unsigned>(workArea.right - workArea.left) : WIN_W;
+    const unsigned startH = workArea.bottom > workArea.top
+        ? static_cast<unsigned>(workArea.bottom - workArea.top) : WIN_H;
+    sf::RenderWindow window(sf::VideoMode(sf::Vector2u(startW, startH)), EDITOR_NAME);
+#else
+    sf::RenderWindow window(sf::VideoMode(sf::Vector2u(WIN_W, WIN_H)), EDITOR_NAME);
+#endif
     m_window = &window;
-    sf::RenderTexture rt(sf::Vector2u(WIN_W, WIN_H));
+    window.setVisible(false);
+#ifdef _WIN32
+    if (HWND hwnd = static_cast<HWND>(window.getNativeHandle()))
+        ShowWindow(hwnd, SW_HIDE);
+    window.setVisible(false);
+#endif
     window.setFramerateLimit(60);
+    sf::RenderTexture rt(sf::Vector2u(WIN_W, WIN_H));
+    rt.setSmooth(false);
+    sf::Shader presentShader;
+    sf::Shader* presentShaderPtr = nullptr;
+    if (presentShader.loadFromFile("./assets/shaders/present.frag", sf::Shader::Type::Fragment))
+        presentShaderPtr = &presentShader;
 
     sf::Image smallIcon, largeIcon;
     (void)smallIcon.loadFromFile("./assets/icons/DiggingJimBuilder/small_png.png");
@@ -1204,6 +1243,36 @@ bool Editor::run()
         }
 #endif
     };
+
+    auto maximizeWindow = [&]()
+    {
+#ifdef _WIN32
+        HWND hwnd = static_cast<HWND>(window.getNativeHandle());
+        if (hwnd)
+            ShowWindow(hwnd, SW_SHOWMAXIMIZED);
+#else
+        const sf::Vector2u desk = sf::VideoMode::getDesktopMode().size;
+        window.setSize(desk);
+#endif
+    };
+
+    auto maximizeHidden = [&]()
+    {
+#ifdef _WIN32
+        HWND hwnd = static_cast<HWND>(window.getNativeHandle());
+        if (hwnd)
+        {
+            RECT wa{};
+            SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa, 0);
+            SetWindowLongPtr(hwnd, GWL_STYLE, GetWindowLongPtr(hwnd, GWL_STYLE) | WS_MAXIMIZE);
+            SetWindowPos(hwnd, nullptr, wa.left, wa.top,
+                wa.right - wa.left, wa.bottom - wa.top,
+                SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_HIDEWINDOW);
+        }
+#endif
+        window.setVisible(false);
+    };
+
     applyIcons();
 
     (void)ImGui::SFML::Init(window, /* loadDefaultFont= */ false);
@@ -1257,9 +1326,7 @@ bool Editor::run()
         return window.mapPixelToCoords(winPos, makeWindowView());
     };
 
-    game.imageManager.loadAllImages();
-    imageManager.loadAllImages();
-    game.soundManager.loadAllSounds();
+    game.imageManager.loadEditorImages();
 
     Shader::Shader shaderManager(&game);
     shaderManager.loadAllShaders();
@@ -1446,6 +1513,10 @@ bool Editor::run()
     float        hsbDragStartX    = 0.f;
     float        vsbDragStartCamY = 0.f;
     float        hsbDragStartCamX = 0.f;
+
+    maximizeHidden();
+
+    bool startupShown = false;
 
     while (window.isOpen())
     {
@@ -2676,14 +2747,13 @@ bool Editor::run()
                 rt.draw(vsbThumb);   rt.draw(hsbThumb);
                 rt.display();
 
-                sf::Sprite rtSpr(rt.getTexture());
-                window.setView(makeWindowView());
-                window.clear(sf::Color::Black);
-                window.draw(rtSpr);
+                Utils::presentPrescaled(window, rt, WIN_W, WIN_H, presentShaderPtr);
                 window.display();
             }, &settings.editableBorders);
             {
                 game.setCaveProperties(p);
+                map.applyRuntimeProperties(p);
+                syncCurrentCave(map, loadedFile, currentCaveIndex);
                 if (p.width != oldP.width || p.height != oldP.height
                     || p.plasmaGrowthSpeed != oldP.plasmaGrowthSpeed
                     || p.time != oldP.time || p.quota != oldP.quota
@@ -2691,10 +2761,12 @@ bool Editor::run()
                     || p.extraDiamondValue != oldP.extraDiamondValue
                     || p.amoebaGrowthSpeed != oldP.amoebaGrowthSpeed
                     || p.amoebaGrowthMax != oldP.amoebaGrowthMax
+                    || p.planktonGrowthMax != oldP.planktonGrowthMax
                     || p.magicWallTime != oldP.magicWallTime
                     || p.hue != oldP.hue || p.sat != oldP.sat || p.lum != oldP.lum
                     || p.chumGrowthSpeed != oldP.chumGrowthSpeed
                     || p.lavaGrowthSpeed != oldP.lavaGrowthSpeed
+                    || p.mossGrowthSpeed != oldP.mossGrowthSpeed
                     || p.unlimitedTime != oldP.unlimitedTime)
                 {
                     m_undoStack.push_back(std::move(preProps));
@@ -3080,12 +3152,15 @@ bool Editor::run()
 
         endFrame:
         {
-            sf::Sprite rtSprite(rt.getTexture());
-            window.setView(makeWindowView());
-            window.clear(sf::Color::Black);
-            window.draw(rtSprite);
+            Utils::presentPrescaled(window, rt, WIN_W, WIN_H, presentShaderPtr);
             ImGui::SFML::Render(window);
             window.display();
+            if (!startupShown)
+            {
+                maximizeWindow();
+                window.setVisible(true);
+                startupShown = true;
+            }
         }
     }
 

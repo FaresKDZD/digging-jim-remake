@@ -22,7 +22,7 @@ static constexpr float SIM_H        = 20.f;
 static constexpr float CORDS_BASE_X = (PANEL_W - 60.f) / 2.f;
 static constexpr float CORDS_BASE_Y = 348.f;
 
-HUD::Editor::Panel::Panel(::Editor* editor) : m_editor(editor), m_tileRenderer(&editor->imageManager) {
+HUD::Editor::Panel::Panel(::Editor* editor) : m_editor(editor), m_tileRenderer(&editor->game.imageManager) {
     m_background.setSize(sf::Vector2f(PANEL_W, PALETTE_H));
     m_background.setFillColor(sf::Color(128, 128, 128));
 
@@ -69,9 +69,9 @@ void HUD::Editor::Panel::load()
     if (!m_tileRenderer.load(Image::Texture::CaveTiles, { 32, 32 }))
         throw std::runtime_error("Error: Unable to load editor panel.\n");
 
-    const sf::Texture& fillTex   = m_editor->imageManager.getTexture(Image::Texture::EditorFill);
-    const sf::Texture& coordsTex = m_editor->imageManager.getTexture(Image::Texture::EditorCoords);
-    const sf::Texture& testTex   = m_editor->imageManager.getTexture(Image::Texture::EditorTestButton);
+    const sf::Texture& fillTex   = m_editor->game.imageManager.getTexture(Image::Texture::EditorFill);
+    const sf::Texture& coordsTex = m_editor->game.imageManager.getTexture(Image::Texture::EditorCoords);
+    const sf::Texture& testTex   = m_editor->game.imageManager.getTexture(Image::Texture::EditorTestButton);
 
     // 1×1 white pixel sampled from the blank gap in the label row
     m_cordsBackground.emplace(coordsTex, sf::IntRect({28, 10}, {1, 1}));
@@ -107,7 +107,7 @@ void HUD::Editor::Panel::load()
     m_fillBtnC.emplace(fillTex, sf::IntRect({24, 0}, {24, 26}));  m_fillBtnC->setPosition({FILL_CX, FILL_Y});
     m_fillBtnR.emplace(fillTex, sf::IntRect({48, 0}, {24, 26}));  m_fillBtnR->setPosition({FILL_RX, FILL_Y});
 
-    const sf::Texture& selectTex = m_editor->imageManager.getTexture(Image::Texture::EditorSelect);
+    const sf::Texture& selectTex = m_editor->game.imageManager.getTexture(Image::Texture::EditorSelect);
     m_selectBtn.emplace(selectTex, sf::IntRect({0, 0}, {(int)SELECT_S, (int)SELECT_S}));
     m_selectBtn->setPosition({SELECT_X, SELECT_Y});
 
@@ -200,6 +200,19 @@ int HUD::Editor::Panel::miniTileIndex(Cave::Entity::Type type)
     case T::WormBody:         return 96;
     case T::HotBoulderEater:  return 97;
     case T::Pyrobe:           return 98;
+    case T::Predator:         return 99;
+    case T::Plankton:         return 100;
+    case T::Macow:            return 101;
+    case T::MacowEgg:
+    case T::MacowEggHatch:    return 102;
+    case T::Moss:             return 103;
+    case T::MacowEggCook:
+    case T::MacowEggCooked:   return 104;
+    case T::Caterpillar:
+    case T::CaterpillarChrysalize: return 105;
+    case T::Butterfly:
+    case T::ButterflyRelease: return 106;
+    case T::Chrysalis:        return 107;
     case T::Jimlin1:         return 67;
     case T::Jimlin2:         return 68;
     case T::Jimlin3:         return 69;
@@ -369,7 +382,7 @@ void HUD::Editor::Panel::update(const Camera& panelCamera, const Camera* caveCam
             (fillMode == Cave::FillMode::Line)    ? Image::Texture::EditorLineFill    :
             (fillMode == Cave::FillMode::Ellipse) ? Image::Texture::EditorEllipseFill :
                                                     Image::Texture::EditorFill;
-        const sf::Texture& fillTex = m_editor->imageManager.getTexture(fillTexId);
+        const sf::Texture& fillTex = m_editor->game.imageManager.getTexture(fillTexId);
         if (m_fillBtnL) m_fillBtnL->setTexture(fillTex);
         if (m_fillBtnC) m_fillBtnC->setTexture(fillTex);
         if (m_fillBtnR) m_fillBtnR->setTexture(fillTex);
@@ -442,7 +455,7 @@ void HUD::Editor::Panel::draw(sf::RenderTarget& target, sf::RenderStates states)
     if (m_digitY1)    target.draw(*m_digitY1,    noShader);
     if (m_digitY2)    target.draw(*m_digitY2,    noShader);
     sf::RenderStates minimapStates = states;
-    minimapStates.texture = &m_editor->imageManager.getTexture(Image::Texture::EditorMiniTiles);
+    minimapStates.texture = &m_editor->game.imageManager.getTexture(Image::Texture::EditorMiniTiles);
     target.draw(m_minimapVerts, minimapStates);
 
     sf::RectangleShape viewRect(m_minimapViewSize);
@@ -455,8 +468,7 @@ void HUD::Editor::Panel::draw(sf::RenderTarget& target, sf::RenderStates states)
     if (m_testBtn)    target.draw(*m_testBtn,    noShader);
 
     {
-        const bool simOn = m_editor && m_editor->isSimulating();
-        const bool pressed = m_simPressed || simOn;
+        const bool pressed = m_editor && m_editor->isSimulating();
         const sf::Color face(212, 208, 200);
         const sf::Color hi(255, 255, 255);
         const sf::Color sh(128, 128, 128);
@@ -552,7 +564,6 @@ void HUD::Editor::Panel::handleClick(sf::Vector2f vp, float panelX, float toolba
     else if (lx >= SIM_X && lx < SIM_X + SIM_W &&
              ly >= TEST_Y && ly < TEST_Y + SIM_H)
     {
-        m_simPressed = true;
         m_editor->actionSimulate();
     }
 }
@@ -834,6 +845,13 @@ Cave::Entity::Type HUD::Editor::Panel::getType(const int& x, const int& y) {
     case 66: return Cave::Entity::Type::ObsidianWall;
     case 67: return Cave::Entity::Type::Worm;
     case 68: return Cave::Entity::Type::Pyrobe;
+    case 69: return Cave::Entity::Type::Predator;
+    case 70: return Cave::Entity::Type::Plankton;
+    case 71: return Cave::Entity::Type::Macow;
+    case 72: return Cave::Entity::Type::MacowEgg;
+    case 73: return Cave::Entity::Type::Moss;
+    case 74: return Cave::Entity::Type::Caterpillar;
+    case 75: return Cave::Entity::Type::Butterfly;
     default: return Cave::Entity::Type::NoType;
     }
 }
@@ -937,6 +955,18 @@ Cave::Entity::Base HUD::Editor::Panel::getNewEntity(Cave::Entity::Type type) {
     case Cave::Entity::Type::WormBody:           return Cave::Entity::WormBody();
     case Cave::Entity::Type::HotBoulderEater:    return Cave::Entity::HotBoulderEater();
     case Cave::Entity::Type::Pyrobe:             return Cave::Entity::Pyrobe();
+    case Cave::Entity::Type::Predator:           return Cave::Entity::Predator();
+    case Cave::Entity::Type::Plankton:           return Cave::Entity::Plankton();
+    case Cave::Entity::Type::Macow:              return Cave::Entity::Macow();
+    case Cave::Entity::Type::MacowEgg:           return Cave::Entity::MacowEgg();
+    case Cave::Entity::Type::MacowEggCook:       return Cave::Entity::MacowEggCook();
+    case Cave::Entity::Type::MacowEggCooked:     return Cave::Entity::MacowEggCooked();
+    case Cave::Entity::Type::Moss:               return Cave::Entity::Moss();
+    case Cave::Entity::Type::Caterpillar:        return Cave::Entity::Caterpillar();
+    case Cave::Entity::Type::CaterpillarChrysalize: return Cave::Entity::CaterpillarChrysalize();
+    case Cave::Entity::Type::Chrysalis:          return Cave::Entity::Chrysalis();
+    case Cave::Entity::Type::ButterflyRelease:   return Cave::Entity::ButterflyRelease();
+    case Cave::Entity::Type::Butterfly:          return Cave::Entity::Butterfly();
     case Cave::Entity::Type::Singularity:
     case Cave::Entity::Type::Ostia:
     case Cave::Entity::Type::Murus:

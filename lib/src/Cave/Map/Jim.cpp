@@ -259,9 +259,11 @@ bool Cave::Map::handleJimTraverse(const int& index, const int& inFront, const bo
 	bool collectable = hasTrait(Cave::Entity::Trait::Collectable, inFront);
 	bool hollow = getEntityType(inFront) == Cave::Entity::Type::HollowDiamond;
 	bool timeBomb = getEntityType(inFront) == Cave::Entity::Type::TimeBomb;
+	bool macowEgg = getEntityType(inFront) == Cave::Entity::Type::MacowEgg;
+	bool macowCooked = getEntityType(inFront) == Cave::Entity::Type::MacowEggCooked;
 	bool ruby = getEntityType(inFront) == Cave::Entity::Type::Ruby;
 	bool pyrobe = getEntityType(inFront) == Cave::Entity::Type::Pyrobe;
-	if (inShip && (collectable || ruby || pyrobe || hollow || timeBomb)) {
+	if (inShip && (collectable || ruby || pyrobe || hollow || timeBomb || macowEgg || macowCooked)) {
 		return true;
 	}
 	setJimMoveAmination(index);
@@ -295,6 +297,14 @@ bool Cave::Map::handleJimTraverse(const int& index, const int& inFront, const bo
 				m_timeBombsCarried++;
 				m_game->soundManager.play(Sound::Effect::Drop);
 			}
+			else if (macowEgg) {
+				m_macowEggsCarried++;
+				m_game->soundManager.play(Sound::Effect::Drop);
+			}
+			else if (macowCooked) {
+				m_macowCookedEggsCarried++;
+				m_game->soundManager.play(Sound::Effect::Drop);
+			}
 			else if (digging) {
 				m_traversingDirt = true;
 			}
@@ -310,6 +320,20 @@ bool Cave::Map::handleJimTraverse(const int& index, const int& inFront, const bo
 				m_hollowCarried--;
 				setEntity(inFront, Cave::Entity::HollowDiamond());
 				m_game->soundManager.play(Sound::Effect::DiamondDrop);
+				notifyFusion5Stimulus(inFront);
+				return true;
+			}
+			else if (m_macowEggsCarried > 0 && hasTrait(Cave::Entity::Trait::Empty, inFront)) {
+				m_macowEggsCarried--;
+				setEntity(inFront, Cave::Entity::MacowEgg());
+				m_game->soundManager.play(Sound::Effect::Drop);
+				notifyFusion5Stimulus(inFront);
+				return true;
+			}
+			else if (m_macowCookedEggsCarried > 0 && hasTrait(Cave::Entity::Trait::Empty, inFront)) {
+				m_macowCookedEggsCarried--;
+				setEntity(inFront, Cave::Entity::MacowEggCooked());
+				m_game->soundManager.play(Sound::Effect::Drop);
 				notifyFusion5Stimulus(inFront);
 				return true;
 			}
@@ -344,6 +368,14 @@ bool Cave::Map::handleJimTraverse(const int& index, const int& inFront, const bo
 		}
 		else if (timeBomb) {
 			m_timeBombsCarried++;
+			m_game->soundManager.play(Sound::Effect::Drop);
+		}
+		else if (macowEgg) {
+			m_macowEggsCarried++;
+			m_game->soundManager.play(Sound::Effect::Drop);
+		}
+		else if (macowCooked) {
+			m_macowCookedEggsCarried++;
 			m_game->soundManager.play(Sound::Effect::Drop);
 		}
 		else if (digging) {
@@ -773,7 +805,8 @@ void Cave::Map::updateStartDoorOpen(const int& index) {
 		else {
 			setEntity(index, Cave::Entity::Space());
 		}
-		if (m_state == Cave::State::Intro && !anyStartDoorPending()) {
+		if (m_state == Cave::State::Intro && !anyStartDoorPending()
+			&& !m_game->isQuitConfirmOpen() && !m_game->onMainMenu()) {
 			enterCavePlay();
 		}
 	}
