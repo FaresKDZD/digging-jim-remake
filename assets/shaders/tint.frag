@@ -53,17 +53,37 @@ vec3 hsl2rgb(vec3 c) {
 
 void main()
 {
-    vec4 pixel = texture2D(texture, gl_TexCoord[0].xy);
-    vec3 hsl = rgb2hsl(pixel.rgb);
+    vec4 texColor = texture2D(texture, gl_TexCoord[0].xy);
+
+    vec3 hsl = rgb2hsl(texColor.rgb);
 
     float hueLinear = mod(2.0 / 3.0 - hsl.x + 1.0, 1.0) * tint.x * 2.0;
     float lumLinear = hsl.z + (1.0 - hsl.z + hsl.y) * (tint.z - 0.5) / 3.0;
     float lumLimit = hsl.z + (1.0 - hsl.z) * (1.0 - hsl.y) * tint.z * 1.0 / 3.0;
-    
+
     hsl.x = mod(2.0 / 3.0 - min(hueLinear, 1.0) + 1.0, 1.0);
     hsl.y = min(hsl.y * tint.y * 2.0, 1.0);
     hsl.z = min(max(lumLinear, 0.0), lumLimit);
 
-    vec3 finalColor = hsl2rgb(hsl);
-    gl_FragColor = vec4(finalColor, pixel.a);
+    // Cave HSL on the sprite first so Jim still matches the level filter.
+    vec3 filtered = hsl2rgb(hsl);
+
+    // Jim pyrobe / ruby buff (alpha in (0, 0.5)): multiply by the raw pulse
+    // colour after filtering — tint stays true, Jim stays level-coloured.
+    // Multiply also keeps Jim's black tile background black.
+    // Genom highlight-preserve uses a==0 (handled below).
+    if (gl_Color.a > 0.001 && gl_Color.a < 0.5) {
+        gl_FragColor = vec4(filtered * gl_Color.rgb, texColor.a);
+        return;
+    }
+
+    // Normal / Genom: cave-filtered sprite, then vertex multiply.
+    // Alpha < 0.5 (Genom wings/eyes a==0): protect whites/lights from the tint.
+    vec3 multiplied = filtered * gl_Color.rgb;
+    if (gl_Color.a < 0.5) {
+        float lum = max(filtered.r, max(filtered.g, filtered.b));
+        float tintAmt = 1.0 - smoothstep(0.55, 0.92, lum);
+        multiplied = mix(filtered, multiplied, tintAmt);
+    }
+    gl_FragColor = vec4(multiplied, texColor.a);
 }

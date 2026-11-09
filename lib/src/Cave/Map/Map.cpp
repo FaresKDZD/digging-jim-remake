@@ -52,7 +52,7 @@ void Cave::Map::load() {
 	}
 }
 
-void Cave::Map::generateMap(const Cave::Properties* properties, const std::vector<char>& tileData, const std::vector<Cave::WellRecord>& wells, const std::vector<Cave::PortalRecord>& portals, const std::vector<Cave::CosmicRecord>& cosmics) {
+void Cave::Map::generateMap(const Cave::Properties* properties, const std::vector<char>& tileData, const std::vector<Cave::WellRecord>& wells, const std::vector<Cave::PortalRecord>& portals, const std::vector<Cave::CosmicRecord>& cosmics, const std::vector<Cave::GenomRecord>& genoms, const std::vector<Cave::HiveBubbleRecord>& hiveBubbles) {
 
 	// Reset start door location
 	m_startDoorIndex = OUT_OF_BOUNDS_INDEX;
@@ -133,6 +133,24 @@ void Cave::Map::generateMap(const Cave::Properties* properties, const std::vecto
 			caveEntities[index].targetIndex = index;
 		if (getEntityType(index) == Cave::Entity::Type::Worm)
 			linkWormBodies(index);
+		// One-shot phase offsets so identical monsters desync on level start only.
+		// Later cycles always use full intervals (constructors start at phase 0).
+		switch (getEntityType(index)) {
+		case Cave::Entity::Type::Mimic:
+			caveEntities[index].extra = Utils::randomInteger(0, Cave::Entity::Mimic::IDLE_TICKS - 1);
+			break;
+		case Cave::Entity::Type::Shade:
+			caveEntities[index].extra = Utils::randomInteger(0, Cave::Entity::Shade::PHASE_TICKS - 1);
+			break;
+		case Cave::Entity::Type::Spinner:
+			caveEntities[index].targetIndex = Utils::randomInteger(1, Cave::Entity::Spinner::TURN_TICKS);
+			break;
+		case Cave::Entity::Type::Puffer:
+			caveEntities[index].setAnimationFrame(Cave::Entity::Puffer::randomDeflatedFrame());
+			break;
+		default:
+			break;
+		}
 	}
 
 	for (const auto& well : wells) {
@@ -145,6 +163,26 @@ void Cave::Map::generateMap(const Cave::Properties* properties, const std::vecto
 		const int index = static_cast<int>(portal.index);
 		if (inBounds(index) && getEntityType(index) == Cave::Entity::Type::Portal)
 			caveEntities[index].targetIndex = portal.packed;
+	}
+
+	for (const auto& genom : genoms) {
+		const int index = static_cast<int>(genom.index);
+		if (!inBounds(index)) continue;
+		const Cave::Entity::Type type = getEntityType(index);
+		if (type != Cave::Entity::Type::Genom && type != Cave::Entity::Type::GenomEgg)
+			continue;
+		caveEntities[index].spawnCredit = genom.packed | Cave::Entity::Genom::LOOK_VALID;
+	}
+
+	for (const auto& bubble : hiveBubbles) {
+		const int index = static_cast<int>(bubble.index);
+		if (!inBounds(index) || !Cave::Entity::isMonster(getEntityType(index)))
+			continue;
+		using B = Cave::Entity::HiveHunterBubble;
+		m_cosmicOver[static_cast<size_t>(index)] = B();
+		m_cosmicOver[static_cast<size_t>(index)].setAnimationFrame(B::FRAME_LAST);
+		caveEntities[index].removeTrait(Cave::Entity::Trait::Crushable);
+		caveEntities[index].addTrait(Cave::Entity::Trait::Slippery);
 	}
 
 	m_cosmicSettings = Cave::Entity::Cosmic::Settings{};
@@ -163,11 +201,16 @@ void Cave::Map::generateMap(const Cave::Properties* properties, const std::vecto
 	m_jimIndex = m_startDoorIndex;
 	m_introDelayOccurred = false;
 	m_traversingDirt = false;
+	m_grouperAlarmed = false;
 	m_jimMovedThisTick = false;
+	m_game->soundManager.stop(Sound::Effect::Wawa);
 	m_hollowCarried = 0;
 	m_timeBombsCarried = 0;
+	m_landminesCarried = 0;
 	m_macowEggsCarried = 0;
 	m_macowCookedEggsCarried = 0;
+	m_emptyTrapsCarried = 0;
+	m_fullTrapsCarried.clear();
 	m_jimInvincibleFrames = 0;
 	m_jimPyrobeFrames = 0;
 	m_playerInvincible.fill(0);
@@ -192,6 +235,16 @@ void Cave::Map::generateMap(const Cave::Properties* properties, const std::vecto
 	// Reset detonator variables
 	m_detonatorTriggered = false;
 
+	// Reset hive room memory (completed footprints for builder repair).
+	m_hiveKnownRooms.clear();
+	m_hiveRoomsBuilt = false;
+	m_hiveBuilderDebrisBySite.clear();
+	m_matriarchRoom.clear();
+	m_nurseryRoom.clear();
+	m_storageRoom.clear();
+	m_livingRoom.clear();
+	m_hiveHasLiving = false;
+
 	// Reset loading variables
 	m_loadRate = CAVE_LOAD_RATE;
 
@@ -206,6 +259,7 @@ void Cave::Map::generateMap(const Cave::Properties* properties, const std::vecto
 	m_state = Cave::State::Load;
 	m_editorPreview = false;
 	m_editorSimulate = false;
+	m_editorProbeIndex = OUT_OF_BOUNDS_INDEX;
 	m_pegulFuseHunt = false;
 	m_chaosFreezeTicks = 0;
 
@@ -220,10 +274,67 @@ void Cave::Map::setEditorMode() {
 	m_state = Cave::State::Pause;
 	m_editorPreview = true;
 	m_editorSimulate = false;
+	m_editorProbeIndex = OUT_OF_BOUNDS_INDEX;
+}
+
+void Cave::Map::setEditorProbe(int index) {
+	m_editorProbeIndex = inBounds(index) ? index : OUT_OF_BOUNDS_INDEX;
+}
+
+void Cave::Map::clearEditorProbe() {
+	m_editorProbeIndex = OUT_OF_BOUNDS_INDEX;
+}
+
+bool Cave::Map::moveEditorProbeTo(int target) {
+	if (!inBounds(target)) {
+		clearEditorProbe();
+		return false;
+	}
+	const int prev = m_editorProbeIndex;
+	if (target == prev) return false;
+
+	auto dirBetween = [this](int from, int to) -> Cave::Entity::Direction {
+		if (!inBounds(from) || !inBounds(to))
+			return Cave::Entity::Direction::NO_DIRECTION;
+		const int fx = from % width, fy = from / width;
+		const int tx = to % width, ty = to / width;
+		if (ty == fy && tx == fx + 1) return Cave::Entity::Direction::RIGHT;
+		if (ty == fy && tx == fx - 1) return Cave::Entity::Direction::LEFT;
+		if (tx == fx && ty == fy + 1) return Cave::Entity::Direction::DOWN;
+		if (tx == fx && ty == fy - 1) return Cave::Entity::Direction::UP;
+		return Cave::Entity::Direction::NO_DIRECTION;
+	};
+
+	bool pushed = false;
+	const Cave::Entity::Direction step = dirBetween(prev, target);
+	if (step != Cave::Entity::Direction::NO_DIRECTION
+		&& hasTrait(Cave::Entity::Trait::Pushable, target)
+		&& !getEntityTransitioning(target))
+	{
+		const bool vertical = step == Cave::Entity::Direction::UP
+			|| step == Cave::Entity::Direction::DOWN;
+		if (!vertical || getEntityType(target) == Cave::Entity::Type::Fan) {
+			const int beyond = getIndex(target, step);
+			if (inBounds(beyond)
+				&& hasTrait(Cave::Entity::Trait::Empty, beyond)
+				&& !getEntityTransitioning(beyond)
+				&& !isEditorProbe(beyond)
+				&& moveEntity(target, step))
+			{
+				pushed = true;
+				if (m_game)
+					m_game->soundManager.play(Sound::Effect::Drop);
+			}
+		}
+	}
+	m_editorProbeIndex = target;
+	return pushed;
 }
 
 void Cave::Map::setEditorSimulate(bool enabled) {
 	m_editorSimulate = enabled;
+	if (!enabled)
+		m_editorProbeIndex = OUT_OF_BOUNDS_INDEX;
 	if (enabled) {
 		m_state = Cave::State::Play;
 		return;
@@ -235,6 +346,8 @@ void Cave::Map::setEditorSimulate(bool enabled) {
 		m_game->soundManager.stop(Sound::Effect::MagicWall);
 	if (m_game->soundManager.isPlaying(Sound::Effect::Amoeba))
 		m_game->soundManager.stop(Sound::Effect::Amoeba);
+	if (m_game->soundManager.isPlaying(Sound::Effect::Wawa))
+		m_game->soundManager.stop(Sound::Effect::Wawa);
 }
 
 void Cave::Map::applyRuntimeProperties(const Cave::Properties& properties) {
@@ -263,6 +376,10 @@ void Cave::Map::prepareForPlay() {
 			break;
 		}
 	}
+	rebuildHiveRooms();
+	rememberCompletedHiveRooms();
+	refreshHiveGameplayCaches();
+	m_hiveConnectQueue.clear();
 }
 
 bool Cave::Map::canPlaceCharger(const int& index) const {
@@ -615,6 +732,30 @@ void Cave::Map::collectCosmicRecords(std::vector<Cave::CosmicRecord>& out) const
 	}
 }
 
+void Cave::Map::collectGenomRecords(std::vector<Cave::GenomRecord>& out) const {
+	out.clear();
+	for (int index = 0; index < width * height; ++index) {
+		const Cave::Entity::Type type = getEntityType(index);
+		if (type != Cave::Entity::Type::Genom && type != Cave::Entity::Type::GenomEgg)
+			continue;
+		Cave::GenomRecord rec;
+		rec.index = static_cast<uint16_t>(index);
+		rec.packed = caveEntities[index].spawnCredit;
+		out.push_back(rec);
+	}
+}
+
+void Cave::Map::collectHiveBubbleRecords(std::vector<Cave::HiveBubbleRecord>& out) const {
+	out.clear();
+	if (m_cosmicOver.empty()) return;
+	for (int index = 0; index < width * height; ++index) {
+		if (!isHiveBubbled(index)) continue;
+		Cave::HiveBubbleRecord rec;
+		rec.index = static_cast<uint16_t>(index);
+		out.push_back(rec);
+	}
+}
+
 int Cave::Map::getDiamondCount() {
 	int diamondCount = 0;
 	for (int index = 0; index < width * height; index++) {
@@ -647,6 +788,19 @@ void Cave::Map::setEntity(const int& index, Cave::Entity::Base&& entity) {
 		&& (Cave::Entity::isDirtLike(oldType) || oldType == Cave::Entity::Type::Explosion)
 		&& index < static_cast<int>(m_supportDugOrExploded.size())) {
 		m_supportDugOrExploded[static_cast<size_t>(index)] = 1;
+	}
+	// Kill lingering Mimic turn FX if the Mimic / disguise under it was replaced.
+	if (index < static_cast<int>(m_cosmicOver.size())
+		&& m_cosmicOver[static_cast<size_t>(index)].getType() == Cave::Entity::Type::MimicTurn
+		&& getEntityType(index) != Cave::Entity::Type::Mimic
+		&& !Cave::Entity::Mimic::isMorphMarked(caveEntities[index])) {
+		m_cosmicOver[static_cast<size_t>(index)] = Cave::Entity::Base();
+	}
+	// Drop hunter bubbles when the bubbled monster is replaced.
+	if (index < static_cast<int>(m_cosmicOver.size())
+		&& m_cosmicOver[static_cast<size_t>(index)].getType() == Cave::Entity::Type::HiveHunterBubble
+		&& !Cave::Entity::isMonster(getEntityType(index))) {
+		m_cosmicOver[static_cast<size_t>(index)] = Cave::Entity::Base();
 	}
 }
 

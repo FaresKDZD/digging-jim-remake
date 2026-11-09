@@ -59,6 +59,7 @@ static bool customEditorPopupOpen()
 {
     return ImGui::IsPopupOpen("##well_props")
         || ImGui::IsPopupOpen("##portal_props")
+        || ImGui::IsPopupOpen("##genom_props")
         || ImGui::IsPopupOpen("##tools_ctx")
         || ImGui::IsPopupOpen("##caves_list_ctx");
 }
@@ -306,6 +307,17 @@ void HUD::Editor::Toolbar::drawToolItems(HUD::Editor::Panel* editorPanel)
     tool("Moss",                     "",  1, 24, Cave::Entity::Type::Moss);
     tool("Caterpillar",              "",  2, 24, Cave::Entity::Type::Caterpillar);
     tool("Butterfly",                "",  0, 25, Cave::Entity::Type::Butterfly);
+    tool("Jelly",                    "",  1, 25, Cave::Entity::Type::Jelly);
+    tool("Mossy Boulder",            "",  2, 25, Cave::Entity::Type::MossyBoulder);
+    tool("Trap",                     "",  0, 26, Cave::Entity::Type::TrapEmpty);
+    tool("Mimic",                    "",  1, 26, Cave::Entity::Type::Mimic);
+    tool("Shade",                    "",  2, 26, Cave::Entity::Type::Shade);
+    tool("Grouper",                  "",  0, 27, Cave::Entity::Type::Grouper);
+    tool("Genom",                    "",  1, 27, Cave::Entity::Type::Genom);
+    tool("Landmine",                 "",  2, 27, Cave::Entity::Type::Landmine);
+    tool("Compressor",               "",  0, 28, Cave::Entity::Type::Compressor);
+    tool("Hive Matriarch",           "",  HUD::Editor::Panel::HiveMatriarchSlotX, HUD::Editor::Panel::HiveMatriarchSlotY, Cave::Entity::Type::HiveMatriarch);
+    tool("Hive Wall",                "",  HUD::Editor::Panel::HiveWallSlotX, HUD::Editor::Panel::HiveWallSlotY, Cave::Entity::Type::HiveWall);
 }
 
 void HUD::Editor::Toolbar::drawToolsMenu(HUD::Editor::Panel* editorPanel)

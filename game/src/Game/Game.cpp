@@ -25,7 +25,9 @@
 #include <imgui.h>
 #include <imgui-SFML.h>
 
+#include <cstdio>
 #include <fstream>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <cctype>
@@ -440,14 +442,28 @@ bool Game::run(const std::string& caveFile, int startCave, bool editorMode, bool
 
 void Game::mainGameLoop() {
 
-    window = m_editorFullscreen
-        ? sf::RenderWindow(sf::VideoMode::getDesktopMode(), APPLICATION_NAME, sf::State::Fullscreen)
-        : sf::RenderWindow(sf::VideoMode({ SCREEN_WIDTH, SCREEN_HEIGHT }), APPLICATION_NAME);
+    // Borderless windowed (not exclusive Fullscreen): fills the screen like before,
+    // but avoids the white mode-switch flash and blank screen-capture surfaces.
+    if (m_editorFullscreen) {
+        const sf::VideoMode desk = sf::VideoMode::getDesktopMode();
+        // +1 height keeps Windows on the compositor path; exact desktop size can be
+        // promoted to exclusive fullscreen and break recording/capture.
+        sf::Vector2u size = desk.size;
+        size.y += 1;
+        window = sf::RenderWindow(sf::VideoMode(size, desk.bitsPerPixel), APPLICATION_NAME,
+            sf::Style::None, sf::State::Windowed);
+        window.setPosition({ 0, 0 });
+    }
+    else {
+        window = sf::RenderWindow(sf::VideoMode({ SCREEN_WIDTH, SCREEN_HEIGHT }), APPLICATION_NAME);
+    }
+    window.setVisible(false);
     setRefreshrate();
     window.setMouseCursorVisible(false);
 #ifdef _WIN32
     HWND gameHwnd = static_cast<HWND>(window.getNativeHandle());
     if (gameHwnd) {
+        ShowWindow(gameHwnd, SW_HIDE);
         g_prevWndProc = reinterpret_cast<WNDPROC>(
             SetWindowLongPtr(gameHwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(gameWndProc)));
         g_appActive = true;
@@ -581,20 +597,45 @@ void Game::mainGameLoop() {
     bool showtrigger = false;
 
     sf::Clock deltaClock;
+    sf::Clock loopClock;
+    float logicAccum = 0.f;
+    constexpr float kLogicDt = 1.f / 64.f; // classic Digjim logic rate
+    constexpr int kMaxLogicSteps = 8;
 
     sf::Vector2f cameraOffset = { 0, 0 };
 
     Camera camera({ SCREEN_WIDTH, SCREEN_HEIGHT }, { 0.f, 0.f }, { 640.f, 480.f });
 
-    // Fixed-size virtual render texture — all game content draws here,
-    // then sharp-bilinear sampling fills the window without pixel crawl.
+    // Fixed-size virtual RT; two-pass stretch-to-fill present (no bars).
     sf::RenderTexture rt(sf::Vector2u(SCREEN_WIDTH, SCREEN_HEIGHT));
     rt.setSmooth(false);
+    camera.setScrollQuantum({ 1u, 1u });
+    std::unique_ptr<sf::RenderTexture> presentMidRt;
 
+    // Present into true desktop size; window may be +1px tall for capture-friendly borderless.
+    const sf::Vector2u presentTarget = m_editorFullscreen
+        ? sf::VideoMode::getDesktopMode().size
+        : sf::Vector2u{};
+
+    // Fragment-only (SFML default vertex). Vert+frag legacy builtins can "succeed"
+    // while leaving broken texcoords — which silently falls back to looking like nearest.
     sf::Shader presentShader;
     sf::Shader* presentShaderPtr = nullptr;
-    if (presentShader.loadFromFile("./assets/shaders/present.frag", sf::Shader::Type::Fragment))
-        presentShaderPtr = &presentShader;
+    {
+        const bool ok = presentShader.loadFromFile("./assets/shaders/present.frag",
+            sf::Shader::Type::Fragment);
+        if (ok)
+            presentShaderPtr = &presentShader;
+        if (FILE* f = std::fopen("present_debug.txt", "w")) {
+            const sf::Vector2u desk = sf::VideoMode::getDesktopMode().size;
+            const sf::Vector2u winSz = window.getSize();
+            std::fprintf(f, "present_shader=%s\n", ok ? "ok" : "FAIL");
+            std::fprintf(f, "desktop=%ux%u window=%ux%u presentTarget=%ux%u\n",
+                desk.x, desk.y, winSz.x, winSz.y,
+                presentTarget.x, presentTarget.y);
+            std::fclose(f);
+        }
+    }
 
     // View that maps the virtual screen (640x480) to fill the entire window.
     auto makeWindowView = [&]() -> sf::View {
@@ -607,6 +648,8 @@ void Game::mainGameLoop() {
     soundManager.setVolume(m_settings.audioVolume);
 
     window.setView(makeWindowView());
+
+    bool windowShown = false;
 
     while (window.isOpen())
     {
@@ -667,119 +710,163 @@ void Game::mainGameLoop() {
         const bool acceptInput = shouldAcceptGameplayInput(window);
 #endif
         if (showProps) ImGui::SFML::Update(window, deltaClock.restart());
-        else {
-            inputSystem.syncKeyboard(acceptInput);
-            if (acceptInput)
-                inputSystem.handleJoystick();
-        }
 
         if (acceptInput) {
             (void)window.setActive(true);
         }
 
-
         if (m_closeWindow) {
             window.close();
         }
-
-        pollNetwork();
-
-        // Check if cheat mode is activated
-        if (inputSystem.wasPressed(Input::Action::ActivateCheatMode)) {
-            soundManager.play(Sound::Effect::Yippee);
-            m_cheatMode = true;
-        }
-
-        if (cheatMode()) {
-
-            if (inputSystem.wasPressed(Input::Action::RestartCave) && !isGameCompleted() && !isGameOver()) {
-                map.markForReset();
-            }
-            if (inputSystem.wasPressed(Input::Action::ForwardCave) && !isGameCompleted() && !isGameOver()) {
-                nextCave();
-                map.markForReset();
-            }
-            if (inputSystem.wasPressed(Input::Action::BackwardCave) && !isGameCompleted() && !isGameOver()) {
-                decrementCaveNumber(1);
-                map.markForReset();
-            }
-
-            if (caveActive && inputSystem.wasPressed(Input::Action::ToggleFreeCamera)) {
-                m_freeCamera = !m_freeCamera;
-                if (!m_freeCamera) {
-                    cameraOffset = { 0, 0 };
-                    map.snapCameraToJim();
-                }
-            }
-
-            if (m_freeCamera) {
-                if (inputSystem.isPressed(Input::Action::MoveUp))
-                    cameraOffset.y -= 4;
-                if (inputSystem.isPressed(Input::Action::MoveDown))
-                    cameraOffset.y += 4;
-                if (inputSystem.isPressed(Input::Action::MoveLeft))
-                    cameraOffset.x -= 4;
-                if (inputSystem.isPressed(Input::Action::MoveRight))
-                    cameraOffset.x += 4;
-            }
-
-        }
-        else {
-            m_freeCamera = false;
-            cameraOffset = { 0, 0 };
-        }
-
-        if (cheatMode() && developerMode()) {
-
-            if (inputSystem.wasPressed(Input::Action::ToggleEditorProperties)) {
-                showtrigger = true;
-            }
-
-        }
-
-        setCaveCount(static_cast<int>(caveManager.numCaves(getCaveFileIndex())));
 
         window.setMouseCursorVisible(showProps || !acceptInput);
 
         if (showProps) Cave::editCaveProperties(window, m_caveProperties, getCaveProperties(), map.getDiamondCount(), showtrigger);
 
-        // ---- Render to virtual screen (fixed 640x480 render texture) --------
-        rt.setView(camera.view());
-        rt.clear(sf::Color::Black);
+        // ---- Fixed 64 Hz logic / uncapped (vsync) render ----
+        float frameSec = loopClock.restart().asSeconds();
+        if (frameSec > 0.1f) frameSec = 0.1f;
+        logicAccum += frameSec;
 
-        if (caveActive) {
-            map.update(camera);
-            if (map.requiresReset()
-                && m_caveActive
-                && !onMainMenu()
-                && !isGameOver()
-                && !isGameCompleted()) {
+        int logicSteps = 0;
+        while (logicAccum >= kLogicDt && logicSteps < kMaxLogicSteps) {
+            logicAccum -= kLogicDt;
+            ++logicSteps;
+
+            if (!showProps) {
+                inputSystem.syncKeyboard(acceptInput);
+                if (acceptInput)
+                    inputSystem.handleJoystick();
+            }
+
+            pollNetwork();
+
+            if (inputSystem.wasPressed(Input::Action::ActivateCheatMode)) {
+                soundManager.play(Sound::Effect::Yippee);
+                m_cheatMode = true;
+            }
+
+            if (cheatMode()) {
+                if (inputSystem.wasPressed(Input::Action::RestartCave) && !isGameCompleted() && !isGameOver()) {
+                    map.markForReset();
+                }
+                if (inputSystem.wasPressed(Input::Action::ForwardCave) && !isGameCompleted() && !isGameOver()) {
+                    nextCave();
+                    map.markForReset();
+                }
+                if (inputSystem.wasPressed(Input::Action::BackwardCave) && !isGameCompleted() && !isGameOver()) {
+                    decrementCaveNumber(1);
+                    map.markForReset();
+                }
+
+                if (caveActive && inputSystem.wasPressed(Input::Action::ToggleFreeCamera)) {
+                    m_freeCamera = !m_freeCamera;
+                    if (!m_freeCamera) {
+                        cameraOffset = { 0, 0 };
+                        map.snapCameraToJim();
+                    }
+                }
+
+                if (m_freeCamera) {
+                    if (inputSystem.isPressed(Input::Action::MoveUp))
+                        cameraOffset.y -= 4;
+                    if (inputSystem.isPressed(Input::Action::MoveDown))
+                        cameraOffset.y += 4;
+                    if (inputSystem.isPressed(Input::Action::MoveLeft))
+                        cameraOffset.x -= 4;
+                    if (inputSystem.isPressed(Input::Action::MoveRight))
+                        cameraOffset.x += 4;
+                }
+            }
+            else {
+                m_freeCamera = false;
+                cameraOffset = { 0, 0 };
+            }
+
+            if (cheatMode() && developerMode()) {
+                if (inputSystem.wasPressed(Input::Action::ToggleEditorProperties)) {
+                    showtrigger = true;
+                }
+            }
+
+            setCaveCount(static_cast<int>(caveManager.numCaves(getCaveFileIndex())));
+
+            if (caveActive) {
+                map.update(camera);
+                if (map.requiresReset()
+                    && m_caveActive
+                    && !onMainMenu()
+                    && !isGameOver()
+                    && !isGameCompleted()) {
+                    caveManager.startCave(getCaveFileIndex(), getCaveNumber(), &m_caveProperties, &map);
+                    map.prepareForPlay();
+                    camera.setBounds(map.getCameraBounds());
+                    if (map.resetCameraPosition()) camera.setCentre(map.getCameraStartLocation());
+                    cameraOffset = { 0, 0 };
+                }
+                cameraTarget = map.updateCameraLocation(camera, cameraOffset);
+                if (m_freeCamera) {
+                    cameraOffset.x += camera.getCenter().x - cameraTarget.x;
+                    cameraOffset.y += camera.getCenter().y - cameraTarget.y;
+                }
+                map.updateVisibleTiles(camera);
+            }
+
+            update();
+
+            shaderManager.update();
+            levelPanel.update(camera);
+            pauseMenu.update(camera);
+            mainMenu.update();
+
+            const bool waiting = isMultiplayer() && m_net.waitingForTick();
+            if (m_gameState != GameState::CavePlay || m_gameIsPaused || m_quitConfirmOpen)
+                inputSystem.consumeGameplayLatch();
+            else if (Utils::TickCounter::onTick() && !waiting)
+                inputSystem.consumeGameplayLatch();
+
+            inputSystem.update();
+
+            if (m_revealCaveHUD && !revealCaveHUD) {
                 caveManager.startCave(getCaveFileIndex(), getCaveNumber(), &m_caveProperties, &map);
                 map.prepareForPlay();
                 camera.setBounds(map.getCameraBounds());
-                if (map.resetCameraPosition()) camera.setCentre(map.getCameraStartLocation());
-                cameraOffset = { 0, 0 };
+                revealCaveHUD = true;
+                if (m_editorMode) levelPanel.revealInstant();
+                else              levelPanel.reveal();
+            }
+
+            if (!m_revealCaveHUD && revealCaveHUD) {
+                revealCaveHUD = false;
+                m_makeHUDDisappear ?
+                    levelPanel.disappear() :
+                    levelPanel.hide();
+                m_makeHUDDisappear = false;
+            }
+
+            if ((m_caveActive && !caveActive)) {
+                camera.setCentre(map.getCameraStartLocation());
+                caveActive = true;
                 map.updateVisibleTiles(camera);
             }
-            cameraTarget = map.updateCameraLocation(camera, cameraOffset);
-            if (m_freeCamera) {
-                cameraOffset.x += camera.getCenter().x - cameraTarget.x;
-                cameraOffset.y += camera.getCenter().y - cameraTarget.y;
+
+            if ((!m_caveActive && caveActive)) {
+                map.abortToMenu();
+                camera.setCentre({ 0, 0 });
+                caveActive = false;
+                m_freeCamera = false;
+                cameraOffset = { 0, 0 };
             }
+
+            if (!(isMultiplayer() && m_net.waitingForTick()))
+                Utils::incrementGlobalCounter();
         }
+        if (logicSteps >= kMaxLogicSteps)
+            logicAccum = 0.f;
 
+        // ---- Render latest logic state (may run more often than 64 Hz) ----
         rt.setView(camera.view());
-
-        update();
-
-        shaderManager.update();
-
-        cameraPositionDisplay.update(camera, "Camera", { camera.getCenter().x, camera.getCenter().y }, 16.0);
-        cameraOffsetDisplay.update(camera, "Offset", { cameraOffset.x, cameraOffset.y }, 35.0);
-        fpsCounter.update(camera);
-        levelPanel.update(camera);
-        pauseMenu.update(camera);
-        mainMenu.update();
+        rt.clear(sf::Color::Black);
 
         if (caveActive) rt.draw(map, shaderManager.currentShader());
 
@@ -790,6 +877,9 @@ void Game::mainGameLoop() {
         }
 
         if (developerMode() && (cameraOffset.x != 0 || cameraOffset.y != 0)) {
+            cameraPositionDisplay.update(camera, "Camera", { camera.getCenter().x, camera.getCenter().y }, 16.0);
+            cameraOffsetDisplay.update(camera, "Offset", { cameraOffset.x, cameraOffset.y }, 35.0);
+            fpsCounter.update(camera);
             rt.draw(jimPositionDisplay);
             rt.draw(cameraPositionDisplay);
             rt.draw(cameraOffsetDisplay);
@@ -806,51 +896,23 @@ void Game::mainGameLoop() {
 
         rt.display();
 
-        const bool waiting = isMultiplayer() && m_net.waitingForTick();
-        if (m_gameState != GameState::CavePlay || m_gameIsPaused || m_quitConfirmOpen)
-            inputSystem.consumeGameplayLatch();
-        else if (Utils::TickCounter::onTick() && !waiting)
-            inputSystem.consumeGameplayLatch();
-
-        inputSystem.update();
-
-        // ---- Integer upscale, then fill the real window ---------------------
-        Utils::presentPrescaled(window, rt, SCREEN_WIDTH, SCREEN_HEIGHT, presentShaderPtr);
+        Utils::presentPrescaled(window, rt, SCREEN_WIDTH, SCREEN_HEIGHT, presentShaderPtr,
+            false, presentTarget, &presentMidRt);
         if (showProps) ImGui::SFML::Render(window);
         window.display();
 
-        if (m_revealCaveHUD && !revealCaveHUD) {
-            caveManager.startCave(getCaveFileIndex(), getCaveNumber(), &m_caveProperties, &map);
-            map.prepareForPlay();
-            camera.setBounds(map.getCameraBounds());
-            revealCaveHUD = true;
-            if (m_editorMode) levelPanel.revealInstant();
-            else              levelPanel.reveal();
+        if (!windowShown) {
+            window.setVisible(true);
+#ifdef _WIN32
+            if (HWND hwnd = static_cast<HWND>(window.getNativeHandle())) {
+                ShowWindow(hwnd, SW_SHOW);
+                if (m_editorFullscreen)
+                    SetWindowPos(hwnd, HWND_TOP, 0, 0, 0, 0,
+                        SWP_NOSIZE | SWP_NOMOVE | SWP_SHOWWINDOW);
+            }
+#endif
+            windowShown = true;
         }
-
-        if (!m_revealCaveHUD && revealCaveHUD) {
-            revealCaveHUD = false;
-            m_makeHUDDisappear ?
-                levelPanel.disappear() :
-                levelPanel.hide();
-            m_makeHUDDisappear = false;
-        }
-
-        if ((m_caveActive && !caveActive)) {
-            camera.setCentre(map.getCameraStartLocation());
-            caveActive = true;
-        }
-
-        if ((!m_caveActive && caveActive)) {
-            map.abortToMenu();
-            camera.setCentre({ 0, 0 });
-            caveActive = false;
-            m_freeCamera = false;
-            cameraOffset = { 0, 0 };
-        }
-
-        if (!(isMultiplayer() && m_net.waitingForTick()))
-            Utils::incrementGlobalCounter();
     }
 
 #ifdef _WIN32
@@ -1086,7 +1148,9 @@ void Game::checkExtraLife() {
 }
 
 void Game::setRefreshrate() {
-    window.setFramerateLimit(64);
+    // Logic runs on a fixed 64 Hz step; render follows the display (vsync).
+    window.setVerticalSyncEnabled(true);
+    window.setFramerateLimit(0);
 }
 
 GameSettings Game::getGameOptions() const {

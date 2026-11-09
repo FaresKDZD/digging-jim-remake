@@ -259,11 +259,18 @@ bool Cave::Map::handleJimTraverse(const int& index, const int& inFront, const bo
 	bool collectable = hasTrait(Cave::Entity::Trait::Collectable, inFront);
 	bool hollow = getEntityType(inFront) == Cave::Entity::Type::HollowDiamond;
 	bool timeBomb = getEntityType(inFront) == Cave::Entity::Type::TimeBomb;
+	bool landmine = getEntityType(inFront) == Cave::Entity::Type::Landmine;
 	bool macowEgg = getEntityType(inFront) == Cave::Entity::Type::MacowEgg;
 	bool macowCooked = getEntityType(inFront) == Cave::Entity::Type::MacowEggCooked;
+	bool trapEmpty = getEntityType(inFront) == Cave::Entity::Type::TrapEmpty;
+	bool trapFull = getEntityType(inFront) == Cave::Entity::Type::TrapFull;
+	const Cave::Map::FullTrapPayload trapPayload = trapFull
+		? Cave::Map::FullTrapPayload{ caveEntities[inFront].spawnCredit, caveEntities[inFront].extra }
+		: Cave::Map::FullTrapPayload{};
 	bool ruby = getEntityType(inFront) == Cave::Entity::Type::Ruby;
 	bool pyrobe = getEntityType(inFront) == Cave::Entity::Type::Pyrobe;
-	if (inShip && (collectable || ruby || pyrobe || hollow || timeBomb || macowEgg || macowCooked)) {
+	if (inShip && (collectable || ruby || pyrobe || hollow || timeBomb || landmine || macowEgg || macowCooked
+		|| trapEmpty || trapFull)) {
 		return true;
 	}
 	setJimMoveAmination(index);
@@ -297,12 +304,24 @@ bool Cave::Map::handleJimTraverse(const int& index, const int& inFront, const bo
 				m_timeBombsCarried++;
 				m_game->soundManager.play(Sound::Effect::Drop);
 			}
+			else if (landmine) {
+				m_landminesCarried++;
+				m_game->soundManager.play(Sound::Effect::Drop);
+			}
 			else if (macowEgg) {
 				m_macowEggsCarried++;
 				m_game->soundManager.play(Sound::Effect::Drop);
 			}
 			else if (macowCooked) {
 				m_macowCookedEggsCarried++;
+				m_game->soundManager.play(Sound::Effect::Drop);
+			}
+			else if (trapEmpty) {
+				m_emptyTrapsCarried++;
+				m_game->soundManager.play(Sound::Effect::Drop);
+			}
+			else if (trapFull) {
+				m_fullTrapsCarried.push_back(trapPayload);
 				m_game->soundManager.play(Sound::Effect::Drop);
 			}
 			else if (digging) {
@@ -312,6 +331,13 @@ bool Cave::Map::handleJimTraverse(const int& index, const int& inFront, const bo
 				m_timeBombsCarried--;
 				setEntity(inFront, Cave::Entity::TimeBomb());
 				caveEntities[inFront].targetIndex = Cave::Entity::TimeBomb::FUSE_TICKS;
+				m_game->soundManager.play(Sound::Effect::Drop);
+				notifyFusion5Stimulus(inFront);
+				return true;
+			}
+			else if (m_landminesCarried > 0 && hasTrait(Cave::Entity::Trait::Empty, inFront)) {
+				m_landminesCarried--;
+				setEntity(inFront, Cave::Entity::Landmine());
 				m_game->soundManager.play(Sound::Effect::Drop);
 				notifyFusion5Stimulus(inFront);
 				return true;
@@ -333,6 +359,24 @@ bool Cave::Map::handleJimTraverse(const int& index, const int& inFront, const bo
 			else if (m_macowCookedEggsCarried > 0 && hasTrait(Cave::Entity::Trait::Empty, inFront)) {
 				m_macowCookedEggsCarried--;
 				setEntity(inFront, Cave::Entity::MacowEggCooked());
+				m_game->soundManager.play(Sound::Effect::Drop);
+				notifyFusion5Stimulus(inFront);
+				return true;
+			}
+			else if (m_emptyTrapsCarried > 0 && hasTrait(Cave::Entity::Trait::Empty, inFront)) {
+				m_emptyTrapsCarried--;
+				setEntity(inFront, Cave::Entity::TrapEmpty());
+				m_game->soundManager.play(Sound::Effect::Drop);
+				notifyFusion5Stimulus(inFront);
+				return true;
+			}
+			else if (!m_fullTrapsCarried.empty() && hasTrait(Cave::Entity::Trait::Empty, inFront)) {
+				const Cave::Map::FullTrapPayload payload = m_fullTrapsCarried.front();
+				m_fullTrapsCarried.erase(m_fullTrapsCarried.begin());
+				const auto type = static_cast<Cave::Entity::Type>(payload.monsterType);
+				setEntity(inFront, Cave::Entity::TrapFull(
+					Cave::Entity::isTrapCapturable(type) ? type : Cave::Entity::Type::Protozo,
+					payload.look));
 				m_game->soundManager.play(Sound::Effect::Drop);
 				notifyFusion5Stimulus(inFront);
 				return true;
@@ -370,12 +414,24 @@ bool Cave::Map::handleJimTraverse(const int& index, const int& inFront, const bo
 			m_timeBombsCarried++;
 			m_game->soundManager.play(Sound::Effect::Drop);
 		}
+		else if (landmine) {
+			m_landminesCarried++;
+			m_game->soundManager.play(Sound::Effect::Drop);
+		}
 		else if (macowEgg) {
 			m_macowEggsCarried++;
 			m_game->soundManager.play(Sound::Effect::Drop);
 		}
 		else if (macowCooked) {
 			m_macowCookedEggsCarried++;
+			m_game->soundManager.play(Sound::Effect::Drop);
+		}
+		else if (trapEmpty) {
+			m_emptyTrapsCarried++;
+			m_game->soundManager.play(Sound::Effect::Drop);
+		}
+		else if (trapFull) {
+			m_fullTrapsCarried.push_back(trapPayload);
 			m_game->soundManager.play(Sound::Effect::Drop);
 		}
 		else if (digging) {

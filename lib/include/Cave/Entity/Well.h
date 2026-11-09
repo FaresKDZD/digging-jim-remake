@@ -84,6 +84,20 @@ namespace Cave::Entity {
             case Type::Macow:
             case Type::Caterpillar:
             case Type::Butterfly:
+            case Type::Jelly:
+            case Type::Mimic:
+            case Type::Shade:
+            case Type::Grouper:
+            case Type::Genom:
+            case Type::Compressor:
+            case Type::HiveMatriarch:
+            case Type::HiveLarva:
+            case Type::HiveServant:
+            case Type::HiveCollector:
+            case Type::HiveHunter:
+            case Type::HiveBuilder:
+            case Type::HiveGuard:
+            case Type::HiveDigger:
                 return true;
             default:
                 return false;
@@ -134,6 +148,20 @@ namespace Cave::Entity {
             { "Macow", Type::Macow },
             { "Caterpillar", Type::Caterpillar },
             { "Butterfly", Type::Butterfly },
+            { "Jelly", Type::Jelly },
+            { "Mimic", Type::Mimic },
+            { "Shade", Type::Shade },
+            { "Grouper", Type::Grouper },
+            { "Genom", Type::Genom },
+            { "Compressor", Type::Compressor },
+            { "Hive Matriarch", Type::HiveMatriarch },
+            { "Hive Larva", Type::HiveLarva },
+            { "Hive Servant", Type::HiveServant },
+            { "Hive Collector", Type::HiveCollector },
+            { "Hive Hunter", Type::HiveHunter },
+            { "Hive Builder", Type::HiveBuilder },
+            { "Hive Guard", Type::HiveGuard },
+            { "Hive Digger", Type::HiveDigger },
         };
 
     private:

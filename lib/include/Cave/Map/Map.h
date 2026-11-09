@@ -110,7 +110,7 @@ namespace Cave {
          * @param properties Pointer to the cave properties (width, height, timings, etc.).
          * @param tileData Vector of raw tile identifiers used to populate cave entities.
          */
-        void generateMap(const Cave::Properties* properties, const std::vector<char>& tileData, const std::vector<Cave::WellRecord>& wells = {}, const std::vector<Cave::PortalRecord>& portals = {}, const std::vector<Cave::CosmicRecord>& cosmics = {});
+        void generateMap(const Cave::Properties* properties, const std::vector<char>& tileData, const std::vector<Cave::WellRecord>& wells = {}, const std::vector<Cave::PortalRecord>& portals = {}, const std::vector<Cave::CosmicRecord>& cosmics = {}, const std::vector<Cave::GenomRecord>& genoms = {}, const std::vector<Cave::HiveBubbleRecord>& hiveBubbles = {});
 
         /**
          * @brief Updates the cave state and its entities.
@@ -146,6 +146,15 @@ namespace Cave {
 
         /// @brief Write cosmic job limits for every Singularity currently on the map.
         void collectCosmicRecords(std::vector<Cave::CosmicRecord>& out) const;
+
+        /// @brief Write sticky look for every Genom / GenomEgg currently on the map.
+        void collectGenomRecords(std::vector<Cave::GenomRecord>& out) const;
+
+        /// @brief Write cells that currently have a hive hunter bubble overlay.
+        void collectHiveBubbleRecords(std::vector<Cave::HiveBubbleRecord>& out) const;
+
+        /// @brief True if this cell has a hive hunter bubble over a monster.
+        bool isHiveBubbled(const int& cell) const;
 
         Cave::Entity::Cosmic::Settings& cosmicSettings() { return m_cosmicSettings; }
         const Cave::Entity::Cosmic::Settings& cosmicSettings() const { return m_cosmicSettings; }
@@ -254,6 +263,17 @@ namespace Cave {
         /// @brief True while the editor Simulate toggle is active.
         bool isEditorSimulate() const { return m_editorSimulate; }
 
+        /// @brief Shift-held editor cursor: solid probe that blocks walk/fall and can push.
+        void setEditorProbe(int index);
+        void clearEditorProbe();
+        int editorProbeIndex() const { return m_editorProbeIndex; }
+        bool isEditorProbe(int index) const {
+            return m_editorProbeIndex != OUT_OF_BOUNDS_INDEX && m_editorProbeIndex == index;
+        }
+        /// @brief Move the shift-probe onto target; pushes adjacent pushables when possible.
+        /// @return True if a pushable was shoved this call.
+        bool moveEditorProbeTo(int target);
+
         /// @brief Copy growth speeds/limits from cave properties onto the live map
         /// without regenerating entities. Used when the editor changes props or starts Simulate.
         void applyRuntimeProperties(const Cave::Properties& properties);
@@ -278,6 +298,8 @@ namespace Cave {
         int getJimInvincibleFrames() const;
 
         int nearestJimIndex(const int& from) const;
+        /// @brief Nearest Jim / Jimlin / Predator for Hive Guard chase.
+        int nearestHiveGuardPrey(const int& from) const;
         void noteJimMoved(const int& dest);
 
     private:
@@ -1102,6 +1124,339 @@ namespace Cave {
         void updateChrysalis(const int& index);
         void updateButterflyRelease(const int& index);
         void updateButterfly(const int& index);
+        void updateJelly(const int& index);
+        void updateGenom(const int& index);
+        int findGenomBreedPartner(const int& index);
+        bool isGenomEggNest(const int& cell) const;
+        int findGenomEggNest(const int& from);
+        bool tryLayGenomEgg(const int& index);
+        void updateMimic(const int& index);
+        void updateShade(const int& index);
+        void updateGrouper(const int& index);
+        bool grouperHasJimLineOfSight(const int& index) const;
+        int findGrouperIndexById(int grouperId) const;
+        bool grouperIdIsAlarmAncestor(int fromIndex, int candidateId) const;
+        void alarmGrouper(const int& index, int parentId, int lastSeenJim);
+        void spreadGrouperAlarm(const int& index);
+        Cave::Entity::Type pickMimicForm() const;
+        void beginMimicTurnTo(const int& index);
+        void beginMimicTurnFrom(const int& index);
+        void updateMimicTurnOverlays();
+        void updateMimicMorphTimers();
+        bool isMimicTurnOccupied(const int& index) const;
+        void clearMimicTurnOverlay(const int& index);
+        /// @brief Random empty/gate cell reachable from self (Jelly-style plan rules).
+        int pickRandomEmptySpace(const int& self) const;
+        /// @brief Shared Jelly / Genom / Grouper-idle wander toward a reachable empty.
+        void wanderTowardRandomEmpty(const int& index, int holdTicks);
+        /// @brief Rebuild matriarch/nursery/storage room masks from corner marker walls.
+        void rebuildHiveRooms();
+        /// @brief Per-tick hive AI caches (active build footprints, dig goals, entrance dirt).
+        void refreshHiveGameplayCaches();
+        /// @brief Remember a ROOM_SIZE footprint that has been a fully linked room.
+        void rememberHiveKnownRoom(int origin, int buildMode);
+        /// @brief Scan linked ROOM_SIZE rooms and add them to the known-room list.
+        void rememberCompletedHiveRooms();
+        /// @brief True if this footprint was previously a completed hive room of this mode.
+        bool isHiveKnownRoom(int origin, int buildMode) const;
+        /// @brief True when rectangle edges link four corners with HiveWall (top may be open).
+        bool hiveRoomBorderLinked(int x0, int y0, int x1, int y1) const;
+        /// @brief True if cell is interior of a marked matriarch room.
+        bool isMatriarchRoom(const int& cell) const;
+        /// @brief True if cell is interior of a marked nursery room.
+        bool isNurseryRoom(const int& cell) const;
+        /// @brief True if cell is interior of a marked storage room.
+        bool isStorageRoom(const int& cell) const;
+        /// @brief True if cell is interior of a marked living room.
+        bool isLivingRoom(const int& cell) const;
+        bool hiveLivingExists() const;
+        /// @brief No free bottom-up stand left in any living room.
+        bool hiveLivingAllFull() const;
+        /// @brief True when any living-capable job has more than LIVING_ACTIVE_CAP members.
+        bool hiveHasLivingOverflow() const;
+        /// @brief Overflow tag — park in living when space exists; keep working if missing/full.
+        bool hiveWorkerShouldParkInLiving(const int& index) const;
+        /// @brief Reconcile sticky living-extra tags so each job keeps at most LIVING_ACTIVE_CAP actives.
+        void refreshHiveLivingExtraTags();
+        /// @brief Mid-task workers (used only when picking new extras, not for sticky ones).
+        bool hiveWorkerBusyForLiving(const int& index) const;
+        bool isHiveLivingStand(const int& cell) const;
+        int findNearestHiveLivingStand(const int& from) const;
+        /// @brief Path to living stand and freeze; returns true when this tick is handled.
+        bool tryHiveWorkerGoLive(const int& index);
+        void beginHiveBubble(const int& prey);
+        void updateHiveHunterBubbleOverlays();
+        void transferHiveBubble(const int& from, const int& to, const Cave::Entity::Direction& direction);
+        int findNearestHiveHuntPrey(const int& from) const;
+        /// @brief Random empty cell reachable from self that lies in mask (or nearest mask entry).
+        int pickRandomMaskedEmpty(const int& self, const std::vector<char>& mask) const;
+        /// @brief Nearest reachable empty cell in mask (BFS).
+        int findNearestMaskedEmpty(const int& self, const std::vector<char>& mask) const;
+        /// @brief Wander inside a hive room; pathfind into the room if outside.
+        void wanderTowardHiveRoom(const int& index, const std::vector<char>& mask, int holdTicks);
+        /// @brief True for nursery / matriarch / storage interiors (adult jobs stay out while idle).
+        bool isHiveJobRestrictedRoom(const int& cell) const;
+        /// @brief Random reachable empty outside restricted hive rooms.
+        int pickRandomHiveAdultEmpty(const int& self) const;
+        /// @brief Nearest reachable empty outside restricted hive rooms.
+        int findNearestHiveAdultEmpty(const int& self) const;
+        /// @brief Adult hive idle roam: anywhere except nursery/matriarch/storage rooms.
+        void wanderHiveAdult(const int& index, int holdTicks);
+        /// @brief Clear immobilized-hive explode timer after a successful action.
+        void hiveClearStuck(const int& index);
+        /// @brief Advance stuck timer while immobilized; explode after HIVE_STUCK_EXPLODE_TICKS.
+        /// @return true if the member exploded (caller must stop updating it).
+        bool hiveAdvanceStuck(const int& index);
+        /// @brief True when sealed by solids (walls/boulders/etc); monsters/Jim do not count.
+        bool hiveEnclosedBySolids(const int& index, bool allowDirtTraverse) const;
+        /// @brief True when a digger has no empty escape and no dirt it can dig through.
+        bool hiveDiggerFullySealed(const int& index) const;
+        /// @brief Dirt to dig so a boxed-in digger can reach open space, or OUT_OF_BOUNDS_INDEX.
+        int findHiveDiggerEscapeDigCell(const int& from) const;
+        /// @brief Empty-step for adult roam; stamps haul onto vacated Space for carrying collectors/servants.
+        bool tryMoveHiveAdultStep(const int& index, const Cave::Entity::Direction& dir);
+        void updateHiveMatriarch(const int& index);
+        void updateHiveLarva(const int& index);
+        void updateHiveWorker(const int& index);
+        void updateHiveGuard(const int& index);
+        /// @brief True when prey is inside the guard's 7x7 detect box.
+        bool hiveGuardDetectsJim(const int& guard, const int& prey) const;
+        /// @brief True when any hive room interior exists.
+        bool hiveAnyRoomExists() const;
+        void updateHiveHunter(const int& index);
+        void updateHiveCollector(const int& index);
+        void updateHiveServant(const int& index);
+        void updateHiveDigger(const int& index);
+        void updateHiveBuilder(const int& index);
+        void updateHiveTurn(const int& index);
+        /// @brief True when every storage interior has no free deposit slot.
+        bool hiveStorageAllFull() const;
+        /// @brief Preferred next room for a builder, or NoType if none needed.
+        Cave::Entity::Type pickHiveBuilderRoomType() const;
+        /// @brief Fallable or bubbled package that participates in a gather pile.
+        bool isHiveBuilderPileOccupant(const int& cell) const;
+        /// @brief Exposed top of a (possibly mixed) gather pile.
+        bool isHiveBuilderPileTop(const int& cell) const;
+        /// @brief Top cell of the contiguous pile column containing cell.
+        int hiveBuilderPileColumnTop(const int& cell) const;
+        /// @brief Boulder / diamond / ore the builder may eat for wall stock (top of its pile only).
+        bool isHiveBuilderFood(const int& cell) const;
+        /// @brief Edible wall stock currently sitting in a storage room.
+        bool isHiveBuilderStorageFood(const int& cell) const;
+        /// @brief Bubbled hunt package to pocket (top of its pile; storage preferred by finder).
+        bool isHiveBuilderPocketable(const int& cell) const;
+        /// @brief Walkable stand not under a resting pile occupant.
+        bool isHiveBuilderSafeStand(const int& cell) const;
+        /// @brief Closest wall-stock food: storage pile tops first, then world.
+        int findNearestHiveBuilderFood(const int& from) const;
+        /// @brief Closest edible pile top in world (storageOnly=false) or storage (true).
+        int findNearestHiveBuilderGather(const int& from, bool storageOnly) const;
+        /// @brief Walkable safe stand beside a pile top (prefers the cell above it).
+        int findHiveBuilderGatherStand(const int& gather) const;
+        bool tryHiveBuilderPocket(const int& builder, const Cave::Entity::Direction& dir);
+        /// @brief First dirt cell on a diggable path from builder toward food (for digger assist).
+        int findHiveBuilderFoodAccessDigCell(const int& from, const int& food) const;
+        /// @brief Mark dirt so diggers clear a path (refreshHiveGameplayCaches may also stamp these).
+        void requestHiveDigDirt(const int& cell);
+        /// @brief Mark every dirt cell on the diggable corridor from builder to food.
+        void requestHiveBuilderFoodAccessDig(const int& from, const int& food);
+        bool tryHiveBuilderEat(const int& builder, const Cave::Entity::Direction& dir);
+        /// @brief Brick / metal / monsters / fallables / existing hive that block a build cell.
+        bool isHiveBuilderSiteBlocked(const int& cell) const;
+        bool isHiveBuilderSiteClearable(const int& cell) const;
+        /// @brief Clearable footprint for this build mode (monsters do not block picking).
+        bool isHiveBuildSiteValid(const int& origin, int buildMode) const;
+        /// @brief True if permanent non-diggable / non-fallable terrain blocks access above the top entrance.
+        bool isHiveTerrainOccludingEntrance(const int& cell) const;
+        /// @brief At least one cell above the top entrance gap is diggable, fallable, or open.
+        bool isHiveBuildEntranceAccessible(const int& origin) const;
+        /// @brief Min empty tiles between room AABBs (and no overlapping another room's top entrance).
+        static constexpr int HIVE_ROOM_GAP = 3;
+        /// @brief Origins of every marked matriarch/nursery/storage/living room.
+        void collectAllHiveRoomOrigins(std::vector<int>& out) const;
+        /// @brief Completed rooms + unfinished corner quads + active builder sites (spacing blockers).
+        void collectHiveOccupiedFootprintOrigins(std::vector<int>& out) const;
+        /// @brief How empty the footprint is (prefer Space over dirt when picking).
+        int hiveBuildSiteEmptyScore(const int& origin) const;
+        /// @brief Aligned with an existing room on the same row or column, with HIVE_ROOM_GAP clearance.
+        bool isHiveBuildSiteSpacingOk(const int& origin, bool allowUnaligned = false) const;
+        /// @brief Spacing check against a precollected footprint list (avoids per-candidate rescans).
+        bool isHiveBuildSiteSpacingOkWithRooms(
+            const int& origin, const std::vector<int>& rooms, bool allowUnaligned) const;
+        /// @brief True when stepping down beside a fallable column (crush trench).
+        bool isHiveBuilderDiveBesidePile(const int& cell) const;
+        /// @brief New footprint must not cover another room's top entrance gap.
+        bool isHiveBuildSiteEntranceClear(const int& origin) const;
+        /// @brief True if brick/metal/foreign monsters invaded an in-progress site (hive walls OK).
+        bool isHiveBuildSiteRuined(const int& origin) const;
+        /// @brief Wall slots that still need placing (shared septum walls count as already done).
+        int hiveBuilderWallsNeeded(const int& origin, int buildMode) const;
+        /// @brief Missing wall slots on a damaged room are clearable so the builder can re-place them.
+        bool isHiveRepairSiteReady(const int& origin, int buildMode) const;
+        /// @brief Top-left origins of existing ROOM_SIZE rooms with the given corner wall type.
+        void collectHiveRoomOrigins(Cave::Entity::Type cornerType, std::vector<int>& out) const;
+        /// @brief ROOM_SIZE corner quads; when requireLinked, edges must still form a marked room.
+        void collectHiveCornerQuads(Cave::Entity::Type cornerType, bool requireLinked, std::vector<int>& out) const;
+        /// @brief True if another builder already claimed this footprint.
+        bool isHiveBuildSiteClaimed(const int& origin, int exceptBuilder) const;
+        /// @brief True if another builder is already on a build / repair / deposit job.
+        bool isHiveBuilderJobTaken(int exceptBuilder) const;
+        /// @brief Prefer sideways expand off existing same-type rooms; else a clear footprint.
+        int pickHiveBuildSite(const int& from, int buildMode) const;
+        /// @brief Damaged previously-completed ROOM_SIZE room to repair; sets outBuildMode.
+        int pickHiveRepairSite(const int& from, int& outBuildMode) const;
+        bool isHiveBuildFootprintCell(const int& origin, const int& cell) const;
+        /// @brief Dirt-like cell inside a committed builder footprint (digger clears these).
+        int findHiveBuilderDigCell(const int& origin) const;
+        /// @brief Nearest footprint dirt the digger can reach through empty/dirt (skips boulder-blocked tiles).
+        int findHiveBuilderReachableDigCell(const int& from, const int& origin) const;
+        /// @brief Nearest dirt cell inside any active builder site the digger can reach.
+        int findHiveBuilderRequestedDigCell(const int& from) const;
+        /// @brief Fallable debris inside a build footprint the builder should pocket before placing.
+        bool isHiveBuilderSiteDebris(const int& origin, const int& cell) const;
+        int findNearestHiveBuilderSiteDebris(const int& from, const int& origin) const;
+        /// @brief True when the finished ROOM_SIZE footprint contains storage interior cells.
+        bool hiveBuilderSiteHasStorageHollow(const int& site) const;
+        bool tryHiveBuilderCollectDebris(const int& builder, const Cave::Entity::Direction& dir);
+        /// @brief Empty storage cell inside the just-built site footprint (not older storages).
+        bool isHiveBuilderSiteStorageDeposit(const int& site, const int& cell) const;
+        /// @brief Pit-drop stand above a site storage deposit (collector rules, site-scoped).
+        bool isHiveBuilderSiteDropStand(const int& stand, const int& site) const;
+        bool isHiveBuilderSiteFlatFloor(const int& cell, const int& site) const;
+        int findNearestHiveBuilderSiteDepositStand(const int& from, const int& site) const;
+        bool tryHiveBuilderDepositDebris(const int& builder);
+        void clearHiveBuilderSiteDebris(const int& origin);
+        bool isHiveBuilderWallSlot(const int& origin, const int& cell) const;
+        Cave::Entity::Type hiveBuilderWallTypeForCell(const int& origin, const int& cell, int buildMode) const;
+        /// @brief Next border cell that still needs its wall, or none when the room is complete.
+        int findNextHiveBuilderWallSlot(const int& origin, int buildMode) const;
+        /// @brief Walkable neighbor to stand on while placing into wallCell (prefers interior).
+        int findHiveBuilderPlaceStand(const int& wallCell, const int& origin, const int& from) const;
+        /// @brief Place one wall into an adjacent empty slot (or leave a wall when stepping off it).
+        bool tryHiveBuilderPlaceWall(const int& builder, const int& wallCell, int buildMode);
+        Cave::Entity::Direction findPathForHiveBuilder(const int& index, const int& goal) const;
+        bool tryMoveHiveBuilder(const int& index, const Cave::Entity::Direction& dir);
+        /// @brief Boulder / diamond / ore / unbubbled hunt prey a digger tunnels toward.
+        bool isHiveDiggerGoal(const int& cell) const;
+        /// @brief Dirt inside an active builder footprint, or classic digger resource goals.
+        /// @brief Diggable dirt blocking a room doorway or its access shaft.
+        bool isHiveEntranceAccessDirt(const int& cell) const;
+        bool isHiveDiggerDigTarget(const int& cell) const;
+        /// @brief Prefer builder-site dirt; else random reachable dig goal.
+        int pickHiveDiggerGoal(const int& from) const;
+        Cave::Entity::Direction findPathForHiveDigger(const int& index, const int& goal) const;
+        bool tryMoveHiveDigger(const int& index, const Cave::Entity::Direction& dir);
+        /// @brief True if a fallable in the open shaft above can crush this cell.
+        /// @param bubbledOnly When true, only bubbled packages count (hunter dodge).
+        bool hiveCrushThreatAbove(const int& cell, bool bubbledOnly) const;
+        /// @brief Falling or fall-pending objects in the shaft (resting boulders OK).
+        int findHiveFallingCrushThreat(const int& cell) const;
+        bool hiveFallingCrushThreatAbove(const int& cell) const;
+        /// @brief Only objects mid-fall (ignore fallPending / resting) — diggers dig under piles.
+        int findHiveActuallyFallingCrushThreat(const int& cell) const;
+        bool hiveActuallyFallingCrushThreatAbove(const int& cell) const;
+        /// @brief Step aside (or dig, for diggers) when threatened; true if this tick was spent dodging.
+        bool tryHiveDodgeCrush(const int& index, bool bubbledOnly, bool allowDig);
+        /// @brief Dodge only falling crush threats (digger may dig; builder walk-only).
+        bool canHiveWorkerDodgeWalk(const int& self, const int& cell, const int& threat, bool allowDig) const;
+        bool tryHiveWorkerDodgeStep(const int& index, const Cave::Entity::Direction& direction, bool allowDig);
+        bool tryHiveWorkerDodgeCrush(const int& index, bool allowDig);
+        /// @brief Sidestep falling / about-to-fall objects (matriarch prefers left/right).
+        bool tryHiveMatriarchDodgeFallable(const int& index);
+        /// @brief Active builder footprint containing cell, or none.
+        int findHiveActiveBuildSiteAt(const int& cell) const;
+        /// @brief Claimed build site that this member (except owner builder / diggers) must not enter.
+        bool isHiveForeignBuildSite(const int& self, const int& cell) const;
+        /// @brief True if this hive adult should leave a claimed build site.
+        bool shouldEvacuateHiveBuildSite(const int& index) const;
+        int findNearestHiveBuildSiteExit(const int& self) const;
+        /// @brief Spend the tick pathing out of a claimed build footprint when required.
+        bool tryHiveEvacuateBuildSite(const int& index);
+        /// @brief Prefer a job the colony lacks (counting adults + queued turns); else any job.
+        Cave::Entity::Type pickHiveLarvaJob() const;
+        /// @brief How many of the 6 adult jobs have no adult / turning member yet.
+        int countHiveMissingJobs() const;
+        /// @brief Live HiveLarva count (unassigned reserve for missing jobs).
+        int countHiveLarvae() const;
+        /// @brief True when missing jobs outnumber current larvae — free seed births allowed.
+        bool hiveMatriarchShouldSeedBirth() const;
+        void beginHiveLarvaTurn(const int& index);
+        /// @param requireFed Normal post-meal birth when true; seed births pass false.
+        bool tryHiveMatriarchBirth(const int& index, bool requireFed = true);
+        /// @brief Free seed birth into birth-stand below or any empty neighbor (no room required).
+        bool tryHiveMatriarchSeedBirth(const int& index);
+        /// @brief True if cell is in the hollow of a ROOM_SIZE footprint.
+        bool isHiveBuildHollowCell(const int& origin, const int& cell) const;
+        /// @brief Walkable path exists from some other room hollow into this room's hollow.
+        bool hiveRoomHasWalkableAccessFromOthers(const int& newSite) const;
+        /// @brief Dirt to dig for a patent tunnel into newSite from another room.
+        int findHiveRoomConnectDigCell(const int& newSite) const;
+        /// @brief After a non-first room finishes, queue a digger tunnel job.
+        void queueHiveRoomConnect(const int& newSite);
+        /// @brief Hollow or top doorway that may receive a birthed larva.
+        bool isHiveMatriarchBirthDeposit(const int& cell) const;
+        /// @brief Cell to stand on to birth a larva downward into the matriarch room.
+        bool isHiveMatriarchBirthStand(const int& stand) const;
+        int findNearestHiveMatriarchBirthStand(const int& from) const;
+        bool tryHiveMatriarchEat(const int& matriarch, const Cave::Entity::Direction& dir);
+        int findNearestHiveMatriarchMeal(const int& from) const;
+        bool hiveNurseryExists() const;
+        bool hiveStorageExists() const;
+        bool hiveMatriarchRoomExists() const;
+        /// @brief Boulder variants / diamonds / ore / bubbled prey a collector may pick up.
+        bool isHiveCollectable(const int& cell) const;
+        /// @brief Non-bubbled collectables (boulders / diamonds / ore / etc.).
+        bool isHiveCollectableItem(const int& cell) const;
+        /// @brief Bubbled monster packages a collector may haul (not matriarch food).
+        bool isHiveCollectableBubbled(const int& cell) const;
+        /// @brief 50/50 item vs bubbled, then a random reachable target in that category.
+        int pickHiveCollectable(const int& from) const;
+        int findNearestHiveCollectable(const int& from) const;
+        /// @brief Bubbled package in storage for a servant to haul.
+        bool isHiveServantCollectable(const int& cell) const;
+        int findNearestHiveServantCollectable(const int& from) const;
+        /// @brief Empty cell with a non-Space tile beneath it (cargo landing spot).
+        bool isHiveHaulerDeposit(const int& cell) const;
+        /// @brief Solid room floor/wall under a stand (not air or stored cargo).
+        bool isHiveHaulerFloorSupport(const int& cell) const;
+        /// @brief Room floor tile (empty or occupied by the hauler) on solid support.
+        bool isHiveHaulerFlatFloor(const int& cell, bool inRoom, Cave::Entity::Type hauler) const;
+        /// @brief Hauler standing on cargo/stack (can side-step and leave haul here).
+        bool isHiveHaulerStackStand(const int& stand, bool inRoom, Cave::Entity::Type hauler) const;
+        /// @brief Cell to stand on for a downward pit deposit only.
+        bool isHiveHaulerDropStand(const int& stand, bool inRoom, Cave::Entity::Type hauler) const;
+        int findNearestHiveHaulerDropStand(const int& from, const std::vector<char>& room,
+            Cave::Entity::Type hauler) const;
+        bool isHiveCollectorDeposit(const int& cell) const { return isHiveHaulerDeposit(cell); }
+        bool isHiveCollectorFloorSupport(const int& cell) const { return isHiveHaulerFloorSupport(cell); }
+        bool isHiveCollectorFlatFloor(const int& cell) const;
+        bool isHiveCollectorStackStand(const int& stand) const;
+        bool isHiveCollectorDropStand(const int& stand) const;
+        int findNearestHiveCollectorDropStand(const int& from) const;
+        /// @brief Max bubbled-prey stack height servants may build in the matriarch room.
+        static constexpr int HIVE_SERVANT_MATRIARCH_STACK_ROWS = 3;
+        /// @brief Cell sits in the bottom HIVE_SERVANT_MATRIARCH_STACK_ROWS of a matriarch hollow.
+        bool isHiveServantMatriarchDepositHeightOk(const int& cell) const;
+        /// @brief Empty supported matriarch deposit within the stack-row limit.
+        bool isHiveServantMatriarchDeposit(const int& cell) const;
+        bool isHiveServantFlatFloor(const int& cell) const;
+        bool isHiveServantStackStand(const int& stand) const;
+        bool isHiveServantDropStand(const int& stand) const;
+        int findNearestHiveServantDropStand(const int& from) const;
+        bool tryHiveCollectorEat(const int& collector, const Cave::Entity::Direction& dir);
+        bool tryHiveCollectorDrop(const int& collector);
+        bool tryHiveCollectorFlatDeposit(const int& collector);
+        bool tryMoveHiveCollector(const int& index, const Cave::Entity::Direction& dir);
+        bool tryHiveServantEat(const int& servant, const Cave::Entity::Direction& dir);
+        bool tryHiveServantDrop(const int& servant);
+        bool tryHiveServantFlatDeposit(const int& servant);
+        bool tryMoveHiveServant(const int& index, const Cave::Entity::Direction& dir);
+        /// @brief Build a placeable entity for hauler cargo (boulder/diamond/ore/monster).
+        /// @param lookHint Packed Genom look (LOOK_VALID) to restore; 0 otherwise.
+        Cave::Entity::Base hiveCargoEntity(Cave::Entity::Type type, int textureHint, int lookHint = 0) const;
+        /// @param allowOccupiedPlan If true, routes may plan through Jim/monsters
+        /// (actual steps still need Empty). If false, only empty/gate cells are used.
+        Cave::Entity::Direction findPathThroughEmpty(const int& index, const int& goal, bool allowOccupiedPlan = true);
         bool isMacowSolidGround(const int& index) const;
         bool isMacowNestCell(const int& nest, const int& macow) const;
         bool isMacowLayStand(const int& stand) const;
@@ -1308,6 +1663,9 @@ namespace Cave {
         /// @brief Plays the cook sheet once and holds the last frame as a cooked egg.
         void updateMacowEggCook(const int& index);
 
+        /// @brief Idle 5s then hatch strip; baby look in spawnCredit.
+        void updateGenomEgg(const int& index);
+
         /// @brief Fetches accessible diamonds to the nearest Queen nest, else Cave-Gull wander.
         void updateGallop(const int& index);
 
@@ -1434,6 +1792,8 @@ namespace Cave {
          * @brief First empty step along a real route to Jim, or NO_DIRECTION if none.
          */
         Cave::Entity::Direction findPathToJim(const int& index);
+        /// @brief First empty step along a real route to an explicit hunt goal.
+        Cave::Entity::Direction findPathToHuntGoal(const int& index, const int& goal);
 
         /// @brief True if this tile can fall and crush.
         bool isFallableEntity(const int& index) const;
@@ -1483,6 +1843,14 @@ namespace Cave {
          * @return true if the movement succeeded, false otherwise.
          */
         bool tryMoveEnemy(const int& index, const Cave::Entity::Trait& trait, const Cave::Entity::Direction& direction, int slideInc = 4);
+        /// @brief True if cell holds a Landmine (monster proximity explosive).
+        bool isLandmineCell(const int& cell) const;
+        /// @brief Detonate a landmine at cell if present. Returns true if one exploded.
+        bool detonateLandmineAt(const int& cell);
+        /// @brief Detonate the first landmine found in the 3x3 around center (puffer contact).
+        bool detonateLandmineIn3x3(const int& center);
+        /// @brief True if a fully settled monster occupies a 4-neighbour (not mid-slide).
+        bool landmineHasAdjacentMonster(const int& cell) const;
 
         /**
          * @brief Attempts to move an enemy onto a destination of a specific entity type.
@@ -1549,7 +1917,20 @@ namespace Cave {
         void updateChum(const int& index);
         void updateLava(const int& index);
         void updateMoss(const int& index);
+        void updateMossyBoulder(const int& index);
+        void updateTrapEmpty(const int& index);
+        void updateTrapFilling(const int& index);
+        void updateTrapFull(const int& index);
+        bool tryCaptureMonsterInTrap(const int& trapIndex);
+        void releaseTrapMonster(const int& index);
+        void updateTrapOpenOverlays();
         void updateFire(const int& index);
+        /// @brief Detonate if any monster occupies a 4-neighbour tile.
+        void updateLandmine(const int& index);
+        /// @brief Stationary compressor: eat full traps, spit diamonds.
+        void updateCompressor(const int& index);
+        /// @brief TrapFull landed on compressor — start eat sequence instead of crushing.
+        void beginCompressorEat(const int& compressor, const int& trapCell);
         void updateFireball(const int& index);
         void updateExplosion(const int& index);
         int digSlideInc(const int& destIndex) const;
@@ -1827,6 +2208,9 @@ namespace Cave {
         /// @brief Whether Jim or a digging monster is currently traversing through dirt.
         bool m_traversingDirt = false;
 
+        /// @brief Whether any Grouper is alarmed this update (drives Wawa loop).
+        bool m_grouperAlarmed = false;
+
         /// @brief True if Jim changed tiles during the current tick.
         bool m_jimMovedThisTick = false;
 
@@ -1835,12 +2219,23 @@ namespace Cave {
 
         /// @brief Time bombs currently carried by Jim.
         int m_timeBombsCarried = 0;
+        int m_landminesCarried = 0;
 
         /// @brief Unhatched Macow eggs currently carried by Jim.
         int m_macowEggsCarried = 0;
 
         /// @brief Cooked Macow eggs currently carried by Jim.
         int m_macowCookedEggsCarried = 0;
+
+        /// @brief Empty traps currently carried by Jim.
+        int m_emptyTrapsCarried = 0;
+
+        /// @brief Full traps Jim is carrying (FIFO): monster type + Genom look.
+        struct FullTrapPayload {
+            int monsterType = 0;
+            int look = 0;
+        };
+        std::vector<FullTrapPayload> m_fullTrapsCarried;
 
         /// @brief Remaining frames of ruby invincibility.
         int m_jimInvincibleFrames = 0;
@@ -1924,6 +2319,9 @@ namespace Cave {
         /// @brief True when the editor is simulating physics/AI in place.
         bool m_editorSimulate = false;
 
+        /// @brief Shift-collision cursor cell in the editor (-1 when inactive).
+        int m_editorProbeIndex = OUT_OF_BOUNDS_INDEX;
+
         /// @brief After a Pegul is crushed, remaining Peguls hunt other variants to fuse.
         bool m_pegulFuseHunt = false;
 
@@ -1958,6 +2356,62 @@ namespace Cave {
         std::vector<int> m_predatorHuntQueue;
         int m_predatorHuntGen = 0;
         size_t m_predatorHuntQueueHead = 0;
+
+        /// @brief Reused Jelly/Genom/Grouper empty-path BFS scratch (generation-stamped).
+        mutable std::vector<int> m_emptyPathVisit;
+        mutable std::vector<Cave::Entity::Direction> m_emptyPathFirst;
+        mutable std::vector<int> m_emptyPathParent;
+        mutable std::vector<int> m_emptyPathQueue;
+        mutable std::vector<int> m_emptyPathHits;
+        mutable int m_emptyPathGen = 0;
+        mutable size_t m_emptyPathQueueHead = 0;
+        void ensureEmptyPathScratch(int cellCount) const;
+        void beginEmptyPathGen() const;
+
+        /// @brief Hive room interiors (1 = inside rectangle marked by corner walls).
+        std::vector<char> m_matriarchRoom;
+        std::vector<char> m_nurseryRoom;
+        std::vector<char> m_storageRoom;
+        std::vector<char> m_livingRoom;
+        bool m_hiveHasMatriarchRoom = false;
+        bool m_hiveHasNursery = false;
+        bool m_hiveHasStorage = false;
+        bool m_hiveHasLiving = false;
+        bool m_hiveRoomsBuilt = false;
+        /// @brief Lazy once-per-tick hive job/larva census for seed-birth checks.
+        mutable bool m_hiveCensusValid = false;
+        mutable int m_hiveMissingJobsCached = 0;
+        mutable int m_hiveLarvaCountCached = 0;
+        void ensureHiveCensus() const;
+        /// @brief At most one idle builder runs expensive site BFS per tick.
+        mutable bool m_hiveBuilderSitePickTried = false;
+        /// @brief ROOM_SIZE footprints that have been fully linked rooms (survive corner loss).
+        struct HiveKnownRoom {
+            int origin = OUT_OF_BOUNDS_INDEX;
+            int buildMode = 0;
+        };
+        std::vector<HiveKnownRoom> m_hiveKnownRooms;
+        /// @brief Per-cell active build-site origin (or none) — refreshed once per tick.
+        std::vector<int> m_hiveActiveBuildSiteOfCell;
+        /// @brief Dirt cells diggers should clear this tick (entrance + claimed footprints).
+        std::vector<int> m_hiveDigDirtGoals;
+        std::vector<char> m_hiveDigDirtMask;
+        /// @brief Diggable entrance / access-shaft dirt for existing + claimed rooms.
+        std::vector<char> m_hiveEntranceDirtMask;
+        /// @brief Cells within PATROL_RADIUS of any hive room (guard roam band).
+        std::vector<char> m_hiveGuardPatrol;
+        /// @brief Reused digger BFS distances for requested dig cells.
+        mutable std::vector<int> m_hiveDigDist;
+        /// @brief Newly finished ROOM_SIZE rooms waiting for a patent tunnel from older rooms.
+        std::vector<int> m_hiveConnectQueue;
+
+        /// @brief Fallables / bubbled packages pocketed until deposited after the build.
+        struct HiveBuilderDebrisItem {
+            Cave::Entity::Type type = Cave::Entity::Type::NoType;
+            int texture = -1;
+            bool bubbled = false;
+        };
+        std::unordered_map<int, std::vector<HiveBuilderDebrisItem>> m_hiveBuilderDebrisBySite;
 
         /// @brief Cells emptied this tick by digging or an explosion finishing.
         std::vector<char> m_supportDugOrExploded;

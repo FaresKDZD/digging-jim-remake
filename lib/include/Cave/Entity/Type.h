@@ -153,7 +153,48 @@ namespace Cave::Entity {
         Chrysalis,
         ButterflyRelease,
         Butterfly,
+        Jelly,
+        MossyBoulder,
+        TrapEmpty,
+        TrapFilling,
+        TrapFull,
+        TrapOpen,
+        Mimic,
+        MimicTurn,
+        Shade,
+        Grouper,
+        Genom,
+        GenomEgg,
+        Landmine,
+        Compressor,
+        HiveMatriarch,
+        HiveLarva,
+        HiveWall,
+        HiveMatriarchWall,
+        HiveNurseryWall,
+        HiveServant,
+        HiveCollector,
+        HiveHunter,
+        HiveBuilder,
+        HiveGuard,
+        HiveDigger,
+        HiveTurn,
+        HiveStorageWall,
+        HiveHunterBubble,
+        HiveLivingWall,
     };
+
+    inline bool isLandmine(Type type) {
+        return type == Type::Landmine;
+    }
+
+    inline bool isBoulder(Type type) {
+        return type == Type::Boulder || type == Type::MossyBoulder;
+    }
+
+    inline bool isTrap(Type type) {
+        return type == Type::TrapEmpty || type == Type::TrapFilling || type == Type::TrapFull;
+    }
 
     inline bool isHotBoulder(Type type) {
         return type == Type::HotBoulder || type == Type::HotBoulderCracked;
@@ -181,7 +222,7 @@ namespace Cave::Entity {
     }
 
     inline bool isMacowFood(Type type) {
-        return type == Type::Plankton || type == Type::Moss;
+        return type == Type::Plankton;
     }
 
     inline bool isMacowNestSupport(Type type) {
@@ -325,9 +366,109 @@ namespace Cave::Entity {
         case Type::Macow:
         case Type::Caterpillar:
         case Type::Butterfly:
+        case Type::Jelly:
+        case Type::Mimic:
+        case Type::Shade:
+        case Type::Grouper:
+        case Type::Genom:
+        case Type::Compressor:
+        case Type::HiveMatriarch:
+        case Type::HiveLarva:
+        case Type::HiveServant:
+        case Type::HiveCollector:
+        case Type::HiveHunter:
+        case Type::HiveBuilder:
+        case Type::HiveGuard:
+        case Type::HiveDigger:
+        case Type::HiveTurn:
             return true;
         default:
             return false;
+        }
+    }
+
+    inline bool isHiveJob(Type type) {
+        switch (type) {
+        case Type::HiveServant:
+        case Type::HiveCollector:
+        case Type::HiveHunter:
+        case Type::HiveBuilder:
+        case Type::HiveGuard:
+        case Type::HiveDigger:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    inline bool isHiveCreature(Type type) {
+        return type == Type::HiveMatriarch || type == Type::HiveLarva || isHiveJob(type);
+    }
+
+    inline bool isHiveBuilding(Type type) {
+        return type == Type::HiveWall
+            || type == Type::HiveMatriarchWall
+            || type == Type::HiveNurseryWall
+            || type == Type::HiveStorageWall
+            || type == Type::HiveLivingWall;
+    }
+
+    /// @brief Jobs that park overflow members in the living room (everyone except Guard).
+    inline bool isHiveLivingJob(Type type) {
+        switch (type) {
+        case Type::HiveServant:
+        case Type::HiveCollector:
+        case Type::HiveHunter:
+        case Type::HiveBuilder:
+        case Type::HiveDigger:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    /// @brief Monsters a Hive Hunter may bubble (excludes bosses / hive / etc.).
+    inline bool isHiveHuntPrey(Type type) {
+        if (!isMonster(type)) return false;
+        if (isHiveCreature(type) || type == Type::HiveTurn) return false;
+        switch (type) {
+        case Type::God:
+        case Type::Chaos:
+        case Type::Predator:
+        case Type::Worm:
+        case Type::WormBody:
+        case Type::Puffer:
+        case Type::PufferBody:
+        case Type::Charger:
+        case Type::ChargerBody:
+            return false;
+        default:
+            return true;
+        }
+    }
+
+    /// @brief Monsters an empty trap can capture.
+    inline bool isTrapCapturable(Type type) {
+        if (!isMonster(type)) return false;
+        switch (type) {
+        case Type::God:
+        case Type::Chaos:
+        case Type::Charger:
+        case Type::ChargerBody:
+        case Type::Worm:
+        case Type::WormBody:
+        case Type::Singularity:
+        case Type::Ostia:
+        case Type::Murus:
+        case Type::Tera:
+        case Type::Vitus:
+        case Type::Adama:
+        case Type::Terminus:
+        case Type::Initia:
+        case Type::Nihilus:
+            return false;
+        default:
+            return !isCosmic(type);
         }
     }
 
@@ -376,6 +517,11 @@ namespace Cave::Entity {
 
     inline bool isHuntTarget(Type type) {
         return isPlayer(type) || isJimlin(type);
+    }
+
+    /// @brief Prey Hive Guards chase in their 7x7 detect box (Jim / Jimlins / Predator).
+    inline bool isHiveGuardPrey(Type type) {
+        return isHuntTarget(type) || type == Type::Predator;
     }
 
     inline bool isExitDoor(Type type) {

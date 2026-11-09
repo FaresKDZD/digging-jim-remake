@@ -57,6 +57,11 @@ namespace Cave::Entity {
             return animation;
         }
 
+        /// @brief True if the tileset index belongs to a Jim sprite (idle/move/push).
+        static bool isJimTexture(int tex) {
+            return tex >= 168 && tex <= 203;
+        }
+
     private:
         /**
          * @brief Provides the animation frames for the Jim's idle amination.

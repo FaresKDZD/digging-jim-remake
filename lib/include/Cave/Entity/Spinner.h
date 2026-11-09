@@ -1,4 +1,5 @@
 #pragma once
+#include <vector>
 #include "Cave/Entity/Base.h"
 #include "Cave/Entity/Direction.h"
 #include "Utils/Random.h"
@@ -17,17 +18,25 @@ namespace Cave::Entity {
         static constexpr int MODE_LEFT = 1;
         static constexpr int TURN_TICKS = 40;
 
+        static constexpr int FRAME_BASE = 226;
+        static constexpr int FRAME_COUNT = 7;
+
         Spinner()
-            : Base(Type::Spinner, Animation{ getFrames(), Utils::randomInteger(0, 5) }) {
+            : Base(Type::Spinner, Animation{ getFrames(), Utils::randomInteger(0, FRAME_COUNT - 1) }) {
             addTrait(Trait::Crushable);
             direction = Cave::Entity::getRandomDirection();
             spawnCredit = MODE_RIGHT;
+            // Full turn interval; level load applies a one-shot phase offset.
             targetIndex = TURN_TICKS;
         }
 
     private:
         static std::vector<int> getFrames() {
-            return { 226, 227, 228, 229, 230, 231 };
+            std::vector<int> frames;
+            frames.reserve(FRAME_COUNT);
+            for (int i = 0; i < FRAME_COUNT; ++i)
+                frames.push_back(FRAME_BASE + i);
+            return frames;
         }
     };
 }

@@ -190,6 +190,13 @@ namespace Cave::Entity {
 			}
 		}
 
+		/// @brief Snap slide progress (0-32) to match another entity's transition.
+		void setDisplacement(int displacement) {
+			if (displacement < 0) displacement = 0;
+			if (displacement > 32) displacement = 32;
+			m_displacement = displacement;
+		}
+
 		/// @brief Retrieves the current animation texture index.
 		int getTextureIndex() const {
 			return m_animation.getTextureIndex();

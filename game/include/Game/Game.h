@@ -368,7 +368,7 @@ private:
     /// @brief Cave number to start from (editor mode only)
     int m_editorStartCave = 1;
 
-    /// @brief Whether to launch fullscreen (editor mode only)
+    /// @brief Whether to launch borderless windowed (fills the desktop).
     bool m_editorFullscreen = false;
 
     /// @brief Whether the cave is active

@@ -54,6 +54,9 @@ namespace HUD::Editor {
          */
         void selectType(const int& x, const int& y);
 
+        /// @brief Eyedropper: select the palette tool matching a placed/runtime entity type.
+        void pickEntityType(Cave::Entity::Type type);
+
         /// Variant palette cells after the door row. Tools menu and dropdowns use these.
         static constexpr int PegulSlotX = 0, PegulSlotY = 15;
         static constexpr int FusionSlotX = 1, FusionSlotY = 18;
@@ -64,6 +67,9 @@ namespace HUD::Editor {
         static constexpr int JimlinShipSlotX = 0, JimlinShipSlotY = 13;
         static constexpr int SpaceSlotX = 0, SpaceSlotY = 0;
         static constexpr int PyrozoSlotX = 0, PyrozoSlotY = 21;
+        static constexpr int GenomSlotX = 1, GenomSlotY = 27;
+        static constexpr int HiveMatriarchSlotX = 1, HiveMatriarchSlotY = 28;
+        static constexpr int HiveWallSlotX = 2, HiveWallSlotY = 28;
 
         /// @brief True if this palette cell is the shared Pegul slot.
         bool isPegulSlot(const int& x, const int& y) const;
@@ -145,6 +151,30 @@ namespace HUD::Editor {
 
         /// @brief Switch the Space palette slot to empty space or a cosmic.
         void setSpaceSlotType(Cave::Entity::Type type);
+
+        /// @brief True if this palette cell is the Genom slot.
+        bool isGenomSlot(const int& x, const int& y) const;
+
+        /// @brief True if this palette cell is the shared Hive Matriarch/Larva slot.
+        bool isHiveMatriarchSlot(const int& x, const int& y) const;
+        Cave::Entity::Type getHiveMatriarchType() const { return m_hiveMatriarchType; }
+        void setHiveMatriarchType(Cave::Entity::Type type);
+
+        /// @brief True if this palette cell is the shared Hive Wall building slot.
+        bool isHiveWallSlot(const int& x, const int& y) const;
+        Cave::Entity::Type getHiveWallType() const { return m_hiveWallType; }
+        void setHiveWallType(Cave::Entity::Type type);
+
+        /// @brief When true, each placed Genom gets a fresh randomLook().
+        bool getGenomRandomize() const { return m_genomRandomize; }
+        void setGenomRandomize(bool randomize);
+
+        /// @brief Packed look used when randomize is off (and shown on the palette icon).
+        int getGenomLook() const { return m_genomLook; }
+        void setGenomLook(int look);
+
+        /// @brief Current look drawn on the Genom palette cell (custom or random sample).
+        int getGenomPaletteLook() const;
 
         /// @brief Right-click: if over a variant palette slot, select it and return true.
         bool handleRightClick(sf::Vector2f vp, float panelX, float toolbarH);
@@ -292,13 +322,21 @@ namespace HUD::Editor {
         Cave::Entity::Type        m_gateType     = Cave::Entity::Type::Gate;
         Cave::Entity::Type        m_jimlinBlockType = Cave::Entity::Type::JimlinBlock;
         Cave::Entity::Type        m_jimlinShipType = Cave::Entity::Type::JimlinShipInactive;
+        Cave::Entity::Type        m_hiveMatriarchType = Cave::Entity::Type::HiveMatriarch;
+        Cave::Entity::Type        m_hiveWallType = Cave::Entity::Type::HiveWall;
+
+        /// @brief Genom palette: randomize-on-place vs fixed packed look.
+        bool                      m_genomRandomize = true;
+        int                       m_genomLook = 0;
+
+        void syncGenomPaletteEntity();
 
         /// @brief Tick counter that drives palette entity animation.
         Utils::TickCounter        m_TickCounter  = Utils::TickCounter();
 
         /// @brief Current scroll row offset for the entity palette.
         int                       m_scrollRow    = 0;
-        static constexpr int      TOTAL_PALETTE_ROWS   = 26;
+        static constexpr int      TOTAL_PALETTE_ROWS   = 29;
         static constexpr int      VISIBLE_PALETTE_ROWS = 10;
         static constexpr int      MAX_SCROLL_ROW       = TOTAL_PALETTE_ROWS - VISIBLE_PALETTE_ROWS;
 

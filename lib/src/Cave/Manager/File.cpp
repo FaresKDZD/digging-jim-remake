@@ -137,6 +137,8 @@ Cave::File Cave::File::loadFromFile(const std::string& directory, const std::str
         const uint32_t count = readReversedUint32(countBytes);
         const bool isWell = magic[0] == 'W' && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'L';
         const bool isPort = magic[0] == 'P' && magic[1] == 'O' && magic[2] == 'R' && magic[3] == 'T';
+        const bool isGenm = magic[0] == 'G' && magic[1] == 'E' && magic[2] == 'N' && magic[3] == 'M';
+        const bool isBubl = magic[0] == 'B' && magic[1] == 'U' && magic[2] == 'B' && magic[3] == 'L';
         const bool isChum = magic[0] == 'C' && magic[1] == 'H' && magic[2] == 'U' && magic[3] == 'M';
         const bool isLava = magic[0] == 'L' && magic[1] == 'A' && magic[2] == 'V' && magic[3] == 'A';
         const bool isPlan = magic[0] == 'P' && magic[1] == 'L' && magic[2] == 'A' && magic[3] == 'N';
@@ -194,6 +196,18 @@ Cave::File Cave::File::loadFromFile(const std::string& directory, const std::str
                 portal.packed = static_cast<int32_t>(readReversedUint32(&rec[4]));
                 caveFile.caves[caveIndex].portals.push_back(portal);
             }
+            else if (isGenm) {
+                Cave::GenomRecord genom;
+                genom.index = readReversedUint16(&rec[2]);
+                genom.packed = static_cast<int32_t>(readReversedUint32(&rec[4]));
+                caveFile.caves[caveIndex].genoms.push_back(genom);
+            }
+            else if (isBubl) {
+                Cave::HiveBubbleRecord bubble;
+                bubble.index = readReversedUint16(&rec[2]);
+                bubble.packed = static_cast<int32_t>(readReversedUint32(&rec[4]));
+                caveFile.caves[caveIndex].hiveBubbles.push_back(bubble);
+            }
             else if (isChum) {
                 const uint16_t flags = readReversedUint16(&rec[2]);
                 caveFile.caves[caveIndex].properties.unlimitedTime = (flags & 1u) != 0;
@@ -209,7 +223,7 @@ Cave::File Cave::File::loadFromFile(const std::string& directory, const std::str
                 caveFile.caves[caveIndex].properties.mossGrowthSpeed = readReversedUint32(&rec[4]);
             }
         }
-        if (!isWell && !isPort && !isChum && !isLava && !isPlan && !isMoss) break;
+        if (!isWell && !isPort && !isGenm && !isBubl && !isChum && !isLava && !isPlan && !isMoss) break;
     }
 
     return caveFile;
@@ -260,6 +274,10 @@ void Cave::File::saveToFile(const Cave::File& caveFile, const std::string& fullP
     writePackedChunk(file, wellMagic, caveFile.caves, &Cave::Data::wells);
     const char portMagic[4] = { 'P', 'O', 'R', 'T' };
     writePackedChunk(file, portMagic, caveFile.caves, &Cave::Data::portals);
+    const char genmMagic[4] = { 'G', 'E', 'N', 'M' };
+    writePackedChunk(file, genmMagic, caveFile.caves, &Cave::Data::genoms);
+    const char bublMagic[4] = { 'B', 'U', 'B', 'L' };
+    writePackedChunk(file, bublMagic, caveFile.caves, &Cave::Data::hiveBubbles);
 
     const uint32_t chumCount = static_cast<uint32_t>(caveFile.caves.size());
     if (chumCount > 0) {

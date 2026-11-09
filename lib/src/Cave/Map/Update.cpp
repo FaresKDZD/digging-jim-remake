@@ -11,17 +11,45 @@ std::vector<int> Cave::Map::preUpdateCaveEntities() {
 		if (index < static_cast<int>(m_cosmicOver.size()))
 			m_cosmicOver[static_cast<size_t>(index)].updateTransition();
 	}
+	if (m_TickCounter.onTick()) {
+		updateTrapOpenOverlays();
+		updateMimicTurnOverlays();
+		updateMimicMorphTimers();
+		updateHiveHunterBubbleOverlays();
+	}
+
 	std::vector<int> indicies;
 	for (int index = 0; index < width * height; ++index) {
 		updateEntityTransition(index);
 		if (hasTrait(Cave::Entity::Trait::Immutable, index)) continue;
 		if (hasTrait(Cave::Entity::Trait::Static, index)) continue;
 		if (!m_TickCounter.onTick()) continue;
+		// Hold released trap / Mimic-turn monsters still until the overlay finishes.
+		// Bubbled hive prey stay in the update list (animation + fall/push) but skip AI.
+		if (index < static_cast<int>(m_cosmicOver.size())) {
+			const Cave::Entity::Type overType = m_cosmicOver[static_cast<size_t>(index)].getType();
+			if (overType == Cave::Entity::Type::TrapOpen
+				|| overType == Cave::Entity::Type::MimicTurn)
+				continue;
+		}
+		// Compressor prey: stay put after TrapOpen clears until the suck starts.
+		{
+			const int below = getIndex(index, Cave::Entity::Direction::DOWN);
+			if (inBounds(below)
+				&& getEntityType(below) == Cave::Entity::Type::Compressor) {
+				using C = Cave::Entity::Compressor;
+				const int mode = C::mode(caveEntities[below]);
+				if ((mode == C::MODE_OPENING || mode == C::MODE_SUCKING)
+					&& caveEntities[below].targetIndex == index)
+					continue;
+			}
+		}
 		indicies.emplace_back(index);
 		setEntityUpdated(index, false);
 	}
 
 	m_traversingDirt = false;
+	m_grouperAlarmed = false;
 	m_jimMovedThisTick = false;
 	m_jimIndexAtTickStart = m_jimIndex;
 	m_playerJimIndexAtTickStart = m_playerJimIndex;
@@ -36,6 +64,9 @@ std::vector<int> Cave::Map::preUpdateCaveEntities() {
 			if (getEntityType(i) == Cave::Entity::Type::Plankton)
 				m_planktonCount++;
 		}
+		rebuildHiveRooms();
+		refreshHiveGameplayCaches();
+		m_hiveCensusValid = false;
 	}
 
 	if (m_amoebaChecked && m_amobeaIsTrapped) m_amoebaIsCompletelyTrapped = true;
@@ -79,6 +110,8 @@ void Cave::Map::updateCaveEntities(const std::vector<int> indicies) {
 			m_game->soundManager.stop(Sound::Effect::MagicWall);
 		if (m_game->soundManager.isPlaying(Sound::Effect::Amoeba))
 			m_game->soundManager.stop(Sound::Effect::Amoeba);
+		if (m_game->soundManager.isPlaying(Sound::Effect::Wawa))
+			m_game->soundManager.stop(Sound::Effect::Wawa);
 		return;
 	}
 
@@ -91,13 +124,23 @@ void Cave::Map::updateCaveEntities(const std::vector<int> indicies) {
 		m_game->soundManager.stop(Sound::Effect::Dig);
 	}
 
-	// Magic wall timer still counts down while started; sound follows live Active walls only.
-	if (m_magicWallTimer > 0 && m_magicWallStarted)
-		m_magicWallTimer--;
-	else if (m_magicWallStarted && m_magicWallTimer <= 0) {
-		for (int i = 0; i < width * height; ++i) {
-			if (getEntityType(i) == Cave::Entity::Type::MagicWallActive)
-				setEntity(i, Cave::Entity::MagicWallUsed());
+	// Grouper alarm ambience loops while any Grouper is alarmed.
+	if (m_grouperAlarmed && !m_game->soundManager.isPlaying(Sound::Effect::Wawa)) {
+		m_game->soundManager.loop(Sound::Effect::Wawa);
+	}
+	else if (!m_grouperAlarmed && m_game->soundManager.isPlaying(Sound::Effect::Wawa)) {
+		m_game->soundManager.stop(Sound::Effect::Wawa);
+	}
+
+	// Magic wall timer counts down while started, but freezes during pause.
+	if (m_state != Cave::State::Pause) {
+		if (m_magicWallTimer > 0 && m_magicWallStarted)
+			m_magicWallTimer--;
+		else if (m_magicWallStarted && m_magicWallTimer <= 0) {
+			for (int i = 0; i < width * height; ++i) {
+				if (getEntityType(i) == Cave::Entity::Type::MagicWallActive)
+					setEntity(i, Cave::Entity::MagicWallUsed());
+			}
 		}
 	}
 
@@ -152,6 +195,12 @@ void Cave::Map::updateFallableEntities(const std::vector<int>& indicies) {
 		Cave::Entity::Type type = getEntityType(index);
 		if (m_chaosFreezeTicks > 0 && isChaosFreezeTarget(type)) {
 			updateEntityAnimation(index);
+			continue;
+		}
+		// Bubbled prey: fall like a boulder, keep anim, no AI.
+		// updateFallableEntity already advances animation once — don't double it.
+		if (isHiveBubbled(index)) {
+			updateFallableEntity(index);
 			continue;
 		}
 		auto it = m_entityUpdateMap.find(type);
@@ -221,6 +270,10 @@ void Cave::Map::updateActiveEntity(const std::vector<int> indicies) {
 			updateEntityAnimation(index);
 			continue;
 		}
+		if (isHiveBubbled(index)) {
+			updateEntityAnimation(index);
+			continue;
+		}
 		auto it = m_entityUpdateMap.find(type);
 		if (it != m_entityUpdateMap.end()) {
 			it->second(index);
@@ -256,6 +309,7 @@ void Cave::Map::updateInactiveEntity(const std::vector<int> indicies) {
 		case Cave::Entity::Type::MacowEggCook: updateMacowEggCook(index); break;
 		case Cave::Entity::Type::CaterpillarChrysalize: updateCaterpillarChrysalize(index); break;
 		case Cave::Entity::Type::ButterflyRelease: updateButterflyRelease(index); break;
+		case Cave::Entity::Type::TrapFilling: updateTrapFilling(index); break;
 		case Cave::Entity::Type::Puffer: updatePuffer(index); break;
 		case Cave::Entity::Type::PufferBody: updatePufferBody(index); break;
 		case Cave::Entity::Type::Charger: updateCharger(index); break;
@@ -309,10 +363,24 @@ void Cave::Map::initEntityUpdateMaps() {
 	m_entityUpdateMap[Cave::Entity::Type::ExitDoor] = [this](int i) { updateExitDoor(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Amoeba] = [this](int i) { updateAmoeba(i); };
 	m_entityUpdateMap[Cave::Entity::Type::TimeBomb] = [this](int i) { updateTimeBomb(i); };
+	m_entityUpdateMap[Cave::Entity::Type::TrapEmpty] = [this](int i) { updateTrapEmpty(i); };
+	m_entityUpdateMap[Cave::Entity::Type::TrapFilling] = [this](int i) { updateTrapFilling(i); };
+	m_entityUpdateMap[Cave::Entity::Type::TrapFull] = [this](int i) { updateTrapFull(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Plasma] = [this](int i) { updatePlasma(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Chum] = [this](int i) { updateChum(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Lava] = [this](int i) { updateLava(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Fire] = [this](int i) { updateFire(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Landmine] = [this](int i) { updateLandmine(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Compressor] = [this](int i) { updateCompressor(i); };
+	m_entityUpdateMap[Cave::Entity::Type::HiveMatriarch] = [this](int i) { updateHiveMatriarch(i); };
+	m_entityUpdateMap[Cave::Entity::Type::HiveLarva] = [this](int i) { updateHiveLarva(i); };
+	m_entityUpdateMap[Cave::Entity::Type::HiveServant] = [this](int i) { updateHiveServant(i); };
+	m_entityUpdateMap[Cave::Entity::Type::HiveCollector] = [this](int i) { updateHiveCollector(i); };
+	m_entityUpdateMap[Cave::Entity::Type::HiveHunter] = [this](int i) { updateHiveHunter(i); };
+	m_entityUpdateMap[Cave::Entity::Type::HiveBuilder] = [this](int i) { updateHiveBuilder(i); };
+	m_entityUpdateMap[Cave::Entity::Type::HiveGuard] = [this](int i) { updateHiveGuard(i); };
+	m_entityUpdateMap[Cave::Entity::Type::HiveDigger] = [this](int i) { updateHiveDigger(i); };
+	m_entityUpdateMap[Cave::Entity::Type::HiveTurn] = [this](int i) { updateHiveTurn(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Fireball] = [this](int i) { updateFireball(i); };
 	m_entityUpdateMap[Cave::Entity::Type::HorizontalWall] = [this](int i) { updateHorizontalWall(i); };
 	m_entityUpdateMap[Cave::Entity::Type::VerticalWall] = [this](int i) { updateVerticalWall(i); };
@@ -344,6 +412,12 @@ void Cave::Map::initEntityUpdateMaps() {
 	m_entityUpdateMap[Cave::Entity::Type::Chrysalis] = [this](int i) { updateChrysalis(i); };
 	m_entityUpdateMap[Cave::Entity::Type::ButterflyRelease] = [this](int i) { updateButterflyRelease(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Butterfly] = [this](int i) { updateButterfly(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Jelly] = [this](int i) { updateJelly(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Genom] = [this](int i) { updateGenom(i); };
+	m_entityUpdateMap[Cave::Entity::Type::GenomEgg] = [this](int i) { updateGenomEgg(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Mimic] = [this](int i) { updateMimic(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Shade] = [this](int i) { updateShade(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Grouper] = [this](int i) { updateGrouper(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Hellgull] = [this](int i) { updateHellgull(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Worm] = [this](int i) { updateWorm(i); };
 	m_entityUpdateMap[Cave::Entity::Type::WormBody] = [this](int i) { updateWormBody(i); };
@@ -410,6 +484,7 @@ void Cave::Map::initEntityUpdateMaps() {
 	m_entityUpdateMap[Cave::Entity::Type::Pyrobe] = [this](int i) { updateFallableEntity(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Ore] = [this](int i) { updateFallableEntity(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Boulder] = [this](int i) { updateFallableEntity(i); };
+	m_entityUpdateMap[Cave::Entity::Type::MossyBoulder] = [this](int i) { updateMossyBoulder(i); };
 	m_entityUpdateMap[Cave::Entity::Type::HotBoulder] = [this](int i) { updateFallableEntity(i); };
 	m_entityUpdateMap[Cave::Entity::Type::HotBoulderCracked] = [this](int i) { updateFallableEntity(i); };
 	m_entityUpdateMap[Cave::Entity::Type::MagicBoulder] = [this](int i) { updateFallableEntity(i); };
@@ -552,6 +627,8 @@ void Cave::Map::update(Camera camera) {
 
 void Cave::Map::updateVisibleTiles(Camera camera) {
 	sf::Vector2f viewOrigin = camera.getCenter() - camera.getSize() / 2.f;
+	viewOrigin.x = std::floor(viewOrigin.x + 1e-4f);
+	viewOrigin.y = std::floor(viewOrigin.y + 1e-4f);
 
 	int tilesX = static_cast<int>(camera.getSize().x / 32) + 2;
 	int tilesY = static_cast<int>(camera.getSize().y / 32) + 2;
@@ -559,21 +636,22 @@ void Cave::Map::updateVisibleTiles(Camera camera) {
 	int min_x = std::min(std::max(static_cast<int>(viewOrigin.x / 32) - 1, 0), width);
 	int max_x = std::min(min_x + tilesX, width);
 
-	int min_y = std::min(std::max(static_cast<int>(viewOrigin.y / 32), 0), height);
+	int min_y = std::min(std::max(static_cast<int>(viewOrigin.y / 32) - 1, 0), height);
 	int max_y = std::min(min_y + tilesY, height);
 
 	std::vector<Cave::Entity::Base> entities;
 
+	// Alpha 1 flags tint.frag to skip cave HSL so buff colors ignore level filters.
 	sf::Color jimTint = sf::Color::White;
 	if (isJimInvincible()) {
 		const float pulse = 0.5f + 0.5f * std::sin(static_cast<float>(m_jimInvincibleFrames) * 0.28f);
 		const unsigned char glow = static_cast<unsigned char>(170 + 85 * pulse);
-		jimTint = sf::Color(255, glow, 255);
+		jimTint = sf::Color(glow, glow, glow, 1);
 	}
 	else if (isJimPyrobe()) {
 		const float pulse = 0.5f + 0.5f * std::sin(static_cast<float>(m_jimPyrobeFrames) * 0.28f);
 		const unsigned char glow = static_cast<unsigned char>(140 + 80 * pulse);
-		jimTint = sf::Color(255, glow, 40);
+		jimTint = sf::Color(255, glow, 40, 1);
 	}
 
 	if (m_state == Cave::State::Load) {
@@ -583,7 +661,8 @@ void Cave::Map::updateVisibleTiles(Camera camera) {
 				loaded.push_back(m_loaded[y * width + x]);
 			}
 		}
-		m_loadingTileRenderer.updateLoadingTexture(loaded, { 0, 0 }, sf::IntRect({ min_x, min_y }, { max_x - min_x,max_y - min_y }));
+		m_loadingTileRenderer.updateLoadingTexture(loaded, { 0, 0 },
+			sf::IntRect({ min_x, min_y }, { max_x - min_x, max_y - min_y }));
 	}
 	else if (m_state == Cave::State::End) {
 		std::vector<bool> loaded;
@@ -592,7 +671,8 @@ void Cave::Map::updateVisibleTiles(Camera camera) {
 				loaded.push_back(m_loaded[y * width + x]);
 			}
 		}
-		m_loadingTileRenderer.updateLoadingTexture(loaded, { 0, 0 }, sf::IntRect({ min_x, min_y }, { max_x - min_x,max_y - min_y }));
+		m_loadingTileRenderer.updateLoadingTexture(loaded, { 0, 0 },
+			sf::IntRect({ min_x, min_y }, { max_x - min_x, max_y - min_y }));
 	}
 
 	for (int y = min_y; y < max_y; ++y) {
@@ -600,7 +680,8 @@ void Cave::Map::updateVisibleTiles(Camera camera) {
 			entities.push_back(caveEntities[y * width + x]);
 		}
 	}
-	m_tileRenderer.updateTexture(entities, { 0, 0 }, sf::IntRect({ min_x, min_y }, { max_x - min_x,max_y - min_y }), 0, jimTint);
+	m_tileRenderer.updateTexture(entities, { 0, 0 },
+		sf::IntRect({ min_x, min_y }, { max_x - min_x, max_y - min_y }), 0, jimTint);
 
 	std::vector<Cave::Entity::Base> cosmics;
 	ensureCosmicUnder();
@@ -608,9 +689,69 @@ void Cave::Map::updateVisibleTiles(Camera camera) {
 		for (int x = min_x; x < max_x; ++x) {
 			const int index = y * width + x;
 			if (index < static_cast<int>(m_cosmicOver.size())) {
-				const Cave::Entity::Base& over = m_cosmicOver[static_cast<size_t>(index)];
-				if (Cave::Entity::Cosmic::isWanderer(over.getType()) || over.isTransitioning())
-					cosmics.push_back(over);
+				Cave::Entity::Base over = m_cosmicOver[static_cast<size_t>(index)];
+				const Cave::Entity::Base& cell = caveEntities[static_cast<size_t>(index)];
+				// Lock hunter bubbles to the prey's slide so they stay glued.
+				if (over.getType() == Cave::Entity::Type::HiveHunterBubble
+					&& cell.isTransitioning()) {
+					Cave::Entity::Animation spaceAnim = Cave::Entity::Space().getAnimation();
+					const Cave::Entity::Direction dir = cell.getTransitionDirection();
+					const int disp = cell.getTransitionDisplacement();
+					if (cell.isIntoTransition())
+						over.applyIntoTransition(dir, spaceAnim);
+					else if (cell.isAwayTransition())
+						over.applyAwayTransition(dir, spaceAnim);
+					else if (cell.isPushTransition())
+						over.applyPushTransition(dir, spaceAnim);
+					over.setTransitionDisplacement(disp);
+				}
+				// Leaving half of a fall/push still draws the prey on this cell while
+				// the live bubble sits on the dest — stamp a matching bubble ghost.
+				// Skip collector deposit spit: TileRenderer keeps the shell under his body.
+				else if (over.getType() == Cave::Entity::Type::NoType
+					&& (cell.isAwayTransition() || cell.isPushTransition())
+					&& !Cave::Entity::isHiveHauler(getEntityType(index))) {
+					const Cave::Entity::Direction dir = cell.getTransitionDirection();
+					const int dest = getIndex(index, dir);
+					if (inBounds(dest)
+						&& dest < static_cast<int>(m_cosmicOver.size())
+						&& m_cosmicOver[static_cast<size_t>(dest)].getType()
+							== Cave::Entity::Type::HiveHunterBubble
+						&& caveEntities[static_cast<size_t>(dest)].isIntoTransition()
+						&& caveEntities[static_cast<size_t>(dest)].getTransitionDirection() == dir) {
+						Cave::Entity::Animation bubbleAnim =
+							m_cosmicOver[static_cast<size_t>(dest)].getAnimation();
+						// Empty current layer; previous layer is the bubble crop that
+						// rides with the prey half still on this cell.
+						if (cell.isAwayTransition())
+							over.applyAwayTransition(dir, bubbleAnim);
+						else
+							over.applyPushTransition(dir, bubbleAnim);
+						over.setTransitionDisplacement(cell.getTransitionDisplacement());
+					}
+				}
+				// Collector still covering a downward spit — hide cosmic shell so it does not
+				// paint over him; TileRenderer draws it under his body until the slide ends.
+				bool haulerSpitCover = false;
+				if (over.getType() == Cave::Entity::Type::HiveHunterBubble
+					&& cell.isIntoTransition()
+					&& cell.getTransitionDirection() == Cave::Entity::Direction::DOWN) {
+					const int above = getIndex(index, Cave::Entity::Direction::UP);
+					if (inBounds(above)
+						&& Cave::Entity::isHiveHauler(getEntityType(above))
+						&& caveEntities[static_cast<size_t>(above)].isAwayTransition()
+						&& caveEntities[static_cast<size_t>(above)].getTransitionDirection()
+							== Cave::Entity::Direction::DOWN)
+						haulerSpitCover = true;
+				}
+				if (haulerSpitCover)
+					cosmics.push_back(Cave::Entity::Base());
+				else if (Cave::Entity::Cosmic::isWanderer(over.getType())
+					|| over.isTransitioning()
+					|| over.getType() == Cave::Entity::Type::TrapOpen
+					|| over.getType() == Cave::Entity::Type::MimicTurn
+					|| over.getType() == Cave::Entity::Type::HiveHunterBubble)
+					cosmics.push_back(std::move(over));
 				else
 					cosmics.push_back(Cave::Entity::Base());
 			}
@@ -618,15 +759,30 @@ void Cave::Map::updateVisibleTiles(Camera camera) {
 				cosmics.push_back(Cave::Entity::Base());
 		}
 	}
-	m_cosmicRenderer.updateTexture(cosmics, { 0, 0 }, sf::IntRect({ min_x, min_y }, { max_x - min_x,max_y - min_y }), 0);
+	m_cosmicRenderer.updateTexture(cosmics, { 0, 0 },
+		sf::IntRect({ min_x, min_y }, { max_x - min_x, max_y - min_y }), 0);
 
 	m_showInvincibleText = false;
 	m_showPyrobeText = false;
 	if (m_jimIndex != OUT_OF_BOUNDS_INDEX && getEntityType(m_jimIndex) == Cave::Entity::Type::Jim
 		&& m_state != Cave::State::Load && m_state != Cave::State::End) {
-		const sf::IntRect ep = caveEntities[m_jimIndex].getCurrentPosition();
+		// World-space top-left of Jim's full sprite (not the clipped into-wedge rect,
+		// which crawled across the tile during slides and dragged the buff text).
 		const int jx = m_jimIndex % width;
 		const int jy = m_jimIndex / width;
+		int jimPx = jx * 32;
+		int jimPy = jy * 32;
+		const auto& jimEnt = caveEntities[m_jimIndex];
+		if (jimEnt.isTransitioning()) {
+			const int disp = jimEnt.getTransitionDisplacement();
+			switch (jimEnt.getTransitionDirection()) {
+			case Cave::Entity::Direction::RIGHT: jimPx = jx * 32 + disp - 32; break;
+			case Cave::Entity::Direction::LEFT:  jimPx = jx * 32 + 32 - disp; break;
+			case Cave::Entity::Direction::DOWN:  jimPy = jy * 32 + disp - 32; break;
+			case Cave::Entity::Direction::UP:    jimPy = jy * 32 + 32 - disp; break;
+			default: break;
+			}
+		}
 		const bool showRuby = isJimInvincible();
 		const bool showPyrobe = isJimPyrobe();
 		if (showRuby) {
@@ -634,8 +790,8 @@ void Cave::Map::updateVisibleTiles(Camera camera) {
 			if (seconds > 0) {
 				const std::string label = std::to_string(seconds);
 				const int textW = static_cast<int>(label.size()) * 16;
-				const int px = jx * 32 + ep.position.x + 16 - textW / 2;
-				const int py = jy * 32 + ep.position.y + (showPyrobe ? -48 : -30);
+				const int px = jimPx + 16 - textW / 2;
+				const int py = jimPy + (showPyrobe ? -48 : -30);
 				m_invincibleText.updateText(px, py, label);
 				m_invincibleText.setColor(sf::Color::White);
 				m_showInvincibleText = true;
@@ -646,8 +802,8 @@ void Cave::Map::updateVisibleTiles(Camera camera) {
 			if (seconds > 0) {
 				const std::string label = std::to_string(seconds);
 				const int textW = static_cast<int>(label.size()) * 16;
-				const int px = jx * 32 + ep.position.x + 16 - textW / 2;
-				const int py = jy * 32 + ep.position.y - 30;
+				const int px = jimPx + 16 - textW / 2;
+				const int py = jimPy - 30;
 				m_pyrobeText.updateText(px, py, label);
 				m_pyrobeText.setColor(sf::Color(255, 160, 40));
 				m_showPyrobeText = true;

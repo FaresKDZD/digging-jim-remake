@@ -1,7 +1,8 @@
 #include "Cave/Manager/Data.h"
 
 Cave::Entity::Base Cave::Data::getTileEntity(const char& tile) {
-	switch (tile) {
+	// tileData is vector<char>; IDs >= 128 are negative as signed char — decode as unsigned.
+	switch (static_cast<unsigned char>(tile)) {
 	case 0:  return Cave::Entity::Space();
 	case 1:  return Cave::Entity::Dirt();
 	case 2:  return Cave::Entity::Boulder();
@@ -112,6 +113,30 @@ Cave::Entity::Base Cave::Data::getTileEntity(const char& tile) {
 	case 111: return Cave::Entity::Caterpillar();
 	case 112: return Cave::Entity::Butterfly();
 	case 113: return Cave::Entity::Chrysalis();
+	case 114: return Cave::Entity::Jelly();
+	case 115: return Cave::Entity::MossyBoulder();
+	case 116: return Cave::Entity::TrapEmpty();
+	case 117: return Cave::Entity::TrapFull();
+	case 118: return Cave::Entity::Mimic();
+	case 119: return Cave::Entity::Shade();
+	case 120: return Cave::Entity::Grouper();
+	case 121: return Cave::Entity::Genom();
+	case 122: return Cave::Entity::Landmine();
+	case 123: return Cave::Entity::GenomEgg();
+	case 124: return Cave::Entity::Compressor();
+	case 125: return Cave::Entity::HiveMatriarch();
+	case 126: return Cave::Entity::HiveLarva();
+	case 127: return Cave::Entity::HiveWall();
+	case 128: return Cave::Entity::HiveMatriarchWall();
+	case 129: return Cave::Entity::HiveNurseryWall();
+	case 130: return Cave::Entity::HiveServant();
+	case 131: return Cave::Entity::HiveCollector();
+	case 132: return Cave::Entity::HiveHunter();
+	case 133: return Cave::Entity::HiveBuilder();
+	case 134: return Cave::Entity::HiveGuard();
+	case 135: return Cave::Entity::HiveDigger();
+	case 136: return Cave::Entity::HiveStorageWall();
+	case 137: return Cave::Entity::HiveLivingWall();
 	default:
 		return Cave::Entity::Space();
 	}

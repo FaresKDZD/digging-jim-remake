@@ -205,9 +205,33 @@ public:
             outer->Add(box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 8);
         }
 
-        outer->Add(CreateButtonSizer(wxOK | wxCANCEL), 0, wxALL | wxALIGN_RIGHT, 8);
+        // Plain OK/Cancel (not CreateButtonSizer — that was vertically squished here).
+        auto* ok = new wxButton(this, wxID_OK);
+        auto* cancel = new wxButton(this, wxID_CANCEL);
+        ok->SetDefault();
+        {
+            auto* okCancel = new wxBoxSizer(wxHORIZONTAL);
+            okCancel->Add(ok, 0, wxRIGHT, 8);
+            okCancel->Add(cancel);
+            outer->Add(okCancel, 0, wxTOP | wxLEFT | wxRIGHT | wxALIGN_RIGHT, 8);
+            // Extra bottom room so Fit() does not crush the button row.
+            outer->AddSpacer(FromDIP(20));
+        }
 
-        SetSizerAndFit(outer);
+        SetSizer(outer);
+        outer->Fit(this);
+        // Match Copy/Test/Reset height after layout; keep classic dialog width.
+        {
+            const int btnH = std::max(m_btnReset->GetSize().GetHeight(), FromDIP(23));
+            const int btnW = std::max(ok->GetBestSize().GetWidth(), FromDIP(75));
+            const wxSize sz(btnW, btnH);
+            ok->SetMinSize(sz);
+            cancel->SetMinSize(sz);
+            ok->SetSize(sz);
+            cancel->SetSize(sz);
+        }
+        outer->SetSizeHints(this);
+        Layout();
         Centre();
 
         m_btnCount->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
@@ -464,8 +488,26 @@ public:
             outer->Add(box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 8);
         }
 
-        outer->Add(CreateButtonSizer(wxOK | wxCANCEL), 0, wxALL | wxALIGN_RIGHT, 8);
-        SetSizerAndFit(outer);
+        auto* ok = new wxButton(this, wxID_OK);
+        auto* cancel = new wxButton(this, wxID_CANCEL);
+        ok->SetDefault();
+        {
+            auto* okCancel = new wxBoxSizer(wxHORIZONTAL);
+            okCancel->Add(ok, 0, wxRIGHT, 8);
+            okCancel->Add(cancel);
+            outer->Add(okCancel, 0, wxTOP | wxLEFT | wxRIGHT | wxALIGN_RIGHT, 8);
+            outer->AddSpacer(FromDIP(20));
+        }
+        SetSizer(outer);
+        outer->Fit(this);
+        {
+            const wxSize sz(std::max(ok->GetBestSize().GetWidth(), FromDIP(75)),
+                            std::max(ok->GetBestSize().GetHeight(), FromDIP(23)));
+            ok->SetMinSize(sz);
+            cancel->SetMinSize(sz);
+        }
+        outer->SetSizeHints(this);
+        Layout();
         Centre();
     }
 

@@ -75,6 +75,24 @@ int Cave::Map::nearestJimIndex(const int& from) const {
 	return best;
 }
 
+int Cave::Map::nearestHiveGuardPrey(const int& from) const {
+	int best = OUT_OF_BOUNDS_INDEX;
+	int bestDist = 0x7fffffff;
+	const int fx = inBounds(from) ? from % width : 0;
+	const int fy = inBounds(from) ? from / width : 0;
+	for (int i = 0; i < width * height; ++i) {
+		if (!Cave::Entity::isHiveGuardPrey(getEntityType(i))) continue;
+		const int dx = (i % width) - fx;
+		const int dy = (i / width) - fy;
+		const int dist = (dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy);
+		if (dist < bestDist) {
+			bestDist = dist;
+			best = i;
+		}
+	}
+	return best;
+}
+
 int Cave::Map::chaosToroidalDist(const int& a, const int& b) const {
 	if (!inBounds(a) || !inBounds(b) || width <= 0 || height <= 0) return 0x7fffffff;
 	auto axis = [](int from, int to, int size) {
@@ -183,6 +201,12 @@ bool Cave::Map::hasTrait(const Cave::Entity::Trait& trait, const int& index) con
 	if (index == OUT_OF_BOUNDS_INDEX) {
 		return false;
 	}
+	// Shift-held editor probe: solid for walk/fall/pathing, whatever tile is under the cursor.
+	if (isEditorProbe(index)) {
+		using Tr = Cave::Entity::Trait;
+		if (trait == Tr::Empty || trait == Tr::Free || trait == Tr::Traversable)
+			return false;
+	}
 	return caveEntities[index].hasTrait(trait);
 }
 
@@ -195,7 +219,28 @@ void Cave::Map::updateEntityAnimation(const int& index) {
 }
 
 void Cave::Map::updateEntityTransition(const int& index) {
+	const bool wasTransitioning = caveEntities[index].isTransitioning();
 	caveEntities[index].updateTransition();
+	if (wasTransitioning && !caveEntities[index].isTransitioning()) {
+		// Drop Genom / GenomEgg ghost look once the away-slide finishes.
+		if (getEntityType(index) == Cave::Entity::Type::Space
+			&& Cave::Entity::Genom::hasLook(caveEntities[index])) {
+			caveEntities[index].spawnCredit = 0;
+		}
+		// Clear look stashed on a restored gate after Genom walked off it,
+		// or on the pusher after a GenomEgg push slide.
+		if (caveEntities[index].homeIndex != -1
+			&& (caveEntities[index].homeIndex & Cave::Entity::Genom::LOOK_VALID) != 0) {
+			const Cave::Entity::Type type = getEntityType(index);
+			if (type == Cave::Entity::Type::Gate
+				|| type == Cave::Entity::Type::PrivateGate
+				|| type == Cave::Entity::Type::Jim
+				|| type == Cave::Entity::Type::Compressor
+				|| Cave::Entity::isPlayer(type)) {
+				caveEntities[index].homeIndex = -1;
+			}
+		}
+	}
 	if (editorIdle() || m_TickCounter.onTick()) return;
 	if (m_cosmicGenesis) return;
 	if (m_state != Cave::State::Play) return;

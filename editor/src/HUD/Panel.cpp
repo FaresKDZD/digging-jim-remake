@@ -56,6 +56,13 @@ HUD::Editor::Panel::Panel(::Editor* editor) : m_editor(editor), m_tileRenderer(&
         m_entities[variant.type] = getNewEntity(variant.type);
     for (const auto& variant : Cave::Entity::Cosmic::VARIANTS)
         m_entities[variant.type] = getNewEntity(variant.type);
+    for (const auto& variant : Cave::Entity::HiveMatriarch::VARIANTS)
+        m_entities[variant.type] = getNewEntity(variant.type);
+    for (const auto& variant : Cave::Entity::HiveWall::VARIANTS)
+        m_entities[variant.type] = getNewEntity(variant.type);
+
+    if (m_entities.count(Cave::Entity::Type::Genom))
+        m_genomLook = m_entities[Cave::Entity::Type::Genom].spawnCredit;
 
     m_builderMenu.setSize(sf::Vector2f(PANEL_W, 496.f - PALETTE_H));
     m_builderMenu.setFillColor(sf::Color(128, 128, 128));
@@ -213,6 +220,30 @@ int HUD::Editor::Panel::miniTileIndex(Cave::Entity::Type type)
     case T::Butterfly:
     case T::ButterflyRelease: return 106;
     case T::Chrysalis:        return 107;
+    case T::Jelly:            return 108;
+    case T::MossyBoulder:     return 109;
+    case T::TrapEmpty:        return 110;
+    case T::TrapFilling:
+    case T::TrapFull:         return 111;
+    case T::Mimic:            return 112;
+    case T::Shade:            return 113;
+    case T::Grouper:          return 114;
+    case T::Genom:            return 115;
+    case T::Landmine:         return 116;
+    case T::Compressor:       return 117;
+    case T::HiveMatriarch:    return 118;
+    case T::HiveLarva:        return 119;
+    case T::HiveWall:         return 120;
+    case T::HiveMatriarchWall: return 121;
+    case T::HiveNurseryWall:  return 122;
+    case T::HiveServant:      return 123;
+    case T::HiveCollector:    return 124;
+    case T::HiveHunter:       return 125;
+    case T::HiveBuilder:      return 126;
+    case T::HiveGuard:        return 127;
+    case T::HiveDigger:       return 128;
+    case T::HiveStorageWall:  return 129;
+    case T::HiveLivingWall:   return 130;
     case T::Jimlin1:         return 67;
     case T::Jimlin2:         return 68;
     case T::Jimlin3:         return 69;
@@ -497,6 +528,16 @@ void HUD::Editor::Panel::draw(sf::RenderTarget& target, sf::RenderStates states)
         }
         if (m_simLabel) {
             sf::Text label = *m_simLabel;
+            if (m_editor && m_editor->isSimulating()) {
+                const int spd = m_editor->simSpeed();
+                if (spd <= 0) label.setString("Paused");
+                else if (spd == 2) label.setString("Sim 2x");
+                else if (spd >= 10) label.setString("Sim 10x");
+                else label.setString("Simulate");
+            }
+            else {
+                label.setString("Simulate");
+            }
             const sf::FloatRect b = label.getLocalBounds();
             const float ox = pressed ? 1.f : 0.f;
             const float oy = pressed ? 1.f : 0.f;
@@ -646,6 +687,68 @@ void HUD::Editor::Panel::selectType(const int& x, const int& y) {
         m_scrollRow = y - VISIBLE_PALETTE_ROWS + 1;
 }
 
+void HUD::Editor::Panel::pickEntityType(Cave::Entity::Type type) {
+    using T = Cave::Entity::Type;
+    // Collapse runtime / transient forms onto the placeable palette entry.
+    switch (type) {
+    case T::StartDoorOpen: type = T::StartDoor; break;
+    case T::ExitDoorOpen:
+    case T::ExitDoorOpening:
+    case T::ExitDoorComplete:
+    case T::ExitDoorFinished: type = T::ExitDoor; break;
+    case T::MagicWallInactive:
+    case T::MagicWallUsed: type = T::MagicWallActive; break;
+    case T::HorizontalWall: type = T::HorizontalWallPlaceholder; break;
+    case T::VerticalWall: type = T::VerticalWallPlaceholder; break;
+    case T::DetonatorTriggered:
+    case T::DetonatorUsed: type = T::Detonator; break;
+    case T::SaturatedSludg: type = T::Sludg; break;
+    case T::MacowEggHatch: type = T::MacowEgg; break;
+    case T::MacowEggCook:
+    case T::MacowEggCooked: type = T::MacowEgg; break;
+    case T::CaterpillarChrysalize: type = T::Caterpillar; break;
+    case T::ButterflyRelease: type = T::Butterfly; break;
+    case T::TrapFilling:
+    case T::TrapFull: type = T::TrapEmpty; break;
+    case T::JimlinShipActive: type = T::JimlinShipInactive; break;
+    case T::KingShipActive: type = T::KingShipInactive; break;
+    case T::ChargerBody: type = T::Charger; break;
+    case T::WormBody: type = T::Worm; break;
+    case T::HotBoulderCracked: type = T::HotBoulder; break;
+    case T::GenomEgg: type = T::Genom; break;
+    case T::PyrozoExtinguished: type = T::Pyrozo; break;
+    case T::ObsidianWallCracked: type = T::ObsidianWall; break;
+    case T::HiveTurn: type = T::HiveLarva; break;
+    case T::HiveHunterBubble:
+    case T::NoType:
+        return;
+    default: break;
+    }
+
+    if (m_fillSelected == 3) m_fillSelected = 0;
+
+    if (Cave::Entity::isPegul(type)) { setPegulType(type); return; }
+    if (Cave::Entity::isFusion(type)) { setFusionType(type); return; }
+    if (Cave::Entity::isPyrozoVariant(type)) { setPyrozoType(type); return; }
+    if (Cave::Entity::isGodVariant(type)) { setGodType(type); return; }
+    if (Cave::Entity::isJimlin(type)) { setJimlinType(type); return; }
+    if (Cave::Entity::isGateVariant(type)) { setGateType(type); return; }
+    if (Cave::Entity::isJimlinBlockVariant(type)) { setJimlinBlockType(type); return; }
+    if (Cave::Entity::isJimlinShipVariant(type)) { setJimlinShipType(type); return; }
+    if (Cave::Entity::isSpaceSlotType(type)) { setSpaceSlotType(type); return; }
+    if (Cave::Entity::isHiveCreature(type)) { setHiveMatriarchType(type); return; }
+    if (Cave::Entity::isHiveBuilding(type)) { setHiveWallType(type); return; }
+
+    for (int y = 0; y < TOTAL_PALETTE_ROWS; ++y) {
+        for (int x = 0; x < 3; ++x) {
+            if (getType(x, y) == type) {
+                selectType(x, y);
+                return;
+            }
+        }
+    }
+}
+
 bool HUD::Editor::Panel::isPegulSlot(const int& x, const int& y) const {
     return x == PegulSlotX && y == PegulSlotY;
 }
@@ -736,9 +839,75 @@ void HUD::Editor::Panel::setSpaceSlotType(Cave::Entity::Type type) {
     selectType(SpaceSlotX, SpaceSlotY);
 }
 
+bool HUD::Editor::Panel::isGenomSlot(const int& x, const int& y) const {
+    return x == GenomSlotX && y == GenomSlotY;
+}
+
+void HUD::Editor::Panel::syncGenomPaletteEntity() {
+    auto it = m_entities.find(Cave::Entity::Type::Genom);
+    if (it == m_entities.end()) return;
+    if (m_genomRandomize)
+        it->second.spawnCredit = Cave::Entity::Genom::randomLook();
+    else {
+        if ((m_genomLook & Cave::Entity::Genom::LOOK_VALID) == 0)
+            m_genomLook = Cave::Entity::Genom::randomLook();
+        it->second.spawnCredit = m_genomLook;
+    }
+}
+
+void HUD::Editor::Panel::setGenomRandomize(bool randomize) {
+    if (m_genomRandomize == randomize) return;
+    m_genomRandomize = randomize;
+    auto it = m_entities.find(Cave::Entity::Type::Genom);
+    if (it == m_entities.end()) return;
+    if (randomize) {
+        // Fresh sample on the icon; keep m_genomLook as the last custom for when randomize turns off.
+        it->second.spawnCredit = Cave::Entity::Genom::randomLook();
+    }
+    else {
+        // What you see becomes the fixed place look.
+        if ((it->second.spawnCredit & Cave::Entity::Genom::LOOK_VALID) != 0)
+            m_genomLook = it->second.spawnCredit;
+        if ((m_genomLook & Cave::Entity::Genom::LOOK_VALID) == 0)
+            m_genomLook = Cave::Entity::Genom::randomLook();
+        it->second.spawnCredit = m_genomLook;
+    }
+}
+
+void HUD::Editor::Panel::setGenomLook(int look) {
+    using G = Cave::Entity::Genom;
+    m_genomLook = G::enforceLook(
+        G::hue(look), G::satByte(look), G::wings(look), G::legs(look),
+        G::spikes(look), G::body(look), G::eyes(look), G::mouth(look));
+    m_genomRandomize = false;
+    auto it = m_entities.find(Cave::Entity::Type::Genom);
+    if (it != m_entities.end())
+        it->second.spawnCredit = m_genomLook;
+}
+
+int HUD::Editor::Panel::getGenomPaletteLook() const {
+    auto it = m_entities.find(Cave::Entity::Type::Genom);
+    if (it != m_entities.end() && (it->second.spawnCredit & Cave::Entity::Genom::LOOK_VALID) != 0)
+        return it->second.spawnCredit;
+    if ((m_genomLook & Cave::Entity::Genom::LOOK_VALID) != 0)
+        return m_genomLook;
+    using G = Cave::Entity::Genom;
+    return G::packLook(0, 255, 1, 0, 0, 0, 0, 0);
+}
+
 bool HUD::Editor::Panel::handleRightClick(sf::Vector2f vp, float panelX, float toolbarH) {
     float lx = vp.x - panelX;
     float ly = vp.y - toolbarH;
+
+    // Right-click Simulate while running → speed dropdown (pause / 1x / 2x / 10x).
+    if (m_editor && m_editor->isSimulating()
+        && lx >= SIM_X && lx < SIM_X + SIM_W
+        && ly >= TEST_Y && ly < TEST_Y + SIM_H)
+    {
+        m_editor->actionOpenSimSpeedMenu();
+        return true;
+    }
+
     int px = static_cast<int>(lx) / 34;
     int py = static_cast<int>(ly) / 34;
     if (px >= 0 && px < 3 && py >= 0 && py < VISIBLE_PALETTE_ROWS && lx < SB_X)
@@ -747,7 +916,10 @@ bool HUD::Editor::Panel::handleRightClick(sf::Vector2f vp, float panelX, float t
         if (isSpaceSlot(px, row) || isPegulSlot(px, row) || isFusionSlot(px, row) || isPyrozoSlot(px, row)
             || isGodSlot(px, row)
             || isJimlinSlot(px, row) || isGateSlot(px, row) || isJimlinBlockSlot(px, row)
-            || isJimlinShipSlot(px, row))
+            || isJimlinShipSlot(px, row)
+            || isGenomSlot(px, row)
+            || isHiveMatriarchSlot(px, row)
+            || isHiveWallSlot(px, row))
         {
             selectType(px, row);
             if (m_fillSelected == 3) m_fillSelected = 0;
@@ -755,6 +927,26 @@ bool HUD::Editor::Panel::handleRightClick(sf::Vector2f vp, float panelX, float t
         }
     }
     return false;
+}
+
+bool HUD::Editor::Panel::isHiveMatriarchSlot(const int& x, const int& y) const {
+    return x == HiveMatriarchSlotX && y == HiveMatriarchSlotY;
+}
+
+void HUD::Editor::Panel::setHiveMatriarchType(Cave::Entity::Type type) {
+    if (!Cave::Entity::isHiveCreature(type)) return;
+    m_hiveMatriarchType = type;
+    selectType(HiveMatriarchSlotX, HiveMatriarchSlotY);
+}
+
+bool HUD::Editor::Panel::isHiveWallSlot(const int& x, const int& y) const {
+    return x == HiveWallSlotX && y == HiveWallSlotY;
+}
+
+void HUD::Editor::Panel::setHiveWallType(Cave::Entity::Type type) {
+    if (!Cave::Entity::isHiveBuilding(type)) return;
+    m_hiveWallType = type;
+    selectType(HiveWallSlotX, HiveWallSlotY);
 }
 
 Cave::Entity::Base HUD::Editor::Panel::getSelectedEntity() {
@@ -852,6 +1044,17 @@ Cave::Entity::Type HUD::Editor::Panel::getType(const int& x, const int& y) {
     case 73: return Cave::Entity::Type::Moss;
     case 74: return Cave::Entity::Type::Caterpillar;
     case 75: return Cave::Entity::Type::Butterfly;
+    case 76: return Cave::Entity::Type::Jelly;
+    case 77: return Cave::Entity::Type::MossyBoulder;
+    case 78: return Cave::Entity::Type::TrapEmpty;
+    case 79: return Cave::Entity::Type::Mimic;
+    case 80: return Cave::Entity::Type::Shade;
+    case 81: return Cave::Entity::Type::Grouper;
+    case 82: return Cave::Entity::Type::Genom;
+    case 83: return Cave::Entity::Type::Landmine;
+    case 84: return Cave::Entity::Type::Compressor;
+    case 85: return m_hiveMatriarchType;
+    case 86: return m_hiveWallType;
     default: return Cave::Entity::Type::NoType;
     }
 }
@@ -967,6 +1170,35 @@ Cave::Entity::Base HUD::Editor::Panel::getNewEntity(Cave::Entity::Type type) {
     case Cave::Entity::Type::Chrysalis:          return Cave::Entity::Chrysalis();
     case Cave::Entity::Type::ButterflyRelease:   return Cave::Entity::ButterflyRelease();
     case Cave::Entity::Type::Butterfly:          return Cave::Entity::Butterfly();
+    case Cave::Entity::Type::Jelly:              return Cave::Entity::Jelly();
+    case Cave::Entity::Type::MossyBoulder:       return Cave::Entity::MossyBoulder();
+    case Cave::Entity::Type::TrapEmpty:         return Cave::Entity::TrapEmpty();
+    case Cave::Entity::Type::TrapFilling:       return Cave::Entity::TrapFilling();
+    case Cave::Entity::Type::TrapFull:          return Cave::Entity::TrapFull();
+    case Cave::Entity::Type::Mimic:             return Cave::Entity::Mimic();
+    case Cave::Entity::Type::Shade:             return Cave::Entity::Shade();
+    case Cave::Entity::Type::Grouper:           return Cave::Entity::Grouper();
+    case Cave::Entity::Type::Genom: {
+        Cave::Entity::Genom genom;
+        if (!m_genomRandomize && (m_genomLook & Cave::Entity::Genom::LOOK_VALID) != 0)
+            genom.spawnCredit = m_genomLook;
+        return genom;
+    }
+    case Cave::Entity::Type::Landmine:         return Cave::Entity::Landmine();
+    case Cave::Entity::Type::Compressor:       return Cave::Entity::Compressor();
+    case Cave::Entity::Type::HiveMatriarch:    return Cave::Entity::HiveMatriarch();
+    case Cave::Entity::Type::HiveLarva:        return Cave::Entity::HiveLarva();
+    case Cave::Entity::Type::HiveWall:         return Cave::Entity::HiveWall();
+    case Cave::Entity::Type::HiveMatriarchWall: return Cave::Entity::HiveMatriarchWall();
+    case Cave::Entity::Type::HiveNurseryWall:  return Cave::Entity::HiveNurseryWall();
+    case Cave::Entity::Type::HiveServant:      return Cave::Entity::HiveServant();
+    case Cave::Entity::Type::HiveCollector:    return Cave::Entity::HiveCollector();
+    case Cave::Entity::Type::HiveHunter:       return Cave::Entity::HiveHunter();
+    case Cave::Entity::Type::HiveBuilder:      return Cave::Entity::HiveBuilder();
+    case Cave::Entity::Type::HiveGuard:        return Cave::Entity::HiveGuard();
+    case Cave::Entity::Type::HiveDigger:       return Cave::Entity::HiveDigger();
+    case Cave::Entity::Type::HiveStorageWall:  return Cave::Entity::HiveStorageWall();
+    case Cave::Entity::Type::HiveLivingWall:   return Cave::Entity::HiveLivingWall();
     case Cave::Entity::Type::Singularity:
     case Cave::Entity::Type::Ostia:
     case Cave::Entity::Type::Murus:

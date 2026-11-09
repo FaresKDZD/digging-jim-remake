@@ -12,7 +12,8 @@ namespace Cave::Entity {
      * @brief Wanders like a Cave Gull (turns right). When a reachable prey
      * exists it aggro-pathfinds and eats it. Prey is Jim, Jimlins, and most
      * monsters, but not God, Chaos, Worm, Puffer, Charger, other Predators,
-     * or anyone inside a Jimlin ship.
+     * or anyone inside a Jimlin ship. Hive Guards are hunted but explode on
+     * contact instead of being eaten.
      */
     class Predator : public Base {
     public:

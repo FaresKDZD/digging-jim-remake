@@ -32,7 +32,14 @@ namespace Cave::Entity {
             return frame >= INFLATE_FRAME_FIRST && frame <= INFLATE_FRAME_LAST;
         }
 
+        /// @brief Deflated (1x1) cycle frames — used for level-start phase offset.
+        static int randomDeflatedFrame() {
+            static constexpr int opts[] = { 0, 1, 2, 14, 15, 16, 17 };
+            return opts[Utils::randomInteger(0, 6)];
+        }
+
     private:
+
         static std::vector<int> getFrames() {
             std::vector<int> frames;
             frames.reserve(FRAME_COUNT);

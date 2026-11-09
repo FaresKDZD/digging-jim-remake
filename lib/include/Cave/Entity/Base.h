@@ -193,6 +193,14 @@ namespace Cave::Entity {
             m_transition->setDisplacementIncrement(inc);
         }
 
+        /// @brief Snap slide progress to match another entity (e.g. bubble over prey).
+        void setTransitionDisplacement(int displacement) {
+            if (!m_transition) {
+                return;
+            }
+            m_transition->setDisplacement(displacement);
+        }
+
         /// @brief Drop any in-progress slide so the entity draws fully in its tile.
         void clearTransition() {
             m_transition = std::nullopt;
@@ -251,6 +259,16 @@ namespace Cave::Entity {
         /// @brief True when this tile is sliding into its cell.
         bool isIntoTransition() const {
             return m_transition && m_transition->isInto();
+        }
+
+        /// @brief True when this tile is vacating via an away slide.
+        bool isAwayTransition() const {
+            return m_transition && m_transition->isAway();
+        }
+
+        /// @brief True when this tile is the middle cell of a push slide.
+        bool isPushTransition() const {
+            return m_transition && m_transition->isPush();
         }
 
         /// @brief Pixel displacement of the current slide (0-32).
@@ -379,6 +397,12 @@ namespace Cave::Entity {
 
         /// @brief Ticks a Jimlin has been active since last rest.
         int dutyTicks = 0;
+
+        /// @brief Consecutive ticks a hive member has been immobilized with no escape.
+        int stuckTicks = 0;
+
+        /// @brief Sticky hive overflow assignment — parks in living rooms until actives need them.
+        bool hiveLivingExtra = false;
 
     protected:
 

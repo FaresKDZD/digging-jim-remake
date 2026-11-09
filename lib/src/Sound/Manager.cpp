@@ -33,6 +33,7 @@ void Sound::Manager::loadAllSounds(bool includeMusic) {
     loadSound(Sound::Effect::Unlock, "./assets/sounds/Effect/unlock.wav");
     loadSound(Sound::Effect::Yahoo, "./assets/sounds/Effect/yahoo.wav");
     loadSound(Sound::Effect::Yippee, "./assets/sounds/Effect/yippee.wav");
+    loadSound(Sound::Effect::Wawa, "./assets/sounds/Effect/wawa.wav");
 
     if (includeMusic)
         loadMusic(Sound::Music::MainMenu, "./assets/sounds/Music/main_menu.wav");

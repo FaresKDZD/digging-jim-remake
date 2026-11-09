@@ -63,13 +63,26 @@ public:
      */
     void setSize(sf::Vector2f size);
 
+    /**
+     * @brief Snap view origin to this many virtual pixels (per axis).
+     * @details For nearest stretch-to-fill, use virt/gcd(virt,out) so scrolling
+     *          stays phase-locked to the output pixel grid (kills pixel crawl).
+     */
+    void setScrollQuantum(sf::Vector2u quantum);
+
+    /// @brief Scroll quantum in virtual pixels (minimum 1 per axis).
+    sf::Vector2u getScrollQuantum() const;
+
+    /**
+     * @brief Virtual-pixel scroll step that stays phase-locked for a present size.
+     * @return (qx, qy) where q = virt / gcd(virt, out) per axis.
+     */
+    static sf::Vector2u scrollQuantumForPresent(unsigned virtW, unsigned virtH,
+        unsigned outW, unsigned outH);
+
 private:
-    /// @breif The underlying SFML view
     sf::View m_view;
-
-    /// @breif Current logical center of the camera
     sf::Vector2f m_location;
-
-    /// @breif Maximum allowed x and y coordinates for the camera center
     sf::Vector2f m_bounds;
+    sf::Vector2u m_scrollQuantum{ 1u, 1u };
 };

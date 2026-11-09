@@ -337,6 +337,7 @@ bool Cave::Map::jimlinCanBoardShip(const int& self, const int& ship) const {
 
 bool Cave::Map::isJimlinThreat(const int& index) const {
 	if (!inBounds(index)) return false;
+	if (isHiveBubbled(index)) return false;
 	return Cave::Entity::isMonster(getEntityType(index));
 }
 

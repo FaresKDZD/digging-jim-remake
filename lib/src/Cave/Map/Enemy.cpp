@@ -15,6 +15,23 @@ void Cave::Map::updateProtoza(const int& index) {
 	tryWallFollowEmpty(index, false);
 }
 
+void Cave::Map::updateMimic(const int& index) {
+	if (caveEntities[index].spawnCredit == Cave::Entity::Mimic::MODE_TURNING) {
+		setEntityMoving(index, false);
+		return;
+	}
+	if (handleEnemyBasicUpdate(index)) return;
+
+	int& timer = caveEntities[index].extra;
+	if (timer < Cave::Entity::Mimic::IDLE_TICKS)
+		timer++;
+	if (timer >= Cave::Entity::Mimic::IDLE_TICKS) {
+		beginMimicTurnTo(index);
+		return;
+	}
+	tryWallFollowEmpty(index, false);
+}
+
 void Cave::Map::updatePyrozo(const int& index) {
 	updateProtoza(index);
 }
@@ -2095,9 +2112,6907 @@ void Cave::Map::updateCaveGull(const int& index) {
 	tryWallFollowEmpty(index, true);
 }
 
+bool Cave::Map::grouperHasJimLineOfSight(const int& index) const {
+	using G = Cave::Entity::Grouper;
+	const int prey = nearestJimIndex(index);
+	if (!inBounds(index) || !inBounds(prey) || index == prey)
+		return false;
+	if (!Cave::Entity::isHuntTarget(getEntityType(prey)))
+		return false;
+
+	int x0 = index % width;
+	int y0 = index / width;
+	const int x1 = prey % width;
+	const int y1 = prey / width;
+	// 20x20 sense box (half-open: [-10, 10)).
+	if (x1 - x0 < -G::SENSE_HALF || x1 - x0 >= G::SENSE_HALF
+		|| y1 - y0 < -G::SENSE_HALF || y1 - y0 >= G::SENSE_HALF)
+		return false;
+
+	const int dx = std::abs(x1 - x0);
+	const int dy = -std::abs(y1 - y0);
+	const int sx = x0 < x1 ? 1 : -1;
+	const int sy = y0 < y1 ? 1 : -1;
+	int err = dx + dy;
+
+	while (true) {
+		if (x0 == x1 && y0 == y1)
+			return true;
+		const int e2 = 2 * err;
+		if (e2 >= dy) {
+			err += dy;
+			x0 += sx;
+		}
+		if (e2 <= dx) {
+			err += dx;
+			y0 += sy;
+		}
+		if (x0 == x1 && y0 == y1)
+			return true;
+		if (x0 < 0 || y0 < 0 || x0 >= width || y0 >= height)
+			return false;
+		const int cell = y0 * width + x0;
+		if (!hasTrait(Cave::Entity::Trait::Empty, cell))
+			return false;
+	}
+}
+
+int Cave::Map::findGrouperIndexById(int grouperId) const {
+	if (grouperId < 0) return OUT_OF_BOUNDS_INDEX;
+	for (int i = 0; i < static_cast<int>(caveEntities.size()); ++i) {
+		if (getEntityType(i) == Cave::Entity::Type::Grouper
+			&& caveEntities[i].dutyTicks == grouperId)
+			return i;
+	}
+	return OUT_OF_BOUNDS_INDEX;
+}
+
+bool Cave::Map::grouperIdIsAlarmAncestor(int fromIndex, int candidateId) const {
+	if (!inBounds(fromIndex) || candidateId < 0) return false;
+	int current = fromIndex;
+	for (int guard = 0; guard < 64; ++guard) {
+		const int curId = caveEntities[current].dutyTicks;
+		const int parentId = caveEntities[current].homeIndex;
+		if (parentId < 0 || parentId == curId)
+			return false;
+		if (parentId == candidateId)
+			return true;
+		const int parentIdx = findGrouperIndexById(parentId);
+		if (!inBounds(parentIdx))
+			return false;
+		current = parentIdx;
+	}
+	return false;
+}
+
+void Cave::Map::alarmGrouper(const int& index, int parentId, int lastSeenJim) {
+	if (!inBounds(index) || getEntityType(index) != Cave::Entity::Type::Grouper)
+		return;
+	if (Cave::Entity::Grouper::isAlarmed(caveEntities[index]))
+		return;
+
+	const int selfId = caveEntities[index].dutyTicks;
+	// Never alarm anyone higher in this Grouper's alarm chain.
+	if (parentId >= 0) {
+		if (selfId == parentId)
+			return;
+		const int parentIdx = findGrouperIndexById(parentId);
+		if (inBounds(parentIdx) && grouperIdIsAlarmAncestor(parentIdx, selfId))
+			return;
+	}
+
+	Cave::Entity::Grouper::setMode(caveEntities[index], Cave::Entity::Grouper::MODE_ALARMED);
+	Cave::Entity::Grouper::setBlockHold(caveEntities[index], 0);
+	caveEntities[index].extra = 0;
+	caveEntities[index].homeIndex = parentId >= 0 ? parentId : selfId;
+	caveEntities[index].targetIndex = inBounds(lastSeenJim) ? lastSeenJim : index;
+	caveEntities[index].setAnimation(Cave::Entity::Grouper::alarmAnimation());
+}
+
+void Cave::Map::spreadGrouperAlarm(const int& index) {
+	if (!inBounds(index) || !Cave::Entity::Grouper::isAlarmed(caveEntities[index]))
+		return;
+	using G = Cave::Entity::Grouper;
+	const int selfId = caveEntities[index].dutyTicks;
+	const int lastSeen = caveEntities[index].targetIndex;
+	const int cx = index % width;
+	const int cy = index / width;
+	for (int dy = -G::SENSE_HALF; dy < G::SENSE_HALF; ++dy) {
+		for (int dx = -G::SENSE_HALF; dx < G::SENSE_HALF; ++dx) {
+			if (dx == 0 && dy == 0) continue;
+			const int nx = cx + dx;
+			const int ny = cy + dy;
+			if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+			const int cell = ny * width + nx;
+			if (getEntityType(cell) != Cave::Entity::Type::Grouper) continue;
+			if (Cave::Entity::Grouper::isAlarmed(caveEntities[cell])) continue;
+			if (grouperIdIsAlarmAncestor(index, caveEntities[cell].dutyTicks))
+				continue;
+			alarmGrouper(cell, selfId, lastSeen);
+		}
+	}
+}
+
+void Cave::Map::updateGrouper(const int& index) {
+	using G = Cave::Entity::Grouper;
+	int& calmTimer = caveEntities[index].extra;
+	int& lastSeen = caveEntities[index].targetIndex;
+
+	// ── Alarmed ────────────────────────────────────────────────────────────
+	// Calm timer must tick every frame (even mid-slide). handleEnemyBasicUpdate
+	// early-outs on transition and was freezing calm forever while oscillating.
+	if (G::isAlarmed(caveEntities[index])) {
+		updateEntityAnimation(index);
+		if (editorIdle()) return;
+		if (handleEnemyDeath(index)) return;
+
+		m_grouperAlarmed = true;
+
+		const bool hasLos = grouperHasJimLineOfSight(index);
+		if (hasLos) {
+			const int jim = nearestJimIndex(index);
+			if (inBounds(jim))
+				lastSeen = jim;
+			caveEntities[index].homeIndex = caveEntities[index].dutyTicks;
+			calmTimer = 0;
+		}
+		else if (calmTimer < G::CALM_TICKS) {
+			calmTimer++;
+		}
+
+		spreadGrouperAlarm(index);
+
+		if (calmTimer >= G::CALM_TICKS) {
+			G::setMode(caveEntities[index], G::MODE_IDLE);
+			G::setBlockHold(caveEntities[index], 0);
+			calmTimer = 0;
+			lastSeen = OUT_OF_BOUNDS_INDEX;
+			caveEntities[index].setAnimation(G::idleAnimation());
+			// Fall through to default wander this tick.
+		}
+		else {
+			if (getEntityTransitioning(index)) return;
+
+			const bool arrived = !inBounds(lastSeen) || index == lastSeen;
+			int hold = G::blockHold(caveEntities[index]);
+			bool moved = false;
+
+			if (!arrived) {
+				if (hold > 0) {
+					hold--;
+				}
+				else {
+					// Plan through Jim/monsters; other Groupers are solid.
+					const Cave::Entity::Direction dir = findPathThroughEmpty(index, lastSeen, true);
+					if (dir != Cave::Entity::Direction::NO_DIRECTION
+						&& tryMoveEnemy(index, Cave::Entity::Trait::Empty, dir)) {
+						moved = true;
+					}
+					else {
+						// Occupied step: brief pause, then retry same target (no random walk).
+						hold = G::HOLD_TICKS;
+					}
+				}
+			}
+			G::setBlockHold(caveEntities[index], hold);
+			if (!moved)
+				setEntityMoving(index, false);
+			return;
+		}
+	}
+
+	if (handleEnemyBasicUpdate(index)) return;
+
+	// ── Default ────────────────────────────────────────────────────────────
+	if (grouperHasJimLineOfSight(index)) {
+		alarmGrouper(index, -1, nearestJimIndex(index));
+		spreadGrouperAlarm(index);
+		setEntityMoving(index, false);
+		return;
+	}
+
+	wanderTowardRandomEmpty(index, G::HOLD_TICKS);
+}
+
+void Cave::Map::updateShade(const int& index) {
+	using S = Cave::Entity::Shade;
+	int& mode = caveEntities[index].spawnCredit;
+	int& timer = caveEntities[index].extra;
+
+	if (mode == S::MODE_DISAPPEARING) {
+		if (handleEnemyDeath(index)) return;
+		if (getEntityTransitioning(index)) return;
+		updateEntityAnimation(index);
+		if (caveEntities[index].animationLoopCompleted()
+			|| caveEntities[index].getAnimation().currentFrame >= S::DISAPPEAR_COUNT - 1) {
+			mode = S::MODE_INVISIBLE;
+			timer = 0;
+			caveEntities[index].setAnimation(S::invisibleAnimation());
+		}
+		setEntityMoving(index, false);
+		return;
+	}
+
+	if (mode == S::MODE_REAPPEARING) {
+		if (handleEnemyDeath(index)) return;
+		if (getEntityTransitioning(index)) return;
+		updateEntityAnimation(index);
+		if (caveEntities[index].animationLoopCompleted()
+			|| caveEntities[index].getAnimation().currentFrame <= 0) {
+			mode = S::MODE_VISIBLE;
+			timer = 0;
+			caveEntities[index].setAnimation(S::idleAnimation());
+		}
+		setEntityMoving(index, false);
+		return;
+	}
+
+	if (mode == S::MODE_INVISIBLE) {
+		// Keep the blank frame; still run death checks / movement.
+		if (editorIdle()) return;
+		if (handleEnemyDeath(index)) return;
+		if (getEntityTransitioning(index)) return;
+		if (timer < S::PHASE_TICKS)
+			timer++;
+		if (timer >= S::PHASE_TICKS) {
+			mode = S::MODE_REAPPEARING;
+			caveEntities[index].setAnimation(S::disappearAnimation(true));
+			caveEntities[index].setAnimationReverse(true);
+			caveEntities[index].setAnimationFrame(S::DISAPPEAR_COUNT - 1);
+			setEntityMoving(index, false);
+			return;
+		}
+		tryWallFollowEmpty(index, true);
+		return;
+	}
+
+	// MODE_VISIBLE
+	if (handleEnemyBasicUpdate(index)) return;
+	if (timer < S::PHASE_TICKS)
+		timer++;
+	if (timer >= S::PHASE_TICKS) {
+		mode = S::MODE_DISAPPEARING;
+		caveEntities[index].setAnimation(S::disappearAnimation(false));
+		caveEntities[index].setAnimationReverse(false);
+		caveEntities[index].setAnimationFrame(0);
+		setEntityMoving(index, false);
+		return;
+	}
+	tryWallFollowEmpty(index, true);
+}
+
 void Cave::Map::updateButterfly(const int& index) {
 	if (handleEnemyBasicUpdate(index)) return;
 	tryWallFollowEmpty(index, true);
+}
+
+void Cave::Map::ensureEmptyPathScratch(int cellCount) const {
+	if (cellCount <= 0) return;
+	if (static_cast<int>(m_emptyPathVisit.size()) == cellCount
+		&& static_cast<int>(m_emptyPathFirst.size()) == cellCount
+		&& static_cast<int>(m_emptyPathParent.size()) == cellCount)
+		return;
+	m_emptyPathVisit.assign(static_cast<size_t>(cellCount), 0);
+	m_emptyPathFirst.assign(static_cast<size_t>(cellCount), Cave::Entity::Direction::NO_DIRECTION);
+	m_emptyPathParent.assign(static_cast<size_t>(cellCount), OUT_OF_BOUNDS_INDEX);
+	m_emptyPathGen = 0;
+	if (m_emptyPathQueue.capacity() < static_cast<size_t>(cellCount))
+		m_emptyPathQueue.reserve(static_cast<size_t>(cellCount));
+}
+
+void Cave::Map::beginEmptyPathGen() const {
+	++m_emptyPathGen;
+	if (m_emptyPathGen == 0) {
+		std::fill(m_emptyPathVisit.begin(), m_emptyPathVisit.end(), 0);
+		m_emptyPathGen = 1;
+	}
+	m_emptyPathQueue.clear();
+	m_emptyPathQueueHead = 0;
+	m_emptyPathHits.clear();
+}
+
+int Cave::Map::pickRandomEmptySpace(const int& self) const {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (self < 0 || self >= cellCount) return OUT_OF_BOUNDS_INDEX;
+
+	// Empty/open-gate only — monsters are solid obstacles.
+	ensureEmptyPathScratch(cellCount);
+	beginEmptyPathGen();
+	const int gen = m_emptyPathGen;
+	m_emptyPathVisit[static_cast<size_t>(self)] = gen;
+	m_emptyPathQueue.push_back(self);
+
+	while (m_emptyPathQueueHead < m_emptyPathQueue.size()) {
+		const int current = m_emptyPathQueue[m_emptyPathQueueHead++];
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, dir);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (m_emptyPathVisit[static_cast<size_t>(next)] == gen) continue;
+			if (!isMonsterWalkable(next)) continue;
+			m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+			m_emptyPathQueue.push_back(next);
+			if (next != self)
+				m_emptyPathHits.push_back(next);
+		}
+	}
+
+	if (m_emptyPathHits.empty()) return OUT_OF_BOUNDS_INDEX;
+	return m_emptyPathHits[static_cast<size_t>(
+		Utils::randomInteger(0, static_cast<int>(m_emptyPathHits.size()) - 1))];
+}
+
+void Cave::Map::wanderTowardRandomEmpty(const int& index, int holdTicks) {
+	int& goal = caveEntities[index].targetIndex;
+	int& hold = caveEntities[index].extra;
+
+	if (hold > 0) {
+		hold--;
+		setEntityMoving(index, false);
+		return;
+	}
+
+	if (index == goal) {
+		hold = holdTicks;
+		goal = OUT_OF_BOUNDS_INDEX;
+		setEntityMoving(index, false);
+		return;
+	}
+
+	// Goal stolen (another monster on it, etc.): pause then pick a new destination.
+	if (inBounds(goal) && !isMonsterWalkable(goal)) {
+		hold = holdTicks;
+		goal = OUT_OF_BOUNDS_INDEX;
+		setEntityMoving(index, false);
+		return;
+	}
+
+	if (!inBounds(goal)) {
+		goal = pickRandomEmptySpace(index);
+		if (!inBounds(goal)) {
+			setEntityMoving(index, false);
+			return;
+		}
+	}
+
+	// Monsters are obstacles (allowOccupiedPlan=false).
+	const Cave::Entity::Direction dir = findPathThroughEmpty(index, goal, false);
+	if (dir == Cave::Entity::Direction::NO_DIRECTION) {
+		// Temporarily cut off (crowding / slides) — keep the same goal and wait.
+		setEntityMoving(index, false);
+		return;
+	}
+
+	if (tryMoveHiveAdultStep(index, dir))
+		return;
+
+	// Step raced/transitioning — keep goal, retry next tick (do not pivot).
+	setEntityMoving(index, false);
+}
+
+Cave::Entity::Direction Cave::Map::findPathThroughEmpty(const int& index, const int& goal, bool allowOccupiedPlan) {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (index < 0 || index >= cellCount || goal < 0 || goal >= cellCount)
+		return Cave::Entity::Direction::NO_DIRECTION;
+	if (index == goal)
+		return Cave::Entity::Direction::NO_DIRECTION;
+
+	// allowOccupiedPlan: route through Jim/monsters (Jelly-style); steps still need
+	// Empty via tryMoveEnemy. Other Groupers stay solid to avoid pile-up oscillation.
+	auto canPlanThrough = [this, index, goal, allowOccupiedPlan](int cell) {
+		if (cell == goal) return true;
+		// On-duty hive jobs must not cut through living — but allow evacuating out.
+		if (isLivingRoom(cell) && !isLivingRoom(goal) && !isLivingRoom(index))
+			return false;
+		const Cave::Entity::Type type = getEntityType(cell);
+		if (type == Cave::Entity::Type::Grouper) return false;
+		if (isMonsterWalkable(cell)) return true;
+		if (!allowOccupiedPlan) return false;
+		if (Cave::Entity::isHuntTarget(type) || Cave::Entity::isMonster(type))
+			return true;
+		if (type == Cave::Entity::Type::Fire || type == Cave::Entity::Type::Landmine)
+			return true;
+		return false;
+	};
+
+	// Identical to BFS when the goal is an immediate neighbor.
+	if (canPlanThrough(goal)) {
+		for (Cave::Entity::Direction step : Cave::Entity::ALL_DIRECTIONS) {
+			if (getIndex(index, step) == goal)
+				return step;
+		}
+	}
+
+	ensureEmptyPathScratch(cellCount);
+	beginEmptyPathGen();
+	const int gen = m_emptyPathGen;
+	m_emptyPathVisit[static_cast<size_t>(index)] = gen;
+	m_emptyPathQueue.push_back(index);
+
+	while (m_emptyPathQueueHead < m_emptyPathQueue.size()) {
+		const int current = m_emptyPathQueue[m_emptyPathQueueHead++];
+		for (Cave::Entity::Direction step : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, step);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (m_emptyPathVisit[static_cast<size_t>(next)] == gen) continue;
+			if (!canPlanThrough(next)) continue;
+
+			m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+			const Cave::Entity::Direction first = (current == index)
+				? step
+				: m_emptyPathFirst[static_cast<size_t>(current)];
+			m_emptyPathFirst[static_cast<size_t>(next)] = first;
+			if (next == goal)
+				return first;
+			m_emptyPathQueue.push_back(next);
+		}
+	}
+	return Cave::Entity::Direction::NO_DIRECTION;
+}
+
+void Cave::Map::updateJelly(const int& index) {
+	if (handleEnemyBasicUpdate(index)) return;
+	wanderTowardRandomEmpty(index, Cave::Entity::Jelly::HOLD_TICKS);
+}
+
+bool Cave::Map::hiveRoomBorderLinked(int x0, int y0, int x1, int y1) const {
+	if (x1 <= x0 + 1 || y1 <= y0 + 1) return false;
+	if (x0 < 0 || y0 < 0 || x1 >= width || y1 >= height) return false;
+
+	// Left / right / bottom must be solid normal hive walls between the corners.
+	// A corner marker mid-edge (shared septum of a larger false rect) rejects the link.
+	for (int y = y0 + 1; y < y1; ++y) {
+		if (getEntityType(y * width + x0) != Cave::Entity::Type::HiveWall) return false;
+		if (getEntityType(y * width + x1) != Cave::Entity::Type::HiveWall) return false;
+	}
+	for (int x = x0 + 1; x < x1; ++x) {
+		if (getEntityType(y1 * width + x) != Cave::Entity::Type::HiveWall) return false;
+	}
+	// Top is the entrance: do not require Space (collectors standing in the doorway
+	// would un-mark the room every tick). Only reject another corner marker mid-top,
+	// which is how an oversized false rectangle would try to span two rooms.
+	for (int x = x0 + 1; x < x1; ++x) {
+		const Cave::Entity::Type t = getEntityType(y0 * width + x);
+		if (t == Cave::Entity::Type::HiveMatriarchWall
+			|| t == Cave::Entity::Type::HiveNurseryWall
+			|| t == Cave::Entity::Type::HiveStorageWall
+			|| t == Cave::Entity::Type::HiveLivingWall)
+			return false;
+	}
+	return true;
+}
+
+void Cave::Map::rebuildHiveRooms() {
+	const int cellCount = width * height;
+	if (static_cast<int>(m_matriarchRoom.size()) == cellCount) {
+		std::fill(m_matriarchRoom.begin(), m_matriarchRoom.end(), 0);
+		std::fill(m_nurseryRoom.begin(), m_nurseryRoom.end(), 0);
+		std::fill(m_storageRoom.begin(), m_storageRoom.end(), 0);
+		std::fill(m_livingRoom.begin(), m_livingRoom.end(), 0);
+	}
+	else {
+		m_matriarchRoom.assign(static_cast<size_t>(cellCount), 0);
+		m_nurseryRoom.assign(static_cast<size_t>(cellCount), 0);
+		m_storageRoom.assign(static_cast<size_t>(cellCount), 0);
+		m_livingRoom.assign(static_cast<size_t>(cellCount), 0);
+	}
+	m_hiveRoomsBuilt = true;
+	m_hiveHasMatriarchRoom = false;
+	m_hiveHasNursery = false;
+	m_hiveHasStorage = false;
+	m_hiveHasLiving = false;
+
+	std::vector<int> matCorners;
+	std::vector<int> nurCorners;
+	std::vector<int> storCorners;
+	std::vector<int> liveCorners;
+	matCorners.reserve(16);
+	nurCorners.reserve(16);
+	storCorners.reserve(16);
+	liveCorners.reserve(16);
+	for (int i = 0; i < cellCount; ++i) {
+		const Cave::Entity::Type t = getEntityType(i);
+		if (t == Cave::Entity::Type::HiveMatriarchWall) matCorners.push_back(i);
+		else if (t == Cave::Entity::Type::HiveNurseryWall) nurCorners.push_back(i);
+		else if (t == Cave::Entity::Type::HiveStorageWall) storCorners.push_back(i);
+		else if (t == Cave::Entity::Type::HiveLivingWall) liveCorners.push_back(i);
+	}
+
+	auto markRooms = [this](const std::vector<int>& corners, std::vector<char>& mask) {
+		const int n = static_cast<int>(corners.size());
+		for (int i = 0; i < n; ++i) {
+			const int ax = corners[static_cast<size_t>(i)] % width;
+			const int ay = corners[static_cast<size_t>(i)] / width;
+			for (int j = i + 1; j < n; ++j) {
+				const int bx = corners[static_cast<size_t>(j)] % width;
+				const int by = corners[static_cast<size_t>(j)] / width;
+				if (ax == bx || ay == by) continue;
+				const int x0 = ax < bx ? ax : bx;
+				const int x1 = ax < bx ? bx : ax;
+				const int y0 = ay < by ? ay : by;
+				const int y1 = ay < by ? by : ay;
+				const int c01 = y0 * width + x1;
+				const int c10 = y1 * width + x0;
+				const Cave::Entity::Type cornerType = getEntityType(corners[static_cast<size_t>(i)]);
+				if (getEntityType(c01) != cornerType || getEntityType(c10) != cornerType)
+					continue;
+				// Four corners only mark a room when hive walls join them along the border.
+				if (!hiveRoomBorderLinked(x0, y0, x1, y1))
+					continue;
+				for (int y = y0 + 1; y < y1; ++y) {
+					for (int x = x0 + 1; x < x1; ++x)
+						mask[static_cast<size_t>(y * width + x)] = 1;
+				}
+			}
+		}
+	};
+
+	markRooms(matCorners, m_matriarchRoom);
+	markRooms(nurCorners, m_nurseryRoom);
+	markRooms(storCorners, m_storageRoom);
+	markRooms(liveCorners, m_livingRoom);
+
+	m_hiveHasMatriarchRoom = std::find(m_matriarchRoom.begin(), m_matriarchRoom.end(), 1)
+		!= m_matriarchRoom.end();
+	m_hiveHasNursery = std::find(m_nurseryRoom.begin(), m_nurseryRoom.end(), 1)
+		!= m_nurseryRoom.end();
+	m_hiveHasStorage = std::find(m_storageRoom.begin(), m_storageRoom.end(), 1)
+		!= m_storageRoom.end();
+	m_hiveHasLiving = std::find(m_livingRoom.begin(), m_livingRoom.end(), 1)
+		!= m_livingRoom.end();
+}
+
+void Cave::Map::refreshHiveGameplayCaches() {
+	using B = Cave::Entity::HiveBuilder;
+	const int cellCount = width * height;
+	m_hiveBuilderSitePickTried = false;
+	// Sticky overflow tags first so AI this tick sees a stable extra assignment.
+	refreshHiveLivingExtraTags();
+	if (static_cast<int>(m_hiveActiveBuildSiteOfCell.size()) == cellCount) {
+		std::fill(m_hiveActiveBuildSiteOfCell.begin(), m_hiveActiveBuildSiteOfCell.end(),
+			OUT_OF_BOUNDS_INDEX);
+		std::fill(m_hiveDigDirtMask.begin(), m_hiveDigDirtMask.end(), 0);
+		std::fill(m_hiveEntranceDirtMask.begin(), m_hiveEntranceDirtMask.end(), 0);
+	}
+	else {
+		m_hiveActiveBuildSiteOfCell.assign(static_cast<size_t>(cellCount), OUT_OF_BOUNDS_INDEX);
+		m_hiveDigDirtMask.assign(static_cast<size_t>(cellCount), 0);
+		m_hiveEntranceDirtMask.assign(static_cast<size_t>(cellCount), 0);
+	}
+	m_hiveDigDirtGoals.clear();
+	m_hiveDigDirtGoals.reserve(64);
+
+	auto stampEntrance = [&](int origin) {
+		if (!inBounds(origin)) return;
+		const int ox = origin % width;
+		const int oy = origin / width;
+		if (ox + B::ROOM_SIZE > width || oy + B::ROOM_SIZE > height) return;
+		for (int dx = 1; dx <= B::ROOM_SIZE - 2; ++dx) {
+			const int entrance = oy * width + (ox + dx);
+			const int above = getIndex(entrance, Cave::Entity::Direction::UP);
+			const int cells[4] = {
+				entrance,
+				above,
+				getIndex(above, Cave::Entity::Direction::LEFT),
+				getIndex(above, Cave::Entity::Direction::RIGHT),
+			};
+			for (int cell : cells) {
+				if (!inBounds(cell)) continue;
+				m_hiveEntranceDirtMask[static_cast<size_t>(cell)] = 1;
+				if (!Cave::Entity::isDirtLike(getEntityType(cell))) continue;
+				if (m_hiveDigDirtMask[static_cast<size_t>(cell)]) continue;
+				m_hiveDigDirtMask[static_cast<size_t>(cell)] = 1;
+				m_hiveDigDirtGoals.push_back(cell);
+			}
+		}
+	};
+
+	std::vector<int> rooms;
+	collectAllHiveRoomOrigins(rooms);
+	for (int origin : rooms)
+		stampEntrance(origin);
+
+	for (int i = 0; i < cellCount; ++i) {
+		if (getEntityType(i) != Cave::Entity::Type::HiveBuilder) continue;
+		const bool building = B::isBuilding(caveEntities[i]);
+		const bool depositing = B::isDepositingDebris(caveEntities[i]);
+		if (!building && !depositing) continue;
+		const int site = caveEntities[i].homeIndex;
+		if (!inBounds(site)) continue;
+		const int ox = site % width;
+		const int oy = site / width;
+		if (ox + B::ROOM_SIZE > width || oy + B::ROOM_SIZE > height) continue;
+		for (int dy = 0; dy < B::ROOM_SIZE; ++dy) {
+			for (int dx = 0; dx < B::ROOM_SIZE; ++dx) {
+				const int cell = (oy + dy) * width + (ox + dx);
+				m_hiveActiveBuildSiteOfCell[static_cast<size_t>(cell)] = site;
+				if (!building) continue;
+				if (!Cave::Entity::isDirtLike(getEntityType(cell))) continue;
+				if (m_hiveDigDirtMask[static_cast<size_t>(cell)]) continue;
+				m_hiveDigDirtMask[static_cast<size_t>(cell)] = 1;
+				m_hiveDigDirtGoals.push_back(cell);
+			}
+		}
+		stampEntrance(site);
+		// Food-corridor digs are requested by builder AI (gather path failure), not here —
+		// per-tick food BFS + pathfinding across every building builder crushed the sim.
+	}
+
+	// Guard patrol band: every cell within PATROL_RADIUS (Chebyshev) of a hive room.
+	using G = Cave::Entity::HiveGuard;
+	m_hiveGuardPatrol.assign(static_cast<size_t>(cellCount), 0);
+	const int radius = G::PATROL_RADIUS;
+	for (int i = 0; i < cellCount; ++i) {
+		if (!isMatriarchRoom(i) && !isNurseryRoom(i) && !isStorageRoom(i) && !isLivingRoom(i))
+			continue;
+		const int ox = i % width;
+		const int oy = i / width;
+		for (int dy = -radius; dy <= radius; ++dy) {
+			for (int dx = -radius; dx <= radius; ++dx) {
+				const int adx = dx < 0 ? -dx : dx;
+				const int ady = dy < 0 ? -dy : dy;
+				if (adx > radius || ady > radius) continue;
+				const int x = ox + dx;
+				const int y = oy + dy;
+				if (x < 0 || y < 0 || x >= width || y >= height) continue;
+				m_hiveGuardPatrol[static_cast<size_t>(y * width + x)] = 1;
+			}
+		}
+	}
+}
+
+void Cave::Map::rememberHiveKnownRoom(int origin, int buildMode) {
+	if (!inBounds(origin)) return;
+	for (const HiveKnownRoom& room : m_hiveKnownRooms) {
+		if (room.origin == origin && room.buildMode == buildMode)
+			return;
+	}
+	m_hiveKnownRooms.push_back({ origin, buildMode });
+}
+
+void Cave::Map::rememberCompletedHiveRooms() {
+	using B = Cave::Entity::HiveBuilder;
+	const int modes[] = {
+		B::MODE_BUILD_MATRIARCH,
+		B::MODE_BUILD_NURSERY,
+		B::MODE_BUILD_STORAGE,
+		B::MODE_BUILD_LIVING,
+	};
+	for (int mode : modes) {
+		std::vector<int> origins;
+		collectHiveCornerQuads(B::cornerWallType(mode), true, origins);
+		for (int origin : origins)
+			rememberHiveKnownRoom(origin, mode);
+	}
+}
+
+bool Cave::Map::isHiveKnownRoom(int origin, int buildMode) const {
+	if (!inBounds(origin)) return false;
+	for (const HiveKnownRoom& room : m_hiveKnownRooms) {
+		if (room.origin == origin && room.buildMode == buildMode)
+			return true;
+	}
+	return false;
+}
+
+bool Cave::Map::isMatriarchRoom(const int& cell) const {
+	if (!inBounds(cell) || cell >= static_cast<int>(m_matriarchRoom.size())) return false;
+	return m_matriarchRoom[static_cast<size_t>(cell)] != 0;
+}
+
+bool Cave::Map::isNurseryRoom(const int& cell) const {
+	if (!inBounds(cell) || cell >= static_cast<int>(m_nurseryRoom.size())) return false;
+	return m_nurseryRoom[static_cast<size_t>(cell)] != 0;
+}
+
+bool Cave::Map::isStorageRoom(const int& cell) const {
+	if (!inBounds(cell) || cell >= static_cast<int>(m_storageRoom.size())) return false;
+	return m_storageRoom[static_cast<size_t>(cell)] != 0;
+}
+
+bool Cave::Map::isLivingRoom(const int& cell) const {
+	if (!inBounds(cell) || cell >= static_cast<int>(m_livingRoom.size())) return false;
+	return m_livingRoom[static_cast<size_t>(cell)] != 0;
+}
+
+bool Cave::Map::hiveStorageExists() const {
+	return m_hiveHasStorage;
+}
+
+bool Cave::Map::hiveLivingExists() const {
+	return m_hiveHasLiving;
+}
+
+bool Cave::Map::isHiveLivingStand(const int& cell) const {
+	if (!isLivingRoom(cell)) return false;
+	if (!isMonsterWalkable(cell) || getEntityTransitioning(cell)) return false;
+	const int below = getIndex(cell, Cave::Entity::Direction::DOWN);
+	if (!inBounds(below)) return false;
+	const Cave::Entity::Type under = getEntityType(below);
+	// Need real support underfoot — open Space is not a stand.
+	if (under == Cave::Entity::Type::Space || hasTrait(Cave::Entity::Trait::Empty, below))
+		return false;
+	// Don't perch on free (unbubbled) foreign monsters.
+	if (Cave::Entity::isMonster(under) && !Cave::Entity::isHiveCreature(under)
+		&& !isHiveBubbled(below))
+		return false;
+	// Hive walls / members / dirt / other solids all count so the hollow fills bottom→top.
+	return true;
+}
+
+bool Cave::Map::hiveLivingAllFull() const {
+	if (!hiveLivingExists()) return true;
+	const int cellCount = static_cast<int>(m_livingRoom.size());
+	for (int i = 0; i < cellCount; ++i) {
+		if (m_livingRoom[static_cast<size_t>(i)] == 0) continue;
+		if (isHiveLivingStand(i))
+			return false;
+	}
+	return true;
+}
+
+bool Cave::Map::hiveHasLivingOverflow() const {
+	using B = Cave::Entity::HiveBuilder;
+	const int cellCount = static_cast<int>(caveEntities.size());
+	int counts[5] = {};
+	for (int i = 0; i < cellCount; ++i) {
+		switch (getEntityType(i)) {
+		case Cave::Entity::Type::HiveServant: counts[0]++; break;
+		case Cave::Entity::Type::HiveCollector: counts[1]++; break;
+		case Cave::Entity::Type::HiveHunter: counts[2]++; break;
+		case Cave::Entity::Type::HiveBuilder: counts[3]++; break;
+		case Cave::Entity::Type::HiveDigger: counts[4]++; break;
+		default: break;
+		}
+	}
+	for (int c : counts) {
+		if (c > B::LIVING_ACTIVE_CAP)
+			return true;
+	}
+	return false;
+}
+
+bool Cave::Map::hiveWorkerBusyForLiving(const int& index) const {
+	using B = Cave::Entity::HiveBuilder;
+	using D = Cave::Entity::HiveDigger;
+	using C = Cave::Entity::HiveCollector;
+	using S = Cave::Entity::HiveServant;
+	using H = Cave::Entity::HiveHunter;
+	if (!inBounds(index)) return true;
+	const Cave::Entity::Type t = getEntityType(index);
+	if (t == Cave::Entity::Type::HiveBuilder) {
+		return B::isBuilding(caveEntities[index])
+			|| B::isDepositingDebris(caveEntities[index])
+			|| B::mode(caveEntities[index]) == B::MODE_GATHER;
+	}
+	if (t == Cave::Entity::Type::HiveDigger)
+		return D::mode(caveEntities[index]) != D::MODE_IDLE;
+	if (t == Cave::Entity::Type::HiveCollector)
+		return C::isCarrying(caveEntities[index]) || C::isDepositAwayBubbled(caveEntities[index]);
+	if (t == Cave::Entity::Type::HiveServant)
+		return S::isCarrying(caveEntities[index]) || S::isDepositAwayBubbled(caveEntities[index]);
+	if (t == Cave::Entity::Type::HiveHunter)
+		return H::mode(caveEntities[index]) == H::MODE_BUBBLING;
+	return false;
+}
+
+bool Cave::Map::hiveWorkerShouldParkInLiving(const int& index) const {
+	if (!inBounds(index)) return false;
+	if (!Cave::Entity::isHiveLivingJob(getEntityType(index))) return false;
+	return Cave::Entity::isHiveLivingExtra(caveEntities[index]);
+}
+
+void Cave::Map::refreshHiveLivingExtraTags() {
+	const Cave::Entity::Type jobs[] = {
+		Cave::Entity::Type::HiveServant,
+		Cave::Entity::Type::HiveCollector,
+		Cave::Entity::Type::HiveHunter,
+		Cave::Entity::Type::HiveBuilder,
+		Cave::Entity::Type::HiveDigger,
+	};
+	const int cellCount = static_cast<int>(caveEntities.size());
+	const int cap = Cave::Entity::HIVE_LIVING_ACTIVE_CAP;
+
+	for (Cave::Entity::Type job : jobs) {
+		std::vector<int> members;
+		members.reserve(16);
+		for (int i = 0; i < cellCount; ++i) {
+			if (getEntityType(i) == job)
+				members.push_back(i);
+		}
+		const int total = static_cast<int>(members.size());
+		const int needed = total > cap ? total - cap : 0;
+
+		// Re-rank every tick (stable): parked extras → other extras → idle → busy → cell.
+		// First `needed` become extras; the rest stay on duty (and must leave living).
+		// Only already-tagged extras get the "parked" boost — an on-duty worker who
+		// cut through a living room must not steal an extra slot (that left 4 actives).
+		// When needed shrinks (active died), parked extras past `needed` lose the tag and
+		// tryHiveWorkerGoLive evacuates them to refill the active roster.
+		std::sort(members.begin(), members.end(), [&](int a, int b) {
+			const bool aEx = Cave::Entity::isHiveLivingExtra(caveEntities[a]);
+			const bool bEx = Cave::Entity::isHiveLivingExtra(caveEntities[b]);
+			const bool aParked = aEx && isLivingRoom(a);
+			const bool bParked = bEx && isLivingRoom(b);
+			if (aParked != bParked) return aParked && !bParked;
+			if (aEx != bEx) return aEx && !bEx;
+			const bool aBusy = hiveWorkerBusyForLiving(a);
+			const bool bBusy = hiveWorkerBusyForLiving(b);
+			if (aBusy != bBusy) return !aBusy && bBusy;
+			return a < b;
+		});
+
+		for (int i = 0; i < total; ++i) {
+			const bool extra = i < needed;
+			Cave::Entity::setHiveLivingExtra(
+				caveEntities[members[static_cast<size_t>(i)]], extra);
+		}
+	}
+}
+
+int Cave::Map::findNearestHiveLivingStand(const int& from) const {
+	using B = Cave::Entity::HiveBuilder;
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (from < 0 || from >= cellCount || !hiveLivingExists())
+		return OUT_OF_BOUNDS_INDEX;
+
+	std::vector<int> origins;
+	collectHiveRoomOrigins(Cave::Entity::Type::HiveLivingWall, origins);
+	if (origins.empty()) return OUT_OF_BOUNDS_INDEX;
+
+	// Seats already claimed by other overflow members — avoid two extras thrashing for one cell.
+	std::vector<char> claimed(static_cast<size_t>(cellCount), 0);
+	for (int i = 0; i < cellCount; ++i) {
+		if (i == from) continue;
+		if (!Cave::Entity::isHiveLivingExtra(caveEntities[i])) continue;
+		const int t = caveEntities[i].targetIndex;
+		if (inBounds(t) && isHiveLivingStand(t))
+			claimed[static_cast<size_t>(t)] = 1;
+	}
+
+	auto livingOriginOf = [&](int cell) -> int {
+		for (int origin : origins) {
+			if (isHiveBuildHollowCell(origin, cell))
+				return origin;
+		}
+		return OUT_OF_BOUNDS_INDEX;
+	};
+
+	auto collectRoomBottoms = [&](int origin, std::vector<int>& out, bool skipClaimed) {
+		out.clear();
+		int bestY = -1;
+		const int ox = origin % width;
+		const int oy = origin / width;
+		if (ox + B::ROOM_SIZE > width || oy + B::ROOM_SIZE > height) return;
+		for (int dy = 1; dy < B::ROOM_SIZE - 1; ++dy) {
+			for (int dx = 1; dx < B::ROOM_SIZE - 1; ++dx) {
+				const int cell = (oy + dy) * width + (ox + dx);
+				if (!isLivingRoom(cell) || !isHiveLivingStand(cell)) continue;
+				if (skipClaimed && claimed[static_cast<size_t>(cell)] && cell != from) continue;
+				const int y = cell / width;
+				if (y > bestY) {
+					bestY = y;
+					out.clear();
+					out.push_back(cell);
+				}
+				else if (y == bestY) {
+					out.push_back(cell);
+				}
+			}
+		}
+	};
+
+	// Fill the room we're already in before starting another.
+	int preferredOrigin = livingOriginOf(from);
+	std::vector<int> bottoms;
+	bottoms.reserve(16);
+	if (inBounds(preferredOrigin)) {
+		collectRoomBottoms(preferredOrigin, bottoms, true);
+		if (bottoms.empty())
+			collectRoomBottoms(preferredOrigin, bottoms, false);
+	}
+
+	auto bfsToBottoms = [&](bool allowDirt) -> int {
+		if (bottoms.empty()) return OUT_OF_BOUNDS_INDEX;
+		for (int stand : bottoms) {
+			if (stand == from) return stand;
+		}
+		ensureEmptyPathScratch(cellCount);
+		beginEmptyPathGen();
+		const int gen = m_emptyPathGen;
+		m_emptyPathVisit[static_cast<size_t>(from)] = gen;
+		m_emptyPathQueue.push_back(from);
+		while (m_emptyPathQueueHead < m_emptyPathQueue.size()) {
+			const int current = m_emptyPathQueue[m_emptyPathQueueHead++];
+			for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+				const int next = getIndex(current, dir);
+				if (next == OUT_OF_BOUNDS_INDEX) continue;
+				if (m_emptyPathVisit[static_cast<size_t>(next)] == gen) continue;
+				for (int stand : bottoms) {
+					if (next == stand) {
+						m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+						return next;
+					}
+				}
+				m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+				const bool dirt = allowDirt && Cave::Entity::isDirtLike(getEntityType(next));
+				const bool open = isMonsterWalkable(next) || dirt;
+				if (!open && next != from) continue;
+				if (isHiveForeignBuildSite(from, next)) continue;
+				m_emptyPathQueue.push_back(next);
+			}
+		}
+		return OUT_OF_BOUNDS_INDEX;
+	};
+
+	if (inBounds(preferredOrigin) && !bottoms.empty()) {
+		const int open = bfsToBottoms(false);
+		if (inBounds(open)) return open;
+		const int dirt = bfsToBottoms(true);
+		if (inBounds(dirt)) return dirt;
+	}
+
+	// Outside / current room full: pick the closest living room that still has seats,
+	// then fill that room bottom→top (never the global bottom row across all rooms).
+	auto bfsClosestRoomOrigin = [&](bool allowDirt) -> int {
+		ensureEmptyPathScratch(cellCount);
+		beginEmptyPathGen();
+		const int gen = m_emptyPathGen;
+		m_emptyPathVisit[static_cast<size_t>(from)] = gen;
+		m_emptyPathQueue.push_back(from);
+		while (m_emptyPathQueueHead < m_emptyPathQueue.size()) {
+			const int current = m_emptyPathQueue[m_emptyPathQueueHead++];
+			for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+				const int next = getIndex(current, dir);
+				if (next == OUT_OF_BOUNDS_INDEX) continue;
+				if (m_emptyPathVisit[static_cast<size_t>(next)] == gen) continue;
+				m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+
+				const int hitOrigin = livingOriginOf(next);
+				if (inBounds(hitOrigin) && hitOrigin != preferredOrigin) {
+					collectRoomBottoms(hitOrigin, bottoms, true);
+					if (bottoms.empty())
+						collectRoomBottoms(hitOrigin, bottoms, false);
+					if (!bottoms.empty())
+						return hitOrigin;
+				}
+
+				const bool dirt = allowDirt && Cave::Entity::isDirtLike(getEntityType(next));
+				const bool open = isMonsterWalkable(next) || dirt;
+				if (!open && next != from) continue;
+				if (isHiveForeignBuildSite(from, next)) continue;
+				m_emptyPathQueue.push_back(next);
+			}
+		}
+		return OUT_OF_BOUNDS_INDEX;
+	};
+
+	preferredOrigin = bfsClosestRoomOrigin(false);
+	if (!inBounds(preferredOrigin))
+		preferredOrigin = bfsClosestRoomOrigin(true);
+	if (!inBounds(preferredOrigin)) {
+		// Fallback: any living origin that still has free stands.
+		for (int origin : origins) {
+			collectRoomBottoms(origin, bottoms, true);
+			if (bottoms.empty())
+				collectRoomBottoms(origin, bottoms, false);
+			if (!bottoms.empty()) {
+				preferredOrigin = origin;
+				break;
+			}
+		}
+	}
+	if (!inBounds(preferredOrigin)) return OUT_OF_BOUNDS_INDEX;
+
+	collectRoomBottoms(preferredOrigin, bottoms, true);
+	if (bottoms.empty())
+		collectRoomBottoms(preferredOrigin, bottoms, false);
+	if (bottoms.empty()) return OUT_OF_BOUNDS_INDEX;
+
+	const int open = bfsToBottoms(false);
+	if (inBounds(open)) return open;
+	return bfsToBottoms(true);
+}
+
+bool Cave::Map::tryHiveWorkerGoLive(const int& index) {
+	int& focus = caveEntities[index].targetIndex;
+	const bool digger = getEntityType(index) == Cave::Entity::Type::HiveDigger;
+
+	// Released from overflow (active slot opened up) — leave living and resume duty.
+	if (!hiveWorkerShouldParkInLiving(index)) {
+		if (!isLivingRoom(index) || getEntityTransitioning(index))
+			return false;
+		focus = findNearestHiveAdultEmpty(index);
+		if (!inBounds(focus)) {
+			setEntityMoving(index, false);
+			return true;
+		}
+		if (index == focus) {
+			focus = OUT_OF_BOUNDS_INDEX;
+			return false;
+		}
+		auto tryStep = [&](Cave::Entity::Direction dir) -> bool {
+			if (digger)
+				return tryMoveHiveDigger(index, dir);
+			return tryMoveHiveAdultStep(index, dir);
+		};
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			if (getIndex(index, dir) != focus) continue;
+			if (tryStep(dir))
+				return true;
+			break;
+		}
+		const Cave::Entity::Direction step = findPathThroughEmpty(index, focus, false);
+		if (step != Cave::Entity::Direction::NO_DIRECTION && tryStep(step))
+			return true;
+		focus = OUT_OF_BOUNDS_INDEX;
+		setEntityMoving(index, false);
+		return true;
+	}
+
+	if (getEntityTransitioning(index)) return true;
+
+	// Already parked in living — stay put until the job drops under the cap.
+	// Must run BEFORE the allFull check: once the top row fills, allFull is true and
+	// falling through to wander would eject everyone (in/out oscillation).
+	if (isLivingRoom(index)) {
+		const int below = getIndex(index, Cave::Entity::Direction::DOWN);
+		if (inBounds(below)
+			&& getEntityType(below) != Cave::Entity::Type::Space
+			&& !hasTrait(Cave::Entity::Trait::Empty, below)) {
+			focus = index;
+			setEntityMoving(index, false);
+			return true;
+		}
+	}
+
+	// No living capacity yet / room full — extras outside keep working / roaming.
+	if (!hiveLivingExists() || hiveLivingAllFull()) {
+		focus = OUT_OF_BOUNDS_INDEX;
+		return false;
+	}
+
+	// Drop a stale focus that is no longer a free stand.
+	if (inBounds(focus) && !isHiveLivingStand(focus))
+		focus = OUT_OF_BOUNDS_INDEX;
+
+	const int stand = (inBounds(focus) && isHiveLivingStand(focus))
+		? focus
+		: findNearestHiveLivingStand(index);
+	if (!inBounds(stand)) {
+		focus = OUT_OF_BOUNDS_INDEX;
+		return false;
+	}
+
+	focus = stand;
+	if (index == focus) {
+		setEntityMoving(index, false);
+		return true;
+	}
+
+	auto tryStep = [&](Cave::Entity::Direction dir) -> bool {
+		if (digger)
+			return tryMoveHiveDigger(index, dir);
+		return tryMoveHiveAdultStep(index, dir);
+	};
+
+	for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+		if (getIndex(index, dir) != focus) continue;
+		if (tryStep(dir))
+			return true;
+		// Seat occupied this tick — hold focus and wait (don't roam side-to-side).
+		setEntityMoving(index, false);
+		return true;
+	}
+
+	// Open path first; diggers may tunnel. Soft blocks → wait on the same seat.
+	{
+		const int cellCount = static_cast<int>(caveEntities.size());
+		Cave::Entity::Direction firstStep = Cave::Entity::Direction::NO_DIRECTION;
+		int dirtStepCell = OUT_OF_BOUNDS_INDEX;
+		bool pathExists = false;
+
+		auto runPath = [&](bool allowDirt) {
+			firstStep = Cave::Entity::Direction::NO_DIRECTION;
+			dirtStepCell = OUT_OF_BOUNDS_INDEX;
+			pathExists = false;
+			ensureEmptyPathScratch(cellCount);
+			beginEmptyPathGen();
+			const int g = m_emptyPathGen;
+			m_emptyPathVisit[static_cast<size_t>(index)] = g;
+			m_emptyPathQueue.push_back(index);
+
+			while (m_emptyPathQueueHead < m_emptyPathQueue.size()) {
+				const int current = m_emptyPathQueue[m_emptyPathQueueHead++];
+				for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+					const int next = getIndex(current, dir);
+					if (next == OUT_OF_BOUNDS_INDEX) continue;
+					if (m_emptyPathVisit[static_cast<size_t>(next)] == g) continue;
+					if (next != focus) {
+						const bool dirt = Cave::Entity::isDirtLike(getEntityType(next));
+						// Plan through other hive bodies so a crowded corridor still counts as a route;
+						// the actual step will wait if the cell is occupied.
+						const bool hiveBody = Cave::Entity::isHiveCreature(getEntityType(next));
+						if (!isMonsterWalkable(next) && !hiveBody && !(allowDirt && dirt)) {
+							if (dirt && dirtStepCell == OUT_OF_BOUNDS_INDEX)
+								dirtStepCell = next;
+							continue;
+						}
+						if (isHiveForeignBuildSite(index, next)) continue;
+						if (isHiveJobRestrictedRoom(next) && !isLivingRoom(next)) continue;
+					}
+					m_emptyPathVisit[static_cast<size_t>(next)] = g;
+					const Cave::Entity::Direction first = (current == index)
+						? dir
+						: m_emptyPathFirst[static_cast<size_t>(current)];
+					m_emptyPathFirst[static_cast<size_t>(next)] = first;
+					if (next == focus) {
+						firstStep = first;
+						pathExists = true;
+						m_emptyPathQueueHead = m_emptyPathQueue.size();
+						break;
+					}
+					m_emptyPathQueue.push_back(next);
+				}
+			}
+		};
+
+		runPath(false);
+		if (!pathExists && firstStep == Cave::Entity::Direction::NO_DIRECTION)
+			runPath(true);
+
+		if (firstStep != Cave::Entity::Direction::NO_DIRECTION) {
+			const int stepCell = getIndex(index, firstStep);
+			const bool stepDirt = inBounds(stepCell)
+				&& Cave::Entity::isDirtLike(getEntityType(stepCell));
+			if (stepDirt) {
+				requestHiveDigDirt(stepCell);
+				if (digger && tryStep(firstStep))
+					return true;
+				setEntityMoving(index, false);
+				return true;
+			}
+			if (tryStep(firstStep))
+				return true;
+			// First step crowded — wait on the same claimed seat.
+			setEntityMoving(index, false);
+			return true;
+		}
+
+		if (inBounds(dirtStepCell)) {
+			requestHiveDigDirt(dirtStepCell);
+			setEntityMoving(index, false);
+			return true;
+		}
+
+		// Truly unreachable seat — pick another next tick; don't wander sideways.
+		focus = OUT_OF_BOUNDS_INDEX;
+		setEntityMoving(index, false);
+		return true;
+	}
+}
+
+bool Cave::Map::isHiveBubbled(const int& cell) const {
+	if (!inBounds(cell) || cell >= static_cast<int>(m_cosmicOver.size())) return false;
+	if (m_cosmicOver[static_cast<size_t>(cell)].getType() != Cave::Entity::Type::HiveHunterBubble)
+		return false;
+	return Cave::Entity::isMonster(getEntityType(cell));
+}
+
+void Cave::Map::beginHiveBubble(const int& prey) {
+	if (!inBounds(prey)) return;
+	if (!Cave::Entity::isHiveHuntPrey(getEntityType(prey))) return;
+	if (isHiveBubbled(prey)) return;
+	ensureCosmicUnder();
+	m_cosmicOver[static_cast<size_t>(prey)] = Cave::Entity::HiveHunterBubble();
+	// Inert package: no crush / hazard targeting, slips fallables.
+	// Still destructible so explosions consume them like a boulder.
+	caveEntities[prey].removeTrait(Cave::Entity::Trait::Crushable);
+	caveEntities[prey].addTrait(Cave::Entity::Trait::Slippery);
+	// Keep any in-progress slide — clearing it snapped mid-tile and left a seam.
+	setEntityMoving(prey, false);
+}
+
+void Cave::Map::updateHiveHunterBubbleOverlays() {
+	ensureCosmicUnder();
+	using B = Cave::Entity::HiveHunterBubble;
+	for (int i = 0; i < width * height; ++i) {
+		Cave::Entity::Base& over = m_cosmicOver[static_cast<size_t>(i)];
+		if (over.getType() != Cave::Entity::Type::HiveHunterBubble) continue;
+		const int frame = over.getAnimation().currentFrame;
+		if (frame < B::FRAME_LAST)
+			over.setAnimationFrame(frame + 1);
+		// Hold last frame forever while the prey remains — never on a collector.
+		if (!Cave::Entity::isMonster(getEntityType(i))) {
+			over = Cave::Entity::Base();
+			continue;
+		}
+	}
+}
+
+void Cave::Map::transferHiveBubble(const int& from, const int& to, const Cave::Entity::Direction& direction) {
+	(void)direction;
+	ensureCosmicUnder();
+	if (!inBounds(from) || !inBounds(to)) return;
+	if (from >= static_cast<int>(m_cosmicOver.size()) || to >= static_cast<int>(m_cosmicOver.size()))
+		return;
+	if (m_cosmicOver[static_cast<size_t>(from)].getType() != Cave::Entity::Type::HiveHunterBubble)
+		return;
+
+	// Instant cell follow — slide is mirrored from the prey at draw time so the
+	// bubble stays locked to the monster (push / fall / walk).
+	const int holdFrame = m_cosmicOver[static_cast<size_t>(from)].getAnimation().currentFrame;
+	m_cosmicOver[static_cast<size_t>(to)] = std::move(m_cosmicOver[static_cast<size_t>(from)]);
+	m_cosmicOver[static_cast<size_t>(from)] = Cave::Entity::Base();
+	m_cosmicOver[static_cast<size_t>(to)].clearTransition();
+	m_cosmicOver[static_cast<size_t>(to)].setAnimationFrame(holdFrame);
+}
+
+int Cave::Map::pickRandomMaskedEmpty(const int& self, const std::vector<char>& mask) const {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (self < 0 || self >= cellCount || static_cast<int>(mask.size()) != cellCount)
+		return OUT_OF_BOUNDS_INDEX;
+
+	ensureEmptyPathScratch(cellCount);
+	beginEmptyPathGen();
+	const int gen = m_emptyPathGen;
+	m_emptyPathVisit[static_cast<size_t>(self)] = gen;
+	m_emptyPathQueue.push_back(self);
+
+	while (m_emptyPathQueueHead < m_emptyPathQueue.size()) {
+		const int current = m_emptyPathQueue[m_emptyPathQueueHead++];
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, dir);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (m_emptyPathVisit[static_cast<size_t>(next)] == gen) continue;
+			if (!isMonsterWalkable(next)) continue;
+			m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+			m_emptyPathQueue.push_back(next);
+			if (next != self && mask[static_cast<size_t>(next)])
+				m_emptyPathHits.push_back(next);
+		}
+	}
+
+	if (m_emptyPathHits.empty()) return OUT_OF_BOUNDS_INDEX;
+	return m_emptyPathHits[static_cast<size_t>(
+		Utils::randomInteger(0, static_cast<int>(m_emptyPathHits.size()) - 1))];
+}
+
+int Cave::Map::findNearestMaskedEmpty(const int& self, const std::vector<char>& mask) const {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (self < 0 || self >= cellCount || static_cast<int>(mask.size()) != cellCount)
+		return OUT_OF_BOUNDS_INDEX;
+	if (mask[static_cast<size_t>(self)] && isMonsterWalkable(self))
+		return self;
+
+	ensureEmptyPathScratch(cellCount);
+	beginEmptyPathGen();
+	const int gen = m_emptyPathGen;
+	m_emptyPathVisit[static_cast<size_t>(self)] = gen;
+	m_emptyPathQueue.push_back(self);
+
+	while (m_emptyPathQueueHead < m_emptyPathQueue.size()) {
+		const int current = m_emptyPathQueue[m_emptyPathQueueHead++];
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, dir);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (m_emptyPathVisit[static_cast<size_t>(next)] == gen) continue;
+			if (!isMonsterWalkable(next) && !(mask[static_cast<size_t>(next)] && next != self))
+				continue;
+			if (!isMonsterWalkable(next)) continue;
+			m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+			m_emptyPathQueue.push_back(next);
+			if (mask[static_cast<size_t>(next)])
+				return next;
+		}
+	}
+	return OUT_OF_BOUNDS_INDEX;
+}
+
+bool Cave::Map::isHiveJobRestrictedRoom(const int& cell) const {
+	// Living rooms are restricted for on-duty roam; overflow workers enter via tryHiveWorkerGoLive.
+	return isNurseryRoom(cell) || isMatriarchRoom(cell) || isStorageRoom(cell) || isLivingRoom(cell);
+}
+
+int Cave::Map::findNearestHiveAdultEmpty(const int& self) const {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (self < 0 || self >= cellCount) return OUT_OF_BOUNDS_INDEX;
+
+	ensureEmptyPathScratch(cellCount);
+	beginEmptyPathGen();
+	const int gen = m_emptyPathGen;
+	m_emptyPathVisit[static_cast<size_t>(self)] = gen;
+	m_emptyPathQueue.push_back(self);
+
+	while (m_emptyPathQueueHead < m_emptyPathQueue.size()) {
+		const int current = m_emptyPathQueue[m_emptyPathQueueHead++];
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, dir);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (m_emptyPathVisit[static_cast<size_t>(next)] == gen) continue;
+			if (!isMonsterWalkable(next)) continue;
+			m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+			m_emptyPathQueue.push_back(next);
+			if (next != self && !isHiveJobRestrictedRoom(next)
+				&& findHiveActiveBuildSiteAt(next) == OUT_OF_BOUNDS_INDEX)
+				return next;
+		}
+	}
+	return OUT_OF_BOUNDS_INDEX;
+}
+
+int Cave::Map::pickRandomHiveAdultEmpty(const int& self) const {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (self < 0 || self >= cellCount) return OUT_OF_BOUNDS_INDEX;
+
+	ensureEmptyPathScratch(cellCount);
+	beginEmptyPathGen();
+	const int gen = m_emptyPathGen;
+	m_emptyPathVisit[static_cast<size_t>(self)] = gen;
+	m_emptyPathQueue.push_back(self);
+
+	while (m_emptyPathQueueHead < m_emptyPathQueue.size()) {
+		const int current = m_emptyPathQueue[m_emptyPathQueueHead++];
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, dir);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (m_emptyPathVisit[static_cast<size_t>(next)] == gen) continue;
+			if (!isMonsterWalkable(next)) continue;
+			m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+			m_emptyPathQueue.push_back(next);
+			if (next != self && !isHiveJobRestrictedRoom(next)
+				&& findHiveActiveBuildSiteAt(next) == OUT_OF_BOUNDS_INDEX)
+				m_emptyPathHits.push_back(next);
+		}
+	}
+
+	if (m_emptyPathHits.empty())
+		return findNearestHiveAdultEmpty(self);
+	return m_emptyPathHits[static_cast<size_t>(
+		Utils::randomInteger(0, static_cast<int>(m_emptyPathHits.size()) - 1))];
+}
+
+bool Cave::Map::tryMoveHiveAdultStep(const int& index, const Cave::Entity::Direction& dir) {
+	using C = Cave::Entity::HiveCollector;
+	using S = Cave::Entity::HiveServant;
+	const int dest = getIndex(index, dir);
+	if (inBounds(dest) && isHiveForeignBuildSite(index, dest))
+		return false;
+	const Cave::Entity::Type t = getEntityType(index);
+	if (t == Cave::Entity::Type::HiveCollector && C::isCarrying(caveEntities[index]))
+		return tryMoveHiveCollector(index, dir);
+	if (t == Cave::Entity::Type::HiveServant && S::isCarrying(caveEntities[index]))
+		return tryMoveHiveServant(index, dir);
+	return tryMoveEnemy(index, Cave::Entity::Trait::Empty, dir);
+}
+
+int Cave::Map::findHiveActiveBuildSiteAt(const int& cell) const {
+	if (!inBounds(cell) || cell >= static_cast<int>(m_hiveActiveBuildSiteOfCell.size()))
+		return OUT_OF_BOUNDS_INDEX;
+	return m_hiveActiveBuildSiteOfCell[static_cast<size_t>(cell)];
+}
+
+bool Cave::Map::isHiveBuildSiteClaimed(const int& origin, int exceptBuilder) const {
+	using B = Cave::Entity::HiveBuilder;
+	if (!inBounds(origin)) return false;
+	const int cellCount = static_cast<int>(caveEntities.size());
+	for (int i = 0; i < cellCount; ++i) {
+		if (i == exceptBuilder) continue;
+		if (getEntityType(i) != Cave::Entity::Type::HiveBuilder) continue;
+		if (!B::isBuilding(caveEntities[i]) && !B::isDepositingDebris(caveEntities[i])
+			&& B::mode(caveEntities[i]) != B::MODE_GATHER)
+			continue;
+		if (caveEntities[i].homeIndex == origin)
+			return true;
+	}
+	return false;
+}
+
+bool Cave::Map::isHiveBuilderJobTaken(int exceptBuilder) const {
+	using B = Cave::Entity::HiveBuilder;
+	const int cellCount = static_cast<int>(caveEntities.size());
+	for (int i = 0; i < cellCount; ++i) {
+		if (i == exceptBuilder) continue;
+		if (getEntityType(i) != Cave::Entity::Type::HiveBuilder) continue;
+		if (B::isBuilding(caveEntities[i]) || B::isDepositingDebris(caveEntities[i])
+			|| B::mode(caveEntities[i]) == B::MODE_GATHER)
+			return true;
+	}
+	return false;
+}
+
+bool Cave::Map::isHiveForeignBuildSite(const int& self, const int& cell) const {
+	using B = Cave::Entity::HiveBuilder;
+	const int site = findHiveActiveBuildSiteAt(cell);
+	if (!inBounds(site)) return false;
+	const Cave::Entity::Type t = getEntityType(self);
+	if (t == Cave::Entity::Type::HiveDigger) return false;
+	if (t == Cave::Entity::Type::HiveBuilder && caveEntities[self].homeIndex == site)
+		return false;
+	// Already inside a claimed footprint — allow stepping through it to evacuate.
+	// (Blocking these steps froze members on empty cells inside the site.)
+	if (inBounds(self) && inBounds(findHiveActiveBuildSiteAt(self)))
+		return false;
+	return true;
+}
+
+bool Cave::Map::shouldEvacuateHiveBuildSite(const int& index) const {
+	return isHiveForeignBuildSite(index, index);
+}
+
+int Cave::Map::findNearestHiveBuildSiteExit(const int& self) const {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (self < 0 || self >= cellCount) return OUT_OF_BOUNDS_INDEX;
+
+	ensureEmptyPathScratch(cellCount);
+	beginEmptyPathGen();
+	const int gen = m_emptyPathGen;
+	m_emptyPathVisit[static_cast<size_t>(self)] = gen;
+	m_emptyPathQueue.push_back(self);
+
+	while (m_emptyPathQueueHead < m_emptyPathQueue.size()) {
+		const int current = m_emptyPathQueue[m_emptyPathQueueHead++];
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, dir);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (m_emptyPathVisit[static_cast<size_t>(next)] == gen) continue;
+			if (!isMonsterWalkable(next)) continue;
+			m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+			m_emptyPathQueue.push_back(next);
+			if (next != self
+				&& findHiveActiveBuildSiteAt(next) == OUT_OF_BOUNDS_INDEX
+				&& !isHiveJobRestrictedRoom(next))
+				return next;
+		}
+	}
+	return OUT_OF_BOUNDS_INDEX;
+}
+
+bool Cave::Map::tryHiveEvacuateBuildSite(const int& index) {
+	if (!shouldEvacuateHiveBuildSite(index)) return false;
+	if (getEntityTransitioning(index)) return false;
+
+	int& goal = caveEntities[index].targetIndex;
+	caveEntities[index].extra = 0;
+	if (!inBounds(goal)
+		|| findHiveActiveBuildSiteAt(goal) != OUT_OF_BOUNDS_INDEX
+		|| isHiveJobRestrictedRoom(goal)
+		|| !isMonsterWalkable(goal))
+		goal = findNearestHiveBuildSiteExit(index);
+
+	auto stuckOrWait = [&]() -> bool {
+		// Failed exit — keep counting solid-seal stuck instead of resetting forever.
+		if (hiveAdvanceStuck(index)) return true;
+		setEntityMoving(index, false);
+		return true;
+	};
+
+	auto afterEvacStep = [&](int from, Cave::Entity::Direction dir) {
+		const int dest = getIndex(from, dir);
+		if (!inBounds(dest) || !Cave::Entity::isHiveCreature(getEntityType(dest)))
+			return;
+		hiveClearStuck(dest);
+		// Drop evacuate goal once outside so normal job AI resumes cleanly.
+		if (findHiveActiveBuildSiteAt(dest) == OUT_OF_BOUNDS_INDEX) {
+			caveEntities[dest].targetIndex = OUT_OF_BOUNDS_INDEX;
+			caveEntities[dest].extra = 0;
+		}
+	};
+
+	if (!inBounds(goal))
+		return stuckOrWait();
+
+	for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+		if (getIndex(index, dir) != goal) continue;
+		if (tryMoveHiveAdultStep(index, dir)) {
+			afterEvacStep(index, dir);
+			return true;
+		}
+		return stuckOrWait();
+	}
+	const Cave::Entity::Direction step = findPathThroughEmpty(index, goal, false);
+	if (step != Cave::Entity::Direction::NO_DIRECTION
+		&& tryMoveHiveAdultStep(index, step)) {
+		afterEvacStep(index, step);
+		return true;
+	}
+	return stuckOrWait();
+}
+
+void Cave::Map::hiveClearStuck(const int& index) {
+	if (inBounds(index))
+		caveEntities[index].stuckTicks = 0;
+}
+
+bool Cave::Map::hiveEnclosedBySolids(const int& index, bool allowDirtTraverse) const {
+	if (!inBounds(index)) return false;
+
+	const int cellCount = static_cast<int>(caveEntities.size());
+	ensureEmptyPathScratch(cellCount);
+	beginEmptyPathGen();
+	const int gen = m_emptyPathGen;
+	m_emptyPathVisit[static_cast<size_t>(index)] = gen;
+	m_emptyPathQueue.push_back(index);
+
+	auto isOccupantOnly = [this](int cell) {
+		const Cave::Entity::Type t = getEntityType(cell);
+		if (Cave::Entity::isMonster(t)) return true;
+		if (Cave::Entity::isHuntTarget(t)) return true;
+		if (t == Cave::Entity::Type::HiveTurn) return true;
+		return false;
+	};
+
+	while (m_emptyPathQueueHead < m_emptyPathQueue.size()) {
+		const int current = m_emptyPathQueue[m_emptyPathQueueHead++];
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, dir);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (m_emptyPathVisit[static_cast<size_t>(next)] == gen) continue;
+			m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+
+			if (isMonsterWalkable(next))
+				return false; // open space exists if occupants clear
+
+			if (isOccupantOnly(next)) {
+				m_emptyPathQueue.push_back(next);
+				continue;
+			}
+			if (allowDirtTraverse && Cave::Entity::isDirtLike(getEntityType(next))) {
+				m_emptyPathQueue.push_back(next);
+				continue;
+			}
+			// Wall, boulder, ore, diamond, etc. — solid enclosure.
+		}
+	}
+	return true;
+}
+
+bool Cave::Map::hiveAdvanceStuck(const int& index) {
+	if (!inBounds(index)) return false;
+	if (!Cave::Entity::isHiveCreature(getEntityType(index))) return false;
+
+	// Crowded by other monsters / Jim does not count — only solid object traps.
+	const bool digger = getEntityType(index) == Cave::Entity::Type::HiveDigger;
+	if (!hiveEnclosedBySolids(index, digger)) {
+		caveEntities[index].stuckTicks = 0;
+		setEntityMoving(index, false);
+		return false;
+	}
+
+	if (++caveEntities[index].stuckTicks < Cave::Entity::HIVE_STUCK_EXPLODE_TICKS) {
+		setEntityMoving(index, false);
+		return false;
+	}
+	createExplosion(index);
+	return true;
+}
+
+bool Cave::Map::hiveDiggerFullySealed(const int& index) const {
+	return hiveEnclosedBySolids(index, true);
+}
+
+int Cave::Map::findHiveDiggerEscapeDigCell(const int& from) const {
+	if (!inBounds(from)) return OUT_OF_BOUNDS_INDEX;
+
+	// Already has an empty step — no escape dig needed.
+	for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+		const int next = getIndex(from, dir);
+		if (inBounds(next) && isMonsterWalkable(next))
+			return OUT_OF_BOUNDS_INDEX;
+	}
+
+	const int cellCount = static_cast<int>(caveEntities.size());
+	ensureEmptyPathScratch(cellCount);
+	beginEmptyPathGen();
+	const int gen = m_emptyPathGen;
+	m_emptyPathVisit[static_cast<size_t>(from)] = gen;
+	m_emptyPathParent[static_cast<size_t>(from)] = OUT_OF_BOUNDS_INDEX;
+	m_emptyPathQueue.push_back(from);
+
+	int reached = OUT_OF_BOUNDS_INDEX;
+
+	while (m_emptyPathQueueHead < m_emptyPathQueue.size()) {
+		const int current = m_emptyPathQueue[m_emptyPathQueueHead++];
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, dir);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (m_emptyPathVisit[static_cast<size_t>(next)] == gen) continue;
+
+			const bool dirt = Cave::Entity::isDirtLike(getEntityType(next));
+			const bool open = isMonsterWalkable(next);
+			if (!dirt && !open) continue;
+
+			m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+			m_emptyPathParent[static_cast<size_t>(next)] = current;
+			if (open) {
+				reached = next;
+				m_emptyPathQueueHead = m_emptyPathQueue.size();
+				break;
+			}
+			m_emptyPathQueue.push_back(next);
+		}
+	}
+	if (!inBounds(reached)) return OUT_OF_BOUNDS_INDEX;
+
+	int cell = reached;
+	int firstDirt = OUT_OF_BOUNDS_INDEX;
+	while (inBounds(cell) && cell != from) {
+		if (Cave::Entity::isDirtLike(getEntityType(cell)))
+			firstDirt = cell;
+		cell = m_emptyPathParent[static_cast<size_t>(cell)];
+	}
+	return firstDirt;
+}
+
+void Cave::Map::wanderHiveAdult(const int& index, int holdTicks) {
+	int& goal = caveEntities[index].targetIndex;
+	int& hold = caveEntities[index].extra;
+
+	// Leave claimed build footprints so diggers/builders aren't blocked.
+	if (tryHiveEvacuateBuildSite(index))
+		return;
+
+	// Overflow workers already in a living room must stay — never wander them out.
+	if (isLivingRoom(index) && hiveWorkerShouldParkInLiving(index)) {
+		goal = index;
+		hold = 0;
+		setEntityMoving(index, false);
+		return;
+	}
+
+	// Leave restricted rooms immediately (don't hold inside nursery/storage/matriarch).
+	if (isHiveJobRestrictedRoom(index)) {
+		hold = 0;
+		if (!inBounds(goal) || isHiveJobRestrictedRoom(goal) || !isMonsterWalkable(goal)
+			|| findHiveActiveBuildSiteAt(goal) != OUT_OF_BOUNDS_INDEX)
+			goal = findNearestHiveAdultEmpty(index);
+		if (!inBounds(goal)) {
+			if (hiveAdvanceStuck(index)) return;
+			setEntityMoving(index, false);
+			return;
+		}
+		const Cave::Entity::Direction dir = findPathThroughEmpty(index, goal, false);
+		if (dir != Cave::Entity::Direction::NO_DIRECTION
+			&& tryMoveHiveAdultStep(index, dir)) {
+			hiveClearStuck(index);
+			return;
+		}
+		// Unreachable exit — drop the goal so we repath / explode if sealed.
+		goal = OUT_OF_BOUNDS_INDEX;
+		if (hiveAdvanceStuck(index)) return;
+		setEntityMoving(index, false);
+		return;
+	}
+
+	if (hold > 0) {
+		hold--;
+		// Pausing must not wipe a solid-seal stuck timer (boulder/wall cage mid-hold).
+		const bool digger = getEntityType(index) == Cave::Entity::Type::HiveDigger;
+		if (hiveEnclosedBySolids(index, digger)) {
+			if (hiveAdvanceStuck(index)) return;
+		}
+		else {
+			hiveClearStuck(index);
+		}
+		setEntityMoving(index, false);
+		return;
+	}
+
+	if (index == goal) {
+		hold = holdTicks;
+		goal = OUT_OF_BOUNDS_INDEX;
+		hiveClearStuck(index);
+		setEntityMoving(index, false);
+		return;
+	}
+
+	if (inBounds(goal) && (!isMonsterWalkable(goal) || isHiveJobRestrictedRoom(goal)
+		|| findHiveActiveBuildSiteAt(goal) != OUT_OF_BOUNDS_INDEX)) {
+		hold = 0;
+		goal = OUT_OF_BOUNDS_INDEX;
+		setEntityMoving(index, false);
+		return;
+	}
+
+	if (!inBounds(goal)) {
+		goal = pickRandomHiveAdultEmpty(index);
+		if (!inBounds(goal)) {
+			if (hiveAdvanceStuck(index)) return;
+			setEntityMoving(index, false);
+			return;
+		}
+	}
+
+	const Cave::Entity::Direction dir = findPathThroughEmpty(index, goal, false);
+	if (dir == Cave::Entity::Direction::NO_DIRECTION) {
+		// Was freezing forever on unreachable roam goals — clear and repath next tick.
+		goal = OUT_OF_BOUNDS_INDEX;
+		if (hiveAdvanceStuck(index)) return;
+		setEntityMoving(index, false);
+		return;
+	}
+
+	if (tryMoveHiveAdultStep(index, dir)) {
+		hiveClearStuck(index);
+		return;
+	}
+
+	goal = OUT_OF_BOUNDS_INDEX;
+	if (hiveAdvanceStuck(index)) return;
+	setEntityMoving(index, false);
+}
+
+void Cave::Map::wanderTowardHiveRoom(const int& index, const std::vector<char>& mask, int holdTicks) {
+	int& goal = caveEntities[index].targetIndex;
+	int& hold = caveEntities[index].extra;
+
+	const bool hasRoom = !mask.empty()
+		&& std::find(mask.begin(), mask.end(), 1) != mask.end();
+	if (!hasRoom) {
+		wanderHiveAdult(index, holdTicks);
+		return;
+	}
+
+	const bool inRoom = index < static_cast<int>(mask.size()) && mask[static_cast<size_t>(index)] != 0;
+
+	// Hold/wait is only for in-room roaming. Clear any leftover pause while pathing in.
+	if (!inRoom && hold > 0)
+		hold = 0;
+
+	if (hold > 0) {
+		hold--;
+		const bool digger = getEntityType(index) == Cave::Entity::Type::HiveDigger;
+		if (hiveEnclosedBySolids(index, digger)) {
+			if (hiveAdvanceStuck(index)) return;
+		}
+		else {
+			hiveClearStuck(index);
+		}
+		setEntityMoving(index, false);
+		return;
+	}
+
+	if (inRoom && index == goal) {
+		hold = holdTicks;
+		goal = OUT_OF_BOUNDS_INDEX;
+		hiveClearStuck(index);
+		setEntityMoving(index, false);
+		return;
+	}
+
+	if (inBounds(goal) && !isMonsterWalkable(goal)) {
+		// In-room: pause then pick a new wander point. En route: repath immediately.
+		if (inRoom)
+			hold = holdTicks;
+		goal = OUT_OF_BOUNDS_INDEX;
+		setEntityMoving(index, false);
+		return;
+	}
+
+	if (!inBounds(goal)) {
+		if (inRoom)
+			goal = pickRandomMaskedEmpty(index, mask);
+		else
+			goal = findNearestMaskedEmpty(index, mask);
+		if (!inBounds(goal)) {
+			// Room exists but is unreachable — free-roam instead of stalling.
+			if (!inRoom) {
+				wanderHiveAdult(index, holdTicks);
+				return;
+			}
+			if (hiveAdvanceStuck(index)) return;
+			setEntityMoving(index, false);
+			return;
+		}
+	}
+
+	const Cave::Entity::Direction dir = findPathThroughEmpty(index, goal, false);
+	if (dir == Cave::Entity::Direction::NO_DIRECTION) {
+		// Unreachable — drop goal (was freezing forever while approaching rooms).
+		goal = OUT_OF_BOUNDS_INDEX;
+		if (!inRoom) {
+			wanderHiveAdult(index, holdTicks);
+			return;
+		}
+		if (hiveAdvanceStuck(index)) return;
+		setEntityMoving(index, false);
+		return;
+	}
+
+	if (tryMoveHiveAdultStep(index, dir)) {
+		hiveClearStuck(index);
+		return;
+	}
+
+	goal = OUT_OF_BOUNDS_INDEX;
+	if (hiveAdvanceStuck(index)) return;
+	setEntityMoving(index, false);
+}
+
+bool Cave::Map::isHiveMatriarchBirthDeposit(const int& cell) const {
+	if (!inBounds(cell)) return false;
+	// Interior hollow.
+	if (isMatriarchRoom(cell)) return true;
+	// Top doorway directly above the hollow — used when the room is packed and she
+	// climbs one tile up out of the doorway to birth back into it.
+	const int under = getIndex(cell, Cave::Entity::Direction::DOWN);
+	return isMatriarchRoom(under);
+}
+
+bool Cave::Map::isHiveMatriarchBirthStand(const int& stand) const {
+	if (!inBounds(stand)) return false;
+	const bool here = isMonsterWalkable(stand)
+		|| getEntityType(stand) == Cave::Entity::Type::HiveMatriarch;
+	if (!here) return false;
+	const int below = getIndex(stand, Cave::Entity::Direction::DOWN);
+	if (!inBounds(below) || !isHiveMatriarchBirthDeposit(below)) return false;
+	if (getEntityTransitioning(below)) return false;
+	// Empty deposit cell ready for the larva.
+	if (hasTrait(Cave::Entity::Trait::Empty, below)) return true;
+	// Matriarch is parked on the only free birth cell — stand above still counts
+	// so she can step up (even out of the room) and birth downward next tick.
+	return getEntityType(below) == Cave::Entity::Type::HiveMatriarch;
+}
+
+int Cave::Map::findNearestHiveMatriarchBirthStand(const int& from) const {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (from < 0 || from >= cellCount) return OUT_OF_BOUNDS_INDEX;
+
+	if (isHiveMatriarchBirthStand(from))
+		return from;
+
+	ensureEmptyPathScratch(cellCount);
+	beginEmptyPathGen();
+	const int gen = m_emptyPathGen;
+	m_emptyPathVisit[static_cast<size_t>(from)] = gen;
+	m_emptyPathQueue.push_back(from);
+
+	while (m_emptyPathQueueHead < m_emptyPathQueue.size()) {
+		const int current = m_emptyPathQueue[m_emptyPathQueueHead++];
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, dir);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (m_emptyPathVisit[static_cast<size_t>(next)] == gen) continue;
+			m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+			// Stand may sit above/outside the room; the birth cell below must be inside.
+			if (isHiveMatriarchBirthStand(next))
+				return next;
+			if (!isMonsterWalkable(next)) continue;
+			m_emptyPathQueue.push_back(next);
+		}
+	}
+	return OUT_OF_BOUNDS_INDEX;
+}
+
+bool Cave::Map::tryHiveMatriarchBirth(const int& index, bool requireFed) {
+	using M = Cave::Entity::HiveMatriarch;
+	if (getEntityType(index) != Cave::Entity::Type::HiveMatriarch) return false;
+	if (getEntityTransitioning(index)) return false;
+	if (requireFed && !M::isFed(caveEntities[index])) return false;
+	if (caveEntities[index].dutyTicks > 0) return false;
+	if (!isHiveMatriarchBirthStand(index)) return false;
+
+	const int below = getIndex(index, Cave::Entity::Direction::DOWN);
+	Cave::Entity::HiveLarva child;
+	Cave::Entity::Animation babyAnim = child.getAnimation();
+	Cave::Entity::Animation spaceAnim = Cave::Entity::Space().getAnimation();
+	setEntity(below, std::move(child));
+	caveEntities[below].applyIntoTransition(Cave::Entity::Direction::DOWN, spaceAnim);
+	// Larva away-layer slides out under/from the matriarch into the cell below.
+	caveEntities[index].applyAwayTransition(Cave::Entity::Direction::DOWN, babyAnim);
+	caveEntities[index].dutyTicks = M::BIRTH_COOLDOWN;
+	// Seed births for missing jobs stay hungry; meal births return to hungry after.
+	M::setHungry(caveEntities[index]);
+	return true;
+}
+
+bool Cave::Map::tryHiveMatriarchSeedBirth(const int& index) {
+	using M = Cave::Entity::HiveMatriarch;
+	if (getEntityType(index) != Cave::Entity::Type::HiveMatriarch) return false;
+	if (getEntityTransitioning(index)) return false;
+	if (caveEntities[index].dutyTicks > 0) return false;
+	if (!hiveMatriarchShouldSeedBirth()) return false;
+
+	// Prefer the normal birth stand when a matriarch room is available.
+	if (isHiveMatriarchBirthStand(index))
+		return tryHiveMatriarchBirth(index, false);
+
+	// Always birth downward only — larva slides out under her.
+	const int below = getIndex(index, Cave::Entity::Direction::DOWN);
+	if (!inBounds(below) || getEntityTransitioning(below)) return false;
+	if (!hasTrait(Cave::Entity::Trait::Empty, below)) return false;
+
+	Cave::Entity::HiveLarva child;
+	Cave::Entity::Animation babyAnim = child.getAnimation();
+	Cave::Entity::Animation spaceAnim = Cave::Entity::Space().getAnimation();
+	setEntity(below, std::move(child));
+	caveEntities[below].applyIntoTransition(Cave::Entity::Direction::DOWN, spaceAnim);
+	caveEntities[index].applyAwayTransition(Cave::Entity::Direction::DOWN, babyAnim);
+	caveEntities[index].dutyTicks = M::BIRTH_COOLDOWN;
+	M::setHungry(caveEntities[index]);
+	return true;
+}
+
+int Cave::Map::findNearestHiveMatriarchMeal(const int& from) const {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (from < 0 || from >= cellCount) return OUT_OF_BOUNDS_INDEX;
+
+	ensureEmptyPathScratch(cellCount);
+	beginEmptyPathGen();
+	const int gen = m_emptyPathGen;
+	m_emptyPathVisit[static_cast<size_t>(from)] = gen;
+	m_emptyPathQueue.push_back(from);
+
+	while (m_emptyPathQueueHead < m_emptyPathQueue.size()) {
+		const int current = m_emptyPathQueue[m_emptyPathQueueHead++];
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, dir);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (m_emptyPathVisit[static_cast<size_t>(next)] == gen) continue;
+			m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+
+			if (isHiveBubbled(next) && isMatriarchRoom(next))
+				return next;
+
+			if (!isMonsterWalkable(next) && next != from) continue;
+			m_emptyPathQueue.push_back(next);
+		}
+	}
+	return OUT_OF_BOUNDS_INDEX;
+}
+
+bool Cave::Map::tryHiveMatriarchEat(const int& matriarch, const Cave::Entity::Direction& dir) {
+	using M = Cave::Entity::HiveMatriarch;
+	if (dir == Cave::Entity::Direction::NO_DIRECTION) return false;
+	if (!inBounds(matriarch)) return false;
+	if (getEntityType(matriarch) != Cave::Entity::Type::HiveMatriarch) return false;
+	if (M::isFed(caveEntities[matriarch])) return false;
+	if (getEntityTransitioning(matriarch)) return false;
+	if (!isMatriarchRoom(matriarch)) return false;
+
+	const int item = getIndex(matriarch, dir);
+	if (!isHiveBubbled(item) || !isMatriarchRoom(item) || getEntityTransitioning(item))
+		return false;
+
+	const Cave::Entity::Type preyType = getEntityType(item);
+	const int preyLook = (preyType == Cave::Entity::Type::Genom
+		&& Cave::Entity::Genom::hasLook(caveEntities[item]))
+		? caveEntities[item].spawnCredit
+		: 0;
+
+	// Strip the cosmic shell before the step — TileRenderer draws it on the prey wedge
+	// during into so the matriarch slides over it like a collector eat.
+	if (item < static_cast<int>(m_cosmicOver.size()))
+		m_cosmicOver[static_cast<size_t>(item)] = Cave::Entity::Base();
+
+	if (!moveEntity(matriarch, dir)) return false;
+	M::setEatingBubbled(caveEntities[item]);
+	// Stash Genom look for layered prey+bubble during the eat into-slide.
+	caveEntities[item].homeIndex = preyLook != 0 ? preyLook : -1;
+	caveEntities[item].targetIndex = OUT_OF_BOUNDS_INDEX;
+	m_game->soundManager.play(Sound::Effect::Drop);
+	return true;
+}
+
+void Cave::Map::updateHiveMatriarch(const int& index) {
+	using M = Cave::Entity::HiveMatriarch;
+	if (caveEntities[index].dutyTicks > 0)
+		caveEntities[index].dutyTicks--;
+
+	if (handleEnemyBasicUpdate(index)) return;
+
+	// Finish bubbled-eat once the into-slide ends, then wait before birth.
+	if (M::isEatingBubbled(caveEntities[index]) && !getEntityTransitioning(index)) {
+		M::setFed(caveEntities[index]);
+		caveEntities[index].dutyTicks = M::BIRTH_COOLDOWN;
+		caveEntities[index].homeIndex = -1;
+	}
+
+	if (M::isEatingBubbled(caveEntities[index])) {
+		setEntityMoving(index, false);
+		return;
+	}
+
+	// Sidestep falling / about-to-fall objects before eat / birth / roam.
+	if (tryHiveMatriarchDodgeFallable(index)) {
+		hiveClearStuck(index);
+		return;
+	}
+
+	const bool seeding = hiveMatriarchShouldSeedBirth();
+	const bool hasRoom = hiveMatriarchRoomExists();
+
+	auto tryClimbForDownwardBirth = [&]() -> bool {
+		const int up = getIndex(index, Cave::Entity::Direction::UP);
+		if (!inBounds(up) || !isMonsterWalkable(up) || getEntityTransitioning(up))
+			return false;
+		if (!tryMoveEnemy(index, Cave::Entity::Trait::Empty, Cave::Entity::Direction::UP))
+			return false;
+		hiveClearStuck(index);
+		return true;
+	};
+
+	// Free seed births for missing jobs work anywhere — always downward.
+	if (seeding && caveEntities[index].dutyTicks <= 0) {
+		if (tryHiveMatriarchSeedBirth(index)) {
+			hiveClearStuck(index);
+			return;
+		}
+
+		// No empty cell under her — climb one up so next tick can birth into the vacated cell.
+		const int below = getIndex(index, Cave::Entity::Direction::DOWN);
+		const bool belowFree = inBounds(below) && !getEntityTransitioning(below)
+			&& hasTrait(Cave::Entity::Trait::Empty, below);
+		if (!belowFree && tryClimbForDownwardBirth())
+			return;
+
+		if (hasRoom) {
+			if (isHiveMatriarchBirthDeposit(index) && tryClimbForDownwardBirth())
+				return;
+			const int stand = findNearestHiveMatriarchBirthStand(index);
+			if (inBounds(stand) && stand != index) {
+				if (getIndex(index, Cave::Entity::Direction::UP) == stand
+					&& !getEntityTransitioning(stand)
+					&& tryMoveEnemy(index, Cave::Entity::Trait::Empty, Cave::Entity::Direction::UP)) {
+					hiveClearStuck(index);
+					return;
+				}
+				const Cave::Entity::Direction step = findPathThroughEmpty(index, stand, false);
+				if (step != Cave::Entity::Direction::NO_DIRECTION
+					&& tryMoveEnemy(index, Cave::Entity::Trait::Empty, step)) {
+					hiveClearStuck(index);
+					return;
+				}
+			}
+		}
+
+		wanderTowardHiveRoom(index, m_matriarchRoom, M::HOLD_TICKS);
+		return;
+	}
+
+	// Regular eat + birth only when every job is filled, and only inside a matriarch room.
+	if (!seeding && hasRoom) {
+		if (!M::isFed(caveEntities[index])) {
+			const int meal = findNearestHiveMatriarchMeal(index);
+			if (inBounds(meal)) {
+				for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+					if (getIndex(index, dir) != meal) continue;
+					if (tryHiveMatriarchEat(index, dir)) {
+						hiveClearStuck(index);
+						return;
+					}
+					if (hiveAdvanceStuck(index)) return;
+					setEntityMoving(index, false);
+					return;
+				}
+				const Cave::Entity::Direction step = findPathThroughEmpty(index, meal, false);
+				if (step != Cave::Entity::Direction::NO_DIRECTION
+					&& tryMoveEnemy(index, Cave::Entity::Trait::Empty, step)) {
+					hiveClearStuck(index);
+					return;
+				}
+				if (hiveAdvanceStuck(index)) return;
+				setEntityMoving(index, false);
+				return;
+			}
+		}
+		else if (caveEntities[index].dutyTicks <= 0) {
+			if (tryHiveMatriarchBirth(index, true)) {
+				hiveClearStuck(index);
+				return;
+			}
+
+			// Always birth downward: climb above the deposit (or any blocked cell) first.
+			{
+				const int below = getIndex(index, Cave::Entity::Direction::DOWN);
+				const bool belowFree = inBounds(below) && !getEntityTransitioning(below)
+					&& hasTrait(Cave::Entity::Trait::Empty, below);
+				if ((isHiveMatriarchBirthDeposit(index) || !belowFree)
+					&& tryClimbForDownwardBirth())
+					return;
+			}
+
+			const int stand = findNearestHiveMatriarchBirthStand(index);
+			if (inBounds(stand) && stand != index) {
+				if (getIndex(index, Cave::Entity::Direction::UP) == stand
+					&& !getEntityTransitioning(stand)
+					&& tryMoveEnemy(index, Cave::Entity::Trait::Empty, Cave::Entity::Direction::UP)) {
+					hiveClearStuck(index);
+					return;
+				}
+				const Cave::Entity::Direction step = findPathThroughEmpty(index, stand, false);
+				if (step != Cave::Entity::Direction::NO_DIRECTION
+					&& tryMoveEnemy(index, Cave::Entity::Trait::Empty, step)) {
+					hiveClearStuck(index);
+					return;
+				}
+			}
+
+			if (hiveAdvanceStuck(index)) return;
+			setEntityMoving(index, false);
+			return;
+		}
+	}
+
+	// No matriarch room (or nothing to do): roam the cave.
+	wanderTowardHiveRoom(index, m_matriarchRoom, M::HOLD_TICKS);
+}
+
+bool Cave::Map::hiveNurseryExists() const {
+	return m_hiveHasNursery;
+}
+
+bool Cave::Map::hiveMatriarchRoomExists() const {
+	return m_hiveHasMatriarchRoom;
+}
+
+void Cave::Map::ensureHiveCensus() const {
+	if (m_hiveCensusValid) return;
+	m_hiveMissingJobsCached = countHiveMissingJobs();
+	m_hiveLarvaCountCached = countHiveLarvae();
+	m_hiveCensusValid = true;
+}
+
+int Cave::Map::countHiveMissingJobs() const {
+	using T = Cave::Entity::HiveTurn;
+	static constexpr Cave::Entity::Type JOBS[] = {
+		Cave::Entity::Type::HiveServant,
+		Cave::Entity::Type::HiveCollector,
+		Cave::Entity::Type::HiveHunter,
+		Cave::Entity::Type::HiveBuilder,
+		Cave::Entity::Type::HiveGuard,
+		Cave::Entity::Type::HiveDigger,
+	};
+	static constexpr int JOB_COUNT = 6;
+
+	int counts[JOB_COUNT] = {};
+	const int cellCount = static_cast<int>(caveEntities.size());
+	for (int i = 0; i < cellCount; ++i) {
+		const Cave::Entity::Type t = getEntityType(i);
+		Cave::Entity::Type job = Cave::Entity::Type::NoType;
+		if (t == Cave::Entity::Type::HiveTurn)
+			job = T::resultJob(caveEntities[i]);
+		else {
+			for (int j = 0; j < JOB_COUNT; ++j) {
+				if (JOBS[j] == t) {
+					job = t;
+					break;
+				}
+			}
+		}
+		if (job == Cave::Entity::Type::NoType) continue;
+		for (int j = 0; j < JOB_COUNT; ++j) {
+			if (JOBS[j] == job) {
+				++counts[j];
+				break;
+			}
+		}
+	}
+
+	int missing = 0;
+	for (int j = 0; j < JOB_COUNT; ++j) {
+		if (counts[j] == 0)
+			++missing;
+	}
+	return missing;
+}
+
+int Cave::Map::countHiveLarvae() const {
+	int n = 0;
+	const int cellCount = static_cast<int>(caveEntities.size());
+	for (int i = 0; i < cellCount; ++i) {
+		if (getEntityType(i) == Cave::Entity::Type::HiveLarva)
+			++n;
+	}
+	return n;
+}
+
+bool Cave::Map::hiveMatriarchShouldSeedBirth() const {
+	ensureHiveCensus();
+	return m_hiveMissingJobsCached > m_hiveLarvaCountCached;
+}
+
+Cave::Entity::Type Cave::Map::pickHiveLarvaJob() const {
+	using T = Cave::Entity::HiveTurn;
+	static constexpr Cave::Entity::Type JOBS[] = {
+		Cave::Entity::Type::HiveServant,
+		Cave::Entity::Type::HiveCollector,
+		Cave::Entity::Type::HiveHunter,
+		Cave::Entity::Type::HiveBuilder,
+		Cave::Entity::Type::HiveGuard,
+		Cave::Entity::Type::HiveDigger,
+	};
+	static constexpr int JOB_COUNT = 6;
+
+	auto jobIndex = [](Cave::Entity::Type job) -> int {
+		for (int j = 0; j < JOB_COUNT; ++j) {
+			if (JOBS[j] == job) return j;
+		}
+		return -1;
+	};
+
+	int counts[JOB_COUNT] = {};
+	const int cellCount = static_cast<int>(caveEntities.size());
+	for (int i = 0; i < cellCount; ++i) {
+		const Cave::Entity::Type t = getEntityType(i);
+		int idx = -1;
+		if (t == Cave::Entity::Type::HiveTurn)
+			idx = jobIndex(T::resultJob(caveEntities[i]));
+		else
+			idx = jobIndex(t);
+		if (idx >= 0)
+			++counts[idx];
+	}
+
+	std::vector<Cave::Entity::Type> missing;
+	missing.reserve(JOB_COUNT);
+	for (int j = 0; j < JOB_COUNT; ++j) {
+		if (counts[j] == 0)
+			missing.push_back(JOBS[j]);
+	}
+	if (!missing.empty()) {
+		return missing[static_cast<size_t>(
+			Utils::randomInteger(0, static_cast<int>(missing.size()) - 1))];
+	}
+	return JOBS[Utils::randomInteger(0, JOB_COUNT - 1)];
+}
+
+void Cave::Map::beginHiveLarvaTurn(const int& index) {
+	if (getEntityType(index) != Cave::Entity::Type::HiveLarva) return;
+	const Cave::Entity::Type job = pickHiveLarvaJob();
+	setEntity(index, Cave::Entity::HiveTurn(job));
+}
+
+void Cave::Map::updateHiveTurn(const int& index) {
+	using T = Cave::Entity::HiveTurn;
+	if (getEntityType(index) != Cave::Entity::Type::HiveTurn) return;
+	const int last = T::TURN_FRAME_COUNT - 1;
+	const int frame = caveEntities[index].getAnimation().currentFrame;
+	if (frame < last) {
+		caveEntities[index].setAnimationFrame(frame + 1);
+		return;
+	}
+	if (restoreCoveredGate(index)) return;
+	setEntity(index, monsterFromType(T::resultJob(caveEntities[index])));
+}
+
+void Cave::Map::updateHiveLarva(const int& index) {
+	using L = Cave::Entity::HiveLarva;
+	if (handleEnemyBasicUpdate(index)) return;
+
+	if (caveEntities[index].dutyTicks < L::MATURE_TICKS)
+		caveEntities[index].dutyTicks++;
+
+	if (caveEntities[index].dutyTicks >= L::MATURE_TICKS) {
+		const bool inNursery = isNurseryRoom(index);
+		const bool noNursery = !hiveNurseryExists();
+		if (inNursery || noNursery) {
+			beginHiveLarvaTurn(index);
+			return;
+		}
+	}
+
+	wanderTowardHiveRoom(index, m_nurseryRoom, L::HOLD_TICKS);
+}
+
+void Cave::Map::updateHiveWorker(const int& index) {
+	if (handleEnemyBasicUpdate(index)) return;
+	if (tryHiveEvacuateBuildSite(index)) return;
+	wanderHiveAdult(index, Cave::Entity::HIVE_WORKER_HOLD_TICKS);
+}
+
+bool Cave::Map::hiveAnyRoomExists() const {
+	return hiveMatriarchRoomExists() || hiveNurseryExists()
+		|| hiveStorageExists() || hiveLivingExists();
+}
+
+bool Cave::Map::hiveGuardDetectsJim(const int& guard, const int& prey) const {
+	using G = Cave::Entity::HiveGuard;
+	if (!inBounds(guard) || !inBounds(prey)) return false;
+	const int dx = (guard % width) - (prey % width);
+	const int dy = (guard / width) - (prey / width);
+	const int adx = dx < 0 ? -dx : dx;
+	const int ady = dy < 0 ? -dy : dy;
+	return (adx > ady ? adx : ady) <= G::DETECT_RADIUS;
+}
+
+void Cave::Map::updateHiveGuard(const int& index) {
+	using G = Cave::Entity::HiveGuard;
+	if (handleEnemyBasicUpdate(index)) return;
+	if (tryHiveEvacuateBuildSite(index))
+		return;
+
+	int& mode = caveEntities[index].spawnCredit;
+	int& lostWait = caveEntities[index].dutyTicks;
+	if (mode != G::MODE_ROAM && mode != G::MODE_CHASE)
+		mode = G::MODE_ROAM;
+
+	const int prey = nearestHiveGuardPrey(index);
+	const bool detects = inBounds(prey)
+		&& Cave::Entity::isHiveGuardPrey(getEntityType(prey))
+		&& hiveGuardDetectsJim(index, prey);
+
+	// Enter chase when Jim / Jimlin / Predator steps into the 7x7 box around the guard.
+	if (detects)
+		mode = G::MODE_CHASE;
+
+	if (mode == G::MODE_CHASE) {
+		if (!inBounds(prey) || !Cave::Entity::isHiveGuardPrey(getEntityType(prey))) {
+			lostWait++;
+			if (lostWait >= G::LOST_WAIT_TICKS) {
+				mode = G::MODE_ROAM;
+				lostWait = 0;
+				caveEntities[index].targetIndex = OUT_OF_BOUNDS_INDEX;
+				caveEntities[index].extra = 0;
+			}
+			else {
+				setEntityMoving(index, false);
+				return;
+			}
+		}
+		else {
+			const Cave::Entity::Direction dir = findPathToHuntGoal(index, prey);
+			if (dir != Cave::Entity::Direction::NO_DIRECTION) {
+				lostWait = 0;
+				if (tryMoveEnemy(index, Cave::Entity::Trait::Empty, dir)) {
+					hiveClearStuck(index);
+					return;
+				}
+			}
+
+			// No clear path — try a greedy step; only count lost-wait when fully stuck.
+			{
+				int ex = index % width, ey = index / width;
+				int px = prey % width, py = prey / width;
+				auto tryGreedy = [&](Cave::Entity::Direction d) {
+					if (tryMoveEnemy(index, Cave::Entity::Trait::Empty, d)) {
+						lostWait = 0;
+						hiveClearStuck(index);
+						return true;
+					}
+					return false;
+				};
+				if (ex > px && tryGreedy(Cave::Entity::Direction::LEFT)) return;
+				if (ex < px && tryGreedy(Cave::Entity::Direction::RIGHT)) return;
+				if (ey > py && tryGreedy(Cave::Entity::Direction::UP)) return;
+				if (ey < py && tryGreedy(Cave::Entity::Direction::DOWN)) return;
+			}
+
+			lostWait++;
+			if (lostWait < G::LOST_WAIT_TICKS) {
+				setEntityMoving(index, false);
+				return;
+			}
+
+			// Prey inaccessible for ~2s — resume patrol near the nearest hive room.
+			mode = G::MODE_ROAM;
+			lostWait = 0;
+			caveEntities[index].targetIndex = OUT_OF_BOUNDS_INDEX;
+			caveEntities[index].extra = 0;
+		}
+	}
+
+	// Roam: stay within PATROL_RADIUS of hive rooms; free-roam if none exist.
+	if (!hiveAnyRoomExists()
+		|| m_hiveGuardPatrol.empty()
+		|| std::find(m_hiveGuardPatrol.begin(), m_hiveGuardPatrol.end(), 1)
+			== m_hiveGuardPatrol.end()) {
+		wanderHiveAdult(index, G::HOLD_TICKS);
+		return;
+	}
+	wanderTowardHiveRoom(index, m_hiveGuardPatrol, G::HOLD_TICKS);
+}
+
+bool Cave::Map::isHiveDiggerGoal(const int& cell) const {
+	if (!inBounds(cell) || getEntityTransitioning(cell)) return false;
+	const Cave::Entity::Type t = getEntityType(cell);
+	if (Cave::Entity::isBoulder(t) || Cave::Entity::isHotBoulder(t)) return true;
+	if (t == Cave::Entity::Type::MagicBoulder) return true;
+	if (Cave::Entity::isDiamondTile(t)) return true;
+	if (t == Cave::Entity::Type::Ore) return true;
+	if (Cave::Entity::isHiveHuntPrey(t) && !isHiveBubbled(cell)) return true;
+	return false;
+}
+
+bool Cave::Map::isHiveEntranceAccessDirt(const int& cell) const {
+	if (!inBounds(cell) || !Cave::Entity::isDirtLike(getEntityType(cell)))
+		return false;
+	if (cell >= static_cast<int>(m_hiveEntranceDirtMask.size()))
+		return false;
+	return m_hiveEntranceDirtMask[static_cast<size_t>(cell)] != 0;
+}
+
+bool Cave::Map::isHiveDiggerDigTarget(const int& cell) const {
+	if (!inBounds(cell) || getEntityTransitioning(cell)) return false;
+	if (Cave::Entity::isDirtLike(getEntityType(cell))) {
+		if (cell < static_cast<int>(m_hiveDigDirtMask.size())
+			&& m_hiveDigDirtMask[static_cast<size_t>(cell)] != 0)
+			return true;
+		if (isHiveEntranceAccessDirt(cell))
+			return true;
+	}
+	return isHiveDiggerGoal(cell);
+}
+
+int Cave::Map::pickHiveDiggerGoal(const int& from) const {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (from < 0 || from >= cellCount) return OUT_OF_BOUNDS_INDEX;
+
+	// Builders waiting on dirt take priority over scavenging ore / boulders.
+	const int siteDirt = findHiveBuilderRequestedDigCell(from);
+	if (inBounds(siteDirt))
+		return siteDirt;
+
+	ensureEmptyPathScratch(cellCount);
+	beginEmptyPathGen();
+	const int gen = m_emptyPathGen;
+	m_emptyPathVisit[static_cast<size_t>(from)] = gen;
+	m_emptyPathQueue.push_back(from);
+
+	std::vector<int> goals;
+	goals.reserve(32);
+
+	while (m_emptyPathQueueHead < m_emptyPathQueue.size()) {
+		const int current = m_emptyPathQueue[m_emptyPathQueueHead++];
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, dir);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (m_emptyPathVisit[static_cast<size_t>(next)] == gen) continue;
+			m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+
+			if (isHiveDiggerGoal(next)) {
+				goals.push_back(next);
+				continue;
+			}
+
+			const bool open = isMonsterWalkable(next)
+				|| Cave::Entity::isDirtLike(getEntityType(next));
+			if (!open && next != from) continue;
+			m_emptyPathQueue.push_back(next);
+		}
+	}
+
+	if (goals.empty()) return OUT_OF_BOUNDS_INDEX;
+	return goals[static_cast<size_t>(Utils::randomInteger(0, static_cast<int>(goals.size()) - 1))];
+}
+
+Cave::Entity::Direction Cave::Map::findPathForHiveDigger(const int& index, const int& goal) const {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (index < 0 || index >= cellCount || goal < 0 || goal >= cellCount)
+		return Cave::Entity::Direction::NO_DIRECTION;
+	if (index == goal) return Cave::Entity::Direction::NO_DIRECTION;
+
+	auto canPlanThrough = [this, goal](int cell) {
+		if (cell == goal) {
+			return isHiveDiggerDigTarget(cell)
+				|| Cave::Entity::isDirtLike(getEntityType(cell));
+		}
+		// Resting / pending piles OK — only dodge objects already mid-fall.
+		if (hiveActuallyFallingCrushThreatAbove(cell)) return false;
+		if (isMonsterWalkable(cell)) return true;
+		if (Cave::Entity::isDirtLike(getEntityType(cell))) return true;
+		return false;
+	};
+
+	if (canPlanThrough(goal)) {
+		for (Cave::Entity::Direction step : Cave::Entity::ALL_DIRECTIONS) {
+			if (getIndex(index, step) == goal)
+				return step;
+		}
+	}
+
+	ensureEmptyPathScratch(cellCount);
+	beginEmptyPathGen();
+	const int gen = m_emptyPathGen;
+	m_emptyPathVisit[static_cast<size_t>(index)] = gen;
+	m_emptyPathQueue.push_back(index);
+
+	while (m_emptyPathQueueHead < m_emptyPathQueue.size()) {
+		const int current = m_emptyPathQueue[m_emptyPathQueueHead++];
+		for (Cave::Entity::Direction step : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, step);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (m_emptyPathVisit[static_cast<size_t>(next)] == gen) continue;
+			if (!canPlanThrough(next)) continue;
+			m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+			const Cave::Entity::Direction first = (current == index)
+				? step
+				: m_emptyPathFirst[static_cast<size_t>(current)];
+			m_emptyPathFirst[static_cast<size_t>(next)] = first;
+			if (next == goal)
+				return first;
+			m_emptyPathQueue.push_back(next);
+		}
+	}
+	return Cave::Entity::Direction::NO_DIRECTION;
+}
+
+bool Cave::Map::tryMoveHiveDigger(const int& index, const Cave::Entity::Direction& dir) {
+	if (dir == Cave::Entity::Direction::NO_DIRECTION) return false;
+	setEntityDirection(index, dir);
+	const int destination = getIndex(index, dir);
+	if (destination == OUT_OF_BOUNDS_INDEX) return false;
+	if (getEntityTransitioning(destination)) return false;
+	// Dig under resting/pending piles; only abort for objects already mid-fall.
+	if (hiveActuallyFallingCrushThreatAbove(destination)) return false;
+
+	const Cave::Entity::Type destType = getEntityType(destination);
+	const bool empty = isMonsterWalkable(destination);
+	const bool dirt = Cave::Entity::isDirtLike(destType);
+	if (!empty && !dirt) return false;
+
+	if (dirt) {
+		if (!moveEntity(index, dir, digSlideInc(destination))) return false;
+		setEntityMoving(destination, true);
+		m_traversingDirt = true;
+		return true;
+	}
+
+	return tryMoveEnemy(index, Cave::Entity::Trait::Empty, dir);
+}
+
+bool Cave::Map::hiveCrushThreatAbove(const int& cell, bool bubbledOnly) const {
+	if (!inBounds(cell)) return true;
+	for (int scan = getIndex(cell, Cave::Entity::Direction::UP);
+		scan != OUT_OF_BOUNDS_INDEX;
+		scan = getIndex(scan, Cave::Entity::Direction::UP)) {
+		if (bubbledOnly) {
+			if (isHiveBubbled(scan))
+				return true;
+		}
+		else {
+			const Cave::Entity::Type t = getEntityType(scan);
+			if (t != Cave::Entity::Type::MagicBoulder && isFallableEntity(scan))
+				return true;
+		}
+		if (!hasTrait(Cave::Entity::Trait::Empty, scan) && !isPassableGate(scan))
+			break;
+	}
+	return false;
+}
+
+int Cave::Map::findHiveFallingCrushThreat(const int& cell) const {
+	if (!inBounds(cell)) return OUT_OF_BOUNDS_INDEX;
+	for (int scan = getIndex(cell, Cave::Entity::Direction::UP);
+		scan != OUT_OF_BOUNDS_INDEX;
+		scan = getIndex(scan, Cave::Entity::Direction::UP)) {
+		if (hasTrait(Cave::Entity::Trait::Empty, scan) || isPassableGate(scan))
+			continue;
+		if (getEntityType(scan) == Cave::Entity::Type::MagicBoulder)
+			return OUT_OF_BOUNDS_INDEX;
+		// Falling or about-to-fall — resting piles are safe to stand under.
+		if (getEntityFalling(scan) || caveEntities[scan].fallPending) {
+			return isFallableEntity(scan) ? scan : OUT_OF_BOUNDS_INDEX;
+		}
+		return OUT_OF_BOUNDS_INDEX;
+	}
+	return OUT_OF_BOUNDS_INDEX;
+}
+
+bool Cave::Map::hiveFallingCrushThreatAbove(const int& cell) const {
+	return findHiveFallingCrushThreat(cell) != OUT_OF_BOUNDS_INDEX;
+}
+
+int Cave::Map::findHiveActuallyFallingCrushThreat(const int& cell) const {
+	if (!inBounds(cell)) return OUT_OF_BOUNDS_INDEX;
+	for (int scan = getIndex(cell, Cave::Entity::Direction::UP);
+		scan != OUT_OF_BOUNDS_INDEX;
+		scan = getIndex(scan, Cave::Entity::Direction::UP)) {
+		if (hasTrait(Cave::Entity::Trait::Empty, scan) || isPassableGate(scan))
+			continue;
+		if (getEntityType(scan) == Cave::Entity::Type::MagicBoulder)
+			return OUT_OF_BOUNDS_INDEX;
+		// Mid-fall only — ignore fallPending so diggers keep carving under resting piles.
+		if (getEntityFalling(scan))
+			return isFallableEntity(scan) ? scan : OUT_OF_BOUNDS_INDEX;
+		return OUT_OF_BOUNDS_INDEX;
+	}
+	return OUT_OF_BOUNDS_INDEX;
+}
+
+bool Cave::Map::hiveActuallyFallingCrushThreatAbove(const int& cell) const {
+	return findHiveActuallyFallingCrushThreat(cell) != OUT_OF_BOUNDS_INDEX;
+}
+
+bool Cave::Map::tryHiveDodgeCrush(const int& index, bool bubbledOnly, bool allowDig) {
+	if (!hiveCrushThreatAbove(index, bubbledOnly)) return false;
+
+	static constexpr Cave::Entity::Direction kEscape[] = {
+		Cave::Entity::Direction::LEFT,
+		Cave::Entity::Direction::RIGHT,
+		Cave::Entity::Direction::UP,
+		Cave::Entity::Direction::DOWN,
+	};
+	for (Cave::Entity::Direction escape : kEscape) {
+		const int dest = getIndex(index, escape);
+		if (!inBounds(dest) || getEntityTransitioning(dest)) continue;
+		if (hiveCrushThreatAbove(dest, bubbledOnly)) continue;
+
+		const bool empty = isMonsterWalkable(dest);
+		const bool dirt = allowDig && Cave::Entity::isDirtLike(getEntityType(dest));
+		if (!empty && !dirt) continue;
+
+		if (dirt) {
+			if (tryMoveHiveDigger(index, escape))
+				return true;
+			continue;
+		}
+		if (tryMoveEnemy(index, Cave::Entity::Trait::Empty, escape))
+			return true;
+	}
+
+	setEntityMoving(index, false);
+	return true;
+}
+
+bool Cave::Map::canHiveWorkerDodgeWalk(const int& self, const int& cell, const int& threat, bool allowDig) const {
+	if (!inBounds(cell) || cell == self) return false;
+	if (getEntityTransitioning(cell)) return false;
+	if (inBounds(threat) && cell == threat) return false;
+	// Builders must not dodge into the crush trench beside a fallable column.
+	if (getEntityType(self) == Cave::Entity::Type::HiveBuilder
+		&& isHiveBuilderDiveBesidePile(cell))
+		return false;
+	if (isMonsterWalkable(cell)) {
+		if (getEntityType(self) == Cave::Entity::Type::HiveBuilder
+			&& !isHiveBuilderSafeStand(cell))
+			return false;
+		return true;
+	}
+	if (allowDig && Cave::Entity::isDirtLike(getEntityType(cell))) return true;
+	return false;
+}
+
+bool Cave::Map::tryHiveWorkerDodgeStep(const int& index, const Cave::Entity::Direction& direction, bool allowDig) {
+	if (direction == Cave::Entity::Direction::NO_DIRECTION) return false;
+	const Cave::Entity::Type selfType = getEntityType(index);
+	if (selfType != Cave::Entity::Type::HiveDigger
+		&& selfType != Cave::Entity::Type::HiveBuilder)
+		return false;
+
+	setEntityDirection(index, direction);
+	const int destination = getIndex(index, direction);
+	if (destination == OUT_OF_BOUNDS_INDEX) return false;
+	if (getEntityTransitioning(destination)) return false;
+
+	const int threat = allowDig
+		? findHiveActuallyFallingCrushThreat(index)
+		: findHiveFallingCrushThreat(index);
+	if (!canHiveWorkerDodgeWalk(index, destination, threat, allowDig))
+		return false;
+
+	using D = Cave::Entity::HiveDigger;
+	using B = Cave::Entity::HiveBuilder;
+	const bool isDigger = selfType == Cave::Entity::Type::HiveDigger;
+	const int stock = isDigger ? 0 : B::wallStock(caveEntities[index]);
+	const int mode = isDigger ? D::mode(caveEntities[index]) : B::mode(caveEntities[index]);
+	const int site = caveEntities[index].homeIndex;
+	const int focus = caveEntities[index].targetIndex;
+	const int hold = caveEntities[index].extra;
+	const int duty = caveEntities[index].dutyTicks;
+
+	const bool dirt = allowDig && Cave::Entity::isDirtLike(getEntityType(destination));
+	if (dirt) {
+		if (!moveEntity(index, direction, digSlideInc(destination))) return false;
+		setEntityMoving(destination, true);
+		m_traversingDirt = true;
+	}
+	else if (!tryMoveEnemy(index, Cave::Entity::Trait::Empty, direction)) {
+		return false;
+	}
+
+	if (getEntityType(destination) == selfType) {
+		if (isDigger) {
+			D::setMode(caveEntities[destination], mode);
+			caveEntities[destination].dutyTicks = duty;
+		}
+		else {
+			B::setMode(caveEntities[destination], mode);
+			B::setWallStock(caveEntities[destination], stock);
+		}
+		caveEntities[destination].homeIndex = site;
+		caveEntities[destination].targetIndex = focus;
+		caveEntities[destination].extra = hold;
+	}
+	return true;
+}
+
+bool Cave::Map::tryHiveMatriarchDodgeFallable(const int& index) {
+	if (!inBounds(index) || getEntityTransitioning(index)) return false;
+	if (getEntityType(index) != Cave::Entity::Type::HiveMatriarch) return false;
+	// Only react to objects already falling or committed to fall — ignore resting piles.
+	if (findHiveFallingCrushThreat(index) == OUT_OF_BOUNDS_INDEX)
+		return false;
+
+	auto tryEscape = [&](Cave::Entity::Direction escape) -> bool {
+		const int dest = getIndex(index, escape);
+		if (!inBounds(dest) || getEntityTransitioning(dest)) return false;
+		if (!isMonsterWalkable(dest)) return false;
+		if (hiveFallingCrushThreatAbove(dest)) return false;
+		return tryMoveEnemy(index, Cave::Entity::Trait::Empty, escape);
+	};
+
+	// Prefer stepping off to the side out of the fall column.
+	static constexpr Cave::Entity::Direction kSides[] = {
+		Cave::Entity::Direction::LEFT,
+		Cave::Entity::Direction::RIGHT,
+	};
+	const int sideOrder = Utils::randomInteger(0, 1);
+	if (tryEscape(kSides[sideOrder])) return true;
+	if (tryEscape(kSides[1 - sideOrder])) return true;
+
+	// Last resort if both sides are blocked.
+	if (tryEscape(Cave::Entity::Direction::UP)) return true;
+	if (tryEscape(Cave::Entity::Direction::DOWN)) return true;
+
+	setEntityMoving(index, false);
+	return true;
+}
+
+bool Cave::Map::tryHiveWorkerDodgeCrush(const int& index, bool allowDig) {
+	if (!inBounds(index) || getEntityTransitioning(index)) return false;
+	const Cave::Entity::Type selfType = getEntityType(index);
+	if (selfType != Cave::Entity::Type::HiveDigger
+		&& selfType != Cave::Entity::Type::HiveBuilder)
+		return false;
+
+	// Diggers: mid-fall only. Builders: falling + fallPending.
+	const int threat = allowDig
+		? findHiveActuallyFallingCrushThreat(index)
+		: findHiveFallingCrushThreat(index);
+	if (threat == OUT_OF_BOUNDS_INDEX) return false;
+
+	auto threatAbove = [this, allowDig](int cell) {
+		return allowDig
+			? hiveActuallyFallingCrushThreatAbove(cell)
+			: hiveFallingCrushThreatAbove(cell);
+	};
+	auto findThreat = [this, allowDig](int cell) {
+		return allowDig
+			? findHiveActuallyFallingCrushThreat(cell)
+			: findHiveFallingCrushThreat(cell);
+	};
+
+	jimlinSearchBegin();
+	jimlinSearchVisit(index, index, Cave::Entity::Direction::NO_DIRECTION, 0);
+	m_jimlinBfsQueue.push_back(index);
+
+	auto manh = [this](int a, int b) {
+		const int dx = (a % width) - (b % width);
+		const int dy = (a / width) - (b / width);
+		return (dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy);
+	};
+
+	int bestGoal = OUT_OF_BOUNDS_INDEX;
+	int bestDist = 0x7fffffff;
+
+	while (m_jimlinBfsQueueHead < m_jimlinBfsQueue.size()) {
+		const int current = m_jimlinBfsQueue[m_jimlinBfsQueueHead++];
+		const int currentDist = m_jimlinBfsDist[static_cast<size_t>(current)];
+
+		if (current != index && !threatAbove(current)
+			&& currentDist < manh(threat, current)) {
+			if (currentDist < bestDist) {
+				bestDist = currentDist;
+				bestGoal = current;
+			}
+		}
+		if (bestGoal != OUT_OF_BOUNDS_INDEX && currentDist >= bestDist)
+			continue;
+
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, dir);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (jimlinSearchSeen(next)) continue;
+			// Builders never dodge by diving DOWN into a shaft / pile trench.
+			if (selfType == Cave::Entity::Type::HiveBuilder
+				&& dir == Cave::Entity::Direction::DOWN)
+				continue;
+			if (!canHiveWorkerDodgeWalk(index, next, threat, allowDig)) continue;
+			// Arrive before the falling object reaches this cell (same ETA idea as jimlins).
+			if (threatAbove(next)) {
+				const int nextThreat = findThreat(next);
+				if (inBounds(nextThreat)
+					&& (next % width) == (nextThreat % width) && next > nextThreat) {
+					const int eta = (next - nextThreat) / width;
+					if (currentDist + 1 >= eta) continue;
+				}
+			}
+			jimlinSearchVisit(next, current, dir, currentDist + 1);
+			m_jimlinBfsQueue.push_back(next);
+		}
+	}
+
+	Cave::Entity::Direction stepDir = Cave::Entity::Direction::NO_DIRECTION;
+	if (bestGoal != OUT_OF_BOUNDS_INDEX) {
+		int step = bestGoal;
+		while (m_jimlinBfsParent[static_cast<size_t>(step)] != index) {
+			step = m_jimlinBfsParent[static_cast<size_t>(step)];
+			if (step == OUT_OF_BOUNDS_INDEX) {
+				stepDir = Cave::Entity::Direction::NO_DIRECTION;
+				break;
+			}
+		}
+		if (step != OUT_OF_BOUNDS_INDEX)
+			stepDir = m_jimlinBfsVia[static_cast<size_t>(step)];
+	}
+
+	if (stepDir == Cave::Entity::Direction::NO_DIRECTION) {
+		// Never default-dive DOWN beside/under piles — that is how builders get crushed.
+		// Prefer a side step out of the fall column; otherwise freeze this tick.
+		static constexpr Cave::Entity::Direction kSides[] = {
+			Cave::Entity::Direction::LEFT,
+			Cave::Entity::Direction::RIGHT,
+			Cave::Entity::Direction::UP,
+		};
+		for (Cave::Entity::Direction side : kSides) {
+			const int dest = getIndex(index, side);
+			if (!canHiveWorkerDodgeWalk(index, dest, threat, allowDig)) continue;
+			if (threatAbove(dest)) continue;
+			stepDir = side;
+			break;
+		}
+		if (stepDir == Cave::Entity::Direction::NO_DIRECTION) {
+			setEntityMoving(index, false);
+			return true; // threatened but stuck — spent the tick freezing
+		}
+	}
+
+	if (tryHiveWorkerDodgeStep(index, stepDir, allowDig))
+		return true;
+	setEntityMoving(index, false);
+	return true;
+}
+
+void Cave::Map::updateHiveDigger(const int& index) {
+	using D = Cave::Entity::HiveDigger;
+	using B = Cave::Entity::HiveBuilder;
+	using L = Cave::Entity::HiveLarva;
+	if (handleEnemyBasicUpdate(index)) return;
+
+	auto siteForDirtCell = [&](int cell) -> int {
+		const int cellCount = static_cast<int>(caveEntities.size());
+		for (int i = 0; i < cellCount; ++i) {
+			if (getEntityType(i) != Cave::Entity::Type::HiveBuilder) continue;
+			if (!B::isBuilding(caveEntities[i])) continue;
+			const int site = caveEntities[i].homeIndex;
+			if (isHiveBuildFootprintCell(site, cell))
+				return site;
+		}
+		return OUT_OF_BOUNDS_INDEX;
+	};
+
+	auto builderStillOwnsSite = [&](int site) -> bool {
+		if (!inBounds(site)) return false;
+		const int cellCount = static_cast<int>(caveEntities.size());
+		for (int i = 0; i < cellCount; ++i) {
+			if (getEntityType(i) != Cave::Entity::Type::HiveBuilder) continue;
+			if (!B::isBuilding(caveEntities[i]) && !B::isDepositingDebris(caveEntities[i]))
+				continue;
+			if (caveEntities[i].homeIndex == site)
+				return true;
+		}
+		return false;
+	};
+
+	// Survive first — only dodge objects that are already falling.
+	if (tryHiveWorkerDodgeCrush(index, true)) {
+		hiveClearStuck(index);
+		return;
+	}
+	// Leave finished footprints so the builder can place walls unobstructed.
+	if (tryHiveEvacuateBuildSite(index))
+		return;
+	if (tryHiveWorkerGoLive(index))
+		return;
+
+	auto finishDigJob = [&](bool clearAffinity = true) {
+		const int site = caveEntities[index].homeIndex;
+		D::setMode(caveEntities[index], D::MODE_IDLE);
+		caveEntities[index].dutyTicks = 0;
+		caveEntities[index].targetIndex = OUT_OF_BOUNDS_INDEX;
+		caveEntities[index].extra = 0;
+		// Keep site affinity while the builder is still working that room so this
+		// digger can open the patent tunnel when walls finish.
+		if (clearAffinity || !builderStillOwnsSite(site))
+			caveEntities[index].homeIndex = -1;
+	};
+
+	auto beginDigToward = [&](int goal, bool connect = false) -> bool {
+		const int keepSite = caveEntities[index].homeIndex;
+		D::setMode(caveEntities[index], connect ? D::MODE_CONNECT : D::MODE_DIG);
+		caveEntities[index].targetIndex = goal;
+		caveEntities[index].extra = 0;
+		caveEntities[index].dutyTicks = 0;
+		if (connect) {
+			caveEntities[index].homeIndex = inBounds(keepSite) ? keepSite : -1;
+		}
+		else {
+			const int site = siteForDirtCell(goal);
+			if (inBounds(site))
+				caveEntities[index].homeIndex = site;
+			else if (!builderStillOwnsSite(keepSite))
+				caveEntities[index].homeIndex = -1;
+		}
+
+		// Site dirt: step into it to dig. Resource goals: stop when adjacent.
+		const bool digInto = Cave::Entity::isDirtLike(getEntityType(goal));
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			if (getIndex(index, dir) != goal) continue;
+			if (digInto) {
+				if (tryMoveHiveDigger(index, dir)) {
+					hiveClearStuck(index);
+					return true;
+				}
+				if (hiveAdvanceStuck(index))
+					return true;
+				setEntityMoving(index, false);
+				return true;
+			}
+			finishDigJob(!connect);
+			hiveClearStuck(index);
+			setEntityMoving(index, false);
+			return true;
+		}
+
+		const Cave::Entity::Direction step = findPathForHiveDigger(index, goal);
+		if (step != Cave::Entity::Direction::NO_DIRECTION
+			&& tryMoveHiveDigger(index, step)) {
+			hiveClearStuck(index);
+			return true;
+		}
+
+		// Unreachable goal (boulders / walls in the way): try another reachable dig tile.
+		if (step == Cave::Entity::Direction::NO_DIRECTION) {
+			const int site = caveEntities[index].homeIndex;
+			if (inBounds(site) && !connect) {
+				const int alt = findHiveBuilderReachableDigCell(index, site);
+				if (inBounds(alt) && alt != goal) {
+					caveEntities[index].targetIndex = alt;
+					// Retry toward the alternate without nesting another beginDigToward.
+					for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+						if (getIndex(index, dir) != alt) continue;
+						if (Cave::Entity::isDirtLike(getEntityType(alt))) {
+							if (tryMoveHiveDigger(index, dir)) {
+								hiveClearStuck(index);
+								return true;
+							}
+						}
+						setEntityMoving(index, false);
+						return true;
+					}
+					const Cave::Entity::Direction altStep = findPathForHiveDigger(index, alt);
+					if (altStep != Cave::Entity::Direction::NO_DIRECTION
+						&& tryMoveHiveDigger(index, altStep)) {
+						hiveClearStuck(index);
+						return true;
+					}
+				}
+				// No other reachable footprint dirt — drop the job and roam.
+				finishDigJob(false);
+				setEntityMoving(index, false);
+				return false;
+			}
+			finishDigJob(!connect);
+			setEntityMoving(index, false);
+			return false;
+		}
+
+		// Keep the site assignment even if this step failed — retry next tick.
+		if (inBounds(caveEntities[index].homeIndex)) {
+			if (hiveDiggerFullySealed(index)) {
+				if (hiveAdvanceStuck(index))
+					return true;
+			}
+			setEntityMoving(index, false);
+			return true;
+		}
+		finishDigJob(!connect);
+		setEntityMoving(index, false);
+		return true;
+	};
+
+	auto nextSiteDirt = [&]() -> int {
+		const int site = caveEntities[index].homeIndex;
+		if (inBounds(site)) {
+			const int local = findHiveBuilderReachableDigCell(index, site);
+			if (inBounds(local)) return local;
+		}
+		return findHiveBuilderRequestedDigCell(index);
+	};
+
+	auto claimQueuedConnect = [&]() -> bool {
+		if (m_hiveConnectQueue.empty()) return false;
+		if (D::mode(caveEntities[index]) != D::MODE_IDLE) return false;
+		for (size_t qi = 0; qi < m_hiveConnectQueue.size(); ++qi) {
+			const int site = m_hiveConnectQueue[qi];
+			if (!inBounds(site) || hiveRoomHasWalkableAccessFromOthers(site)) {
+				m_hiveConnectQueue.erase(m_hiveConnectQueue.begin()
+					+ static_cast<std::ptrdiff_t>(qi));
+				--qi;
+				continue;
+			}
+			bool taken = false;
+			const int cellCount = static_cast<int>(caveEntities.size());
+			for (int i = 0; i < cellCount; ++i) {
+				if (getEntityType(i) != Cave::Entity::Type::HiveDigger) continue;
+				if (D::mode(caveEntities[i]) != D::MODE_CONNECT) continue;
+				if (caveEntities[i].homeIndex == site) {
+					taken = true;
+					break;
+				}
+			}
+			if (taken) continue;
+			m_hiveConnectQueue.erase(m_hiveConnectQueue.begin()
+				+ static_cast<std::ptrdiff_t>(qi));
+			D::setMode(caveEntities[index], D::MODE_CONNECT);
+			caveEntities[index].homeIndex = site;
+			caveEntities[index].targetIndex = OUT_OF_BOUNDS_INDEX;
+			caveEntities[index].dutyTicks = 0;
+			caveEntities[index].extra = 0;
+			return true;
+		}
+		return false;
+	};
+
+	if (D::mode(caveEntities[index]) == D::MODE_CONNECT) {
+		const int site = caveEntities[index].homeIndex;
+		if (!inBounds(site) || hiveRoomHasWalkableAccessFromOthers(site)) {
+			finishDigJob(true);
+			hiveClearStuck(index);
+			setEntityMoving(index, false);
+			return;
+		}
+		const int dig = findHiveRoomConnectDigCell(site);
+		if (!inBounds(dig)) {
+			if (hiveDiggerFullySealed(index) && hiveAdvanceStuck(index))
+				return;
+			setEntityMoving(index, false);
+			return;
+		}
+		if (beginDigToward(dig, true))
+			return;
+		if (hiveAdvanceStuck(index)) return;
+		setEntityMoving(index, false);
+		return;
+	}
+
+	if (D::mode(caveEntities[index]) == D::MODE_DIG) {
+		const int goal = caveEntities[index].targetIndex;
+		if (!isHiveDiggerDigTarget(goal)) {
+			// Keep carving the same footprint until every reachable dirt tile is gone.
+			const int nextDirt = nextSiteDirt();
+			if (inBounds(nextDirt)) {
+				if (beginDigToward(nextDirt))
+					return;
+			}
+			finishDigJob(false);
+			// Fall through to food-access dig / roam instead of freezing.
+		}
+		else {
+			const bool digInto = Cave::Entity::isDirtLike(getEntityType(goal));
+			for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+				if (getIndex(index, dir) != goal) continue;
+				if (digInto) {
+					if (tryMoveHiveDigger(index, dir))
+						return;
+					if (hiveAdvanceStuck(index)) return;
+					setEntityMoving(index, false);
+					return;
+				}
+				finishDigJob(false);
+				setEntityMoving(index, false);
+				return;
+			}
+
+			const Cave::Entity::Direction step = findPathForHiveDigger(index, goal);
+			if (step != Cave::Entity::Direction::NO_DIRECTION
+				&& tryMoveHiveDigger(index, step))
+				return;
+
+			if (inBounds(caveEntities[index].homeIndex)) {
+				const int nextDirt = nextSiteDirt();
+				if (inBounds(nextDirt) && nextDirt != goal) {
+					if (beginDigToward(nextDirt))
+						return;
+				}
+				// No reachable footprint dirt left (blocked by boulders, etc.).
+				finishDigJob(false);
+				// Fall through — dig food corridors or roam instead of freezing.
+			}
+			else {
+				finishDigJob(false);
+			}
+		}
+	}
+
+	// Claim a finished room that still needs a patent tunnel.
+	if (claimQueuedConnect()) {
+		setEntityMoving(index, false);
+		return;
+	}
+
+	const bool builderBusy = isHiveBuilderJobTaken(-1);
+
+	// Holding affinity for a room still under construction — stay available for connect.
+	if (D::mode(caveEntities[index]) == D::MODE_IDLE
+		&& builderStillOwnsSite(caveEntities[index].homeIndex)) {
+		if (!m_hiveDigDirtGoals.empty()) {
+			const int urgentDirt = findHiveBuilderRequestedDigCell(index);
+			if (inBounds(urgentDirt)) {
+				if (beginDigToward(urgentDirt))
+					return;
+			}
+		}
+		// While a builder is working, keep uncovering boulder/diamond/ore instead of idling.
+		if (builderBusy) {
+			const int goal = pickHiveDiggerGoal(index);
+			if (inBounds(goal) && beginDigToward(goal))
+				return;
+		}
+		wanderHiveAdult(index, L::HOLD_TICKS);
+		return;
+	}
+
+	// Builder site dirt ignores the normal dig interval so rooms aren't stalled.
+	if (!m_hiveDigDirtGoals.empty()) {
+		const int urgentDirt = findHiveBuilderRequestedDigCell(index);
+		if (inBounds(urgentDirt)) {
+			if (beginDigToward(urgentDirt))
+				return;
+		}
+	}
+
+	// While a builder is on a room job, always scavenge resources (no idle dig interval).
+	if (builderBusy) {
+		const int goal = pickHiveDiggerGoal(index);
+		if (inBounds(goal) && beginDigToward(goal))
+			return;
+	}
+	else {
+		// Idle: adult roam; every DIG_INTERVAL ticks pick a scavenger dig target.
+		if (caveEntities[index].dutyTicks < D::DIG_INTERVAL)
+			caveEntities[index].dutyTicks++;
+
+		if (caveEntities[index].dutyTicks >= D::DIG_INTERVAL) {
+			const int goal = pickHiveDiggerGoal(index);
+			if (inBounds(goal)) {
+				if (beginDigToward(goal))
+					return;
+			}
+			caveEntities[index].dutyTicks = 0;
+		}
+	}
+
+	// Boxed into dirt with open space beyond — dig a way out before roaming.
+	const int escapeDig = findHiveDiggerEscapeDigCell(index);
+	if (inBounds(escapeDig) && beginDigToward(escapeDig))
+		return;
+	if (hiveDiggerFullySealed(index) && hiveAdvanceStuck(index))
+		return;
+
+	wanderHiveAdult(index, L::HOLD_TICKS);
+}
+
+bool Cave::Map::hiveStorageAllFull() const {
+	if (!hiveStorageExists()) return false;
+	const int cellCount = static_cast<int>(m_storageRoom.size());
+	for (int i = 0; i < cellCount; ++i) {
+		if (m_storageRoom[static_cast<size_t>(i)] == 0) continue;
+		// Free deposit slot — not full.
+		if (isHiveHaulerDeposit(i))
+			return false;
+		const Cave::Entity::Type t = getEntityType(i);
+		// Dirt / open hollow still has capacity (diggers clear dirt; haulers fill space).
+		if (Cave::Entity::isDirtLike(t))
+			return false;
+		if (t == Cave::Entity::Type::Space || hasTrait(Cave::Entity::Trait::Empty, i))
+			return false;
+	}
+	return true;
+}
+
+Cave::Entity::Type Cave::Map::pickHiveBuilderRoomType() const {
+	if (!hiveMatriarchRoomExists()) return Cave::Entity::Type::HiveMatriarchWall;
+	if (!hiveNurseryExists()) return Cave::Entity::Type::HiveNurseryWall;
+	// Living expand beats extra storage when overflow members have nowhere left to park.
+	if (hiveHasLivingOverflow() && (!hiveLivingExists() || hiveLivingAllFull()))
+		return Cave::Entity::Type::HiveLivingWall;
+	if (!hiveStorageExists() || hiveStorageAllFull())
+		return Cave::Entity::Type::HiveStorageWall;
+	return Cave::Entity::Type::NoType;
+}
+
+bool Cave::Map::isHiveBuilderPileOccupant(const int& cell) const {
+	if (!inBounds(cell) || getEntityTransitioning(cell)) return false;
+	if (isFallableEntity(cell)) return true;
+	// Bubbled packages stack with fallables in mixed piles.
+	return isHiveBubbled(cell) && Cave::Entity::isHiveHuntPrey(getEntityType(cell));
+}
+
+bool Cave::Map::isHiveBuilderPileTop(const int& cell) const {
+	if (!isHiveBuilderPileOccupant(cell)) return false;
+	const int above = getIndex(cell, Cave::Entity::Direction::UP);
+	if (inBounds(above) && isHiveBuilderPileOccupant(above))
+		return false;
+	return true;
+}
+
+int Cave::Map::hiveBuilderPileColumnTop(const int& cell) const {
+	if (!isHiveBuilderPileOccupant(cell))
+		return OUT_OF_BOUNDS_INDEX;
+	int top = cell;
+	for (;;) {
+		const int above = getIndex(top, Cave::Entity::Direction::UP);
+		if (!inBounds(above) || !isHiveBuilderPileOccupant(above))
+			break;
+		top = above;
+	}
+	return top;
+}
+
+bool Cave::Map::isHiveBuilderFood(const int& cell) const {
+	if (!inBounds(cell) || getEntityTransitioning(cell)) return false;
+	const Cave::Entity::Type t = getEntityType(cell);
+	// Wall stock from any boulder variant, diamond, or granite ore (world or storage).
+	const bool edible = Cave::Entity::isBoulder(t)
+		|| Cave::Entity::isHotBoulder(t)
+		|| t == Cave::Entity::Type::MagicBoulder
+		|| Cave::Entity::isDiamondTile(t)
+		|| t == Cave::Entity::Type::Ore;
+	if (!edible) return false;
+	// Top of this (possibly mixed) pile only.
+	return isHiveBuilderPileTop(cell);
+}
+
+bool Cave::Map::isHiveBuilderStorageFood(const int& cell) const {
+	return isHiveBuilderFood(cell) && isStorageRoom(cell);
+}
+
+bool Cave::Map::isHiveBuilderPocketable(const int& cell) const {
+	if (!inBounds(cell) || getEntityTransitioning(cell)) return false;
+	if (!isHiveBubbled(cell)) return false;
+	if (!Cave::Entity::isHiveHuntPrey(getEntityType(cell))) return false;
+	return isHiveBuilderPileTop(cell);
+}
+
+bool Cave::Map::isHiveBuilderSafeStand(const int& cell) const {
+	if (!inBounds(cell)) return false;
+	if (!isMonsterWalkable(cell) && getEntityType(cell) != Cave::Entity::Type::HiveBuilder)
+		return false;
+	// Don't walk directly under a resting pile occupant.
+	const int above = getIndex(cell, Cave::Entity::Direction::UP);
+	if (inBounds(above) && isHiveBuilderPileOccupant(above))
+		return false;
+	return true;
+}
+
+bool Cave::Map::isHiveBuilderDiveBesidePile(const int& cell) const {
+	if (!inBounds(cell)) return false;
+	if (!isMonsterWalkable(cell) && getEntityType(cell) != Cave::Entity::Type::HiveBuilder)
+		return false;
+	// Empty trench next to a stacked column — fallables slip/crush the builder.
+	for (Cave::Entity::Direction side : {
+		Cave::Entity::Direction::LEFT,
+		Cave::Entity::Direction::RIGHT }) {
+		const int n = getIndex(cell, side);
+		if (inBounds(n) && isHiveBuilderPileOccupant(n))
+			return true;
+	}
+	return false;
+}
+
+void Cave::Map::requestHiveDigDirt(const int& cell) {
+	if (!inBounds(cell) || !Cave::Entity::isDirtLike(getEntityType(cell)))
+		return;
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (static_cast<int>(m_hiveDigDirtMask.size()) != cellCount) {
+		m_hiveDigDirtMask.assign(static_cast<size_t>(cellCount), 0);
+		m_hiveDigDirtGoals.clear();
+	}
+	if (m_hiveDigDirtMask[static_cast<size_t>(cell)])
+		return;
+	m_hiveDigDirtMask[static_cast<size_t>(cell)] = 1;
+	m_hiveDigDirtGoals.push_back(cell);
+}
+
+void Cave::Map::requestHiveBuilderFoodAccessDig(const int& from, const int& food) {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (from < 0 || from >= cellCount || !inBounds(food))
+		return;
+
+	ensureEmptyPathScratch(cellCount);
+	beginEmptyPathGen();
+	const int gen = m_emptyPathGen;
+	m_emptyPathVisit[static_cast<size_t>(from)] = gen;
+	m_emptyPathParent[static_cast<size_t>(from)] = OUT_OF_BOUNDS_INDEX;
+	m_emptyPathQueue.push_back(from);
+
+	int reached = OUT_OF_BOUNDS_INDEX;
+	while (m_emptyPathQueueHead < m_emptyPathQueue.size()) {
+		const int current = m_emptyPathQueue[m_emptyPathQueueHead++];
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, dir);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (m_emptyPathVisit[static_cast<size_t>(next)] == gen) continue;
+
+			if (next == food) {
+				m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+				m_emptyPathParent[static_cast<size_t>(next)] = current;
+				reached = next;
+				m_emptyPathQueueHead = m_emptyPathQueue.size();
+				break;
+			}
+
+			const bool dirt = Cave::Entity::isDirtLike(getEntityType(next));
+			const bool open = dirt || isMonsterWalkable(next) || next == from;
+			if (!open) continue;
+			m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+			m_emptyPathParent[static_cast<size_t>(next)] = current;
+			m_emptyPathQueue.push_back(next);
+		}
+	}
+	if (!inBounds(reached)) return;
+
+	// Mark every dirt tile on the route so diggers carve the whole corridor.
+	int cell = reached;
+	while (inBounds(cell) && cell != from) {
+		if (Cave::Entity::isDirtLike(getEntityType(cell)))
+			requestHiveDigDirt(cell);
+		cell = m_emptyPathParent[static_cast<size_t>(cell)];
+	}
+}
+
+int Cave::Map::findHiveBuilderFoodAccessDigCell(const int& from, const int& food) const {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (from < 0 || from >= cellCount || !inBounds(food))
+		return OUT_OF_BOUNDS_INDEX;
+
+	ensureEmptyPathScratch(cellCount);
+	beginEmptyPathGen();
+	const int gen = m_emptyPathGen;
+	m_emptyPathVisit[static_cast<size_t>(from)] = gen;
+	m_emptyPathParent[static_cast<size_t>(from)] = OUT_OF_BOUNDS_INDEX;
+	m_emptyPathQueue.push_back(from);
+
+	int reached = OUT_OF_BOUNDS_INDEX;
+	while (m_emptyPathQueueHead < m_emptyPathQueue.size()) {
+		const int current = m_emptyPathQueue[m_emptyPathQueueHead++];
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, dir);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (m_emptyPathVisit[static_cast<size_t>(next)] == gen) continue;
+
+			// Reach the food cell or any adjacent approach — dig planning ignores
+			// safe-stand so diggers still open routes the builder can later use.
+			if (next == food) {
+				m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+				m_emptyPathParent[static_cast<size_t>(next)] = current;
+				reached = next;
+				m_emptyPathQueueHead = m_emptyPathQueue.size();
+				break;
+			}
+
+			const bool dirt = Cave::Entity::isDirtLike(getEntityType(next));
+			const bool open = dirt || isMonsterWalkable(next) || next == from;
+			if (!open) continue;
+			m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+			m_emptyPathParent[static_cast<size_t>(next)] = current;
+			m_emptyPathQueue.push_back(next);
+		}
+	}
+	if (!inBounds(reached)) return OUT_OF_BOUNDS_INDEX;
+
+	// Walk back toward `from`; return the first dirt on the route (nearest to builder).
+	int cell = reached;
+	int firstDirt = OUT_OF_BOUNDS_INDEX;
+	while (inBounds(cell) && cell != from) {
+		if (Cave::Entity::isDirtLike(getEntityType(cell)))
+			firstDirt = cell;
+		cell = m_emptyPathParent[static_cast<size_t>(cell)];
+	}
+	return firstDirt;
+}
+
+int Cave::Map::findNearestHiveBuilderGather(const int& from, bool storageOnly) const {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (from < 0 || from >= cellCount) return OUT_OF_BOUNDS_INDEX;
+
+	auto isGatherHit = [&](int cell) {
+		const bool inStorage = isStorageRoom(cell);
+		if (storageOnly) {
+			if (!inStorage) return false;
+		}
+		else if (inStorage) {
+			return false;
+		}
+		// Wall stock only — never treat bubbled packages as food (those stay for servants).
+		return isHiveBuilderFood(cell);
+	};
+
+	// Closest exposed top (any green-check surface rock). Height only breaks path ties.
+	auto bfsGather = [&](bool allowDirt) -> int {
+		if (static_cast<int>(m_hiveDigDist.size()) != cellCount)
+			m_hiveDigDist.assign(static_cast<size_t>(cellCount), -1);
+		else
+			std::fill(m_hiveDigDist.begin(), m_hiveDigDist.end(), -1);
+
+		ensureEmptyPathScratch(cellCount);
+		beginEmptyPathGen();
+		const int gen = m_emptyPathGen;
+		m_emptyPathVisit[static_cast<size_t>(from)] = gen;
+		m_emptyPathQueue.push_back(from);
+		m_hiveDigDist[static_cast<size_t>(from)] = 0;
+
+		int best = OUT_OF_BOUNDS_INDEX;
+		int bestY = std::numeric_limits<int>::max();
+		int bestDist = std::numeric_limits<int>::max();
+
+		while (m_emptyPathQueueHead < m_emptyPathQueue.size()) {
+			const int current = m_emptyPathQueue[m_emptyPathQueueHead++];
+			const int dist = m_hiveDigDist[static_cast<size_t>(current)];
+			// BFS distances are non-decreasing — further waves cannot beat bestDist.
+			if (dist > bestDist)
+				break;
+
+			static const Cave::Entity::Direction kGatherProbe[] = {
+				Cave::Entity::Direction::UP,
+				Cave::Entity::Direction::DOWN,
+				Cave::Entity::Direction::LEFT,
+				Cave::Entity::Direction::RIGHT,
+			};
+			for (Cave::Entity::Direction dir : kGatherProbe) {
+				const int next = getIndex(current, dir);
+				if (next == OUT_OF_BOUNDS_INDEX) continue;
+				if (m_emptyPathVisit[static_cast<size_t>(next)] == gen) continue;
+
+				if (isGatherHit(next)) {
+					if (current == from || isHiveBuilderSafeStand(current)) {
+						const int y = next / width;
+						if (dist < bestDist || (dist == bestDist && y < bestY)) {
+							best = next;
+							bestY = y;
+							bestDist = dist;
+						}
+					}
+					m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+					continue;
+				}
+
+				m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+				const bool dirt = allowDirt && Cave::Entity::isDirtLike(getEntityType(next));
+				if (dirt) {
+					m_hiveDigDist[static_cast<size_t>(next)] = dist + 1;
+					m_emptyPathQueue.push_back(next);
+					continue;
+				}
+				if (!isMonsterWalkable(next) && next != from) continue;
+				if (!isHiveBuilderSafeStand(next) && next != from)
+					continue;
+				if (dir == Cave::Entity::Direction::DOWN
+					&& isHiveBuilderDiveBesidePile(next) && next != from)
+					continue;
+				m_hiveDigDist[static_cast<size_t>(next)] = dist + 1;
+				m_emptyPathQueue.push_back(next);
+			}
+		}
+		return best;
+	};
+
+	const int open = bfsGather(false);
+	if (inBounds(open)) return open;
+	return bfsGather(true);
+}
+
+int Cave::Map::findHiveBuilderGatherStand(const int& gather) const {
+	if (!inBounds(gather) || !isHiveBuilderFood(gather))
+		return OUT_OF_BOUNDS_INDEX;
+	// Prefer standing on top of the pile, then any safe side.
+	static const Cave::Entity::Direction kDirs[] = {
+		Cave::Entity::Direction::UP,
+		Cave::Entity::Direction::LEFT,
+		Cave::Entity::Direction::RIGHT,
+		Cave::Entity::Direction::DOWN,
+	};
+	for (Cave::Entity::Direction dir : kDirs) {
+		const int stand = getIndex(gather, dir);
+		if (!inBounds(stand) || !isHiveBuilderSafeStand(stand)) continue;
+		if (dir == Cave::Entity::Direction::DOWN && isHiveBuilderDiveBesidePile(stand))
+			continue;
+		return stand;
+	}
+	return OUT_OF_BOUNDS_INDEX;
+}
+
+int Cave::Map::findNearestHiveBuilderFood(const int& from) const {
+	// Storage stock first; only forage world piles when storage has nothing edible.
+	if (hiveStorageExists()) {
+		const int stored = findNearestHiveBuilderGather(from, true);
+		if (inBounds(stored))
+			return stored;
+	}
+	return findNearestHiveBuilderGather(from, false);
+}
+
+bool Cave::Map::tryHiveBuilderEat(const int& builder, const Cave::Entity::Direction& dir) {
+	using B = Cave::Entity::HiveBuilder;
+	if (dir == Cave::Entity::Direction::NO_DIRECTION) return false;
+	if (!inBounds(builder) || getEntityType(builder) != Cave::Entity::Type::HiveBuilder)
+		return false;
+	if (getEntityTransitioning(builder)) return false;
+
+	const int item = getIndex(builder, dir);
+	// Only exposed local pile tops — after one is eaten, the next layer becomes the top.
+	if (!isHiveBuilderFood(item) || getEntityTransitioning(item)) return false;
+
+	const int stock = B::wallStock(caveEntities[builder]);
+	const int mode = B::mode(caveEntities[builder]);
+	const int site = caveEntities[builder].homeIndex;
+	const int focus = caveEntities[builder].targetIndex;
+	const int hold = caveEntities[builder].extra;
+
+	if (!moveEntity(builder, dir)) return false;
+	const int dest = item;
+	B::setMode(caveEntities[dest], mode == B::MODE_IDLE ? B::MODE_GATHER : mode);
+	B::setWallStock(caveEntities[dest], stock + 1);
+	caveEntities[dest].homeIndex = site;
+	caveEntities[dest].targetIndex = focus;
+	caveEntities[dest].extra = hold;
+	m_game->soundManager.play(Sound::Effect::Drop);
+	return true;
+}
+
+bool Cave::Map::tryHiveBuilderPocket(const int& builder, const Cave::Entity::Direction& dir) {
+	using B = Cave::Entity::HiveBuilder;
+	if (dir == Cave::Entity::Direction::NO_DIRECTION) return false;
+	if (!inBounds(builder) || getEntityType(builder) != Cave::Entity::Type::HiveBuilder)
+		return false;
+	if (getEntityTransitioning(builder)) return false;
+
+	const int site = caveEntities[builder].homeIndex;
+	if (!inBounds(site)) return false;
+
+	const int item = getIndex(builder, dir);
+	if (!isHiveBuilderPocketable(item) || getEntityTransitioning(item)) return false;
+
+	const Cave::Entity::Type type = getEntityType(item);
+	const int tex = caveEntities[item].getCurrentTextureIndex();
+	if (item < static_cast<int>(m_cosmicOver.size()))
+		m_cosmicOver[static_cast<size_t>(item)] = Cave::Entity::Base();
+
+	const int stock = B::wallStock(caveEntities[builder]);
+	const int mode = B::mode(caveEntities[builder]);
+	const int focus = caveEntities[builder].targetIndex;
+	const int hold = caveEntities[builder].extra;
+
+	if (!moveEntity(builder, dir)) return false;
+	const int dest = item;
+	B::setMode(caveEntities[dest], mode);
+	B::setWallStock(caveEntities[dest], stock);
+	caveEntities[dest].homeIndex = site;
+	caveEntities[dest].targetIndex = focus;
+	caveEntities[dest].extra = hold;
+	m_hiveBuilderDebrisBySite[site].push_back({ type, tex, true });
+	m_game->soundManager.play(Sound::Effect::Drop);
+	return true;
+}
+
+bool Cave::Map::isHiveBuilderSiteBlocked(const int& cell) const {
+	if (!inBounds(cell)) return true;
+	const Cave::Entity::Type t = getEntityType(cell);
+	// Brick walls / cracked brick / metal.
+	if (t == Cave::Entity::Type::Wall || Cave::Entity::isObsidianWall(t)) return true;
+	if (t == Cave::Entity::Type::SolidWall) return true;
+	// Existing foreign hive buildings block picking a fresh site (in-progress walls use ruined check).
+	if (Cave::Entity::isHiveBuilding(t)) return true;
+	if (t == Cave::Entity::Type::HorizontalWall
+		|| t == Cave::Entity::Type::VerticalWall
+		|| t == Cave::Entity::Type::HorizontalWallPlaceholder
+		|| t == Cave::Entity::Type::VerticalWallPlaceholder)
+		return true;
+	if (t == Cave::Entity::Type::MagicWallInactive
+		|| t == Cave::Entity::Type::MagicWallActive
+		|| t == Cave::Entity::Type::MagicWallUsed)
+		return true;
+	if (t == Cave::Entity::Type::SolidTubeLeft || t == Cave::Entity::Type::SolidTubeRight
+		|| t == Cave::Entity::Type::SolidTubeUp || t == Cave::Entity::Type::SolidTubeDown
+		|| t == Cave::Entity::Type::SolidTubeHorizontal || t == Cave::Entity::Type::SolidTubeVertical)
+		return true;
+	if (t == Cave::Entity::Type::StartDoor || t == Cave::Entity::Type::ExitDoor
+		|| t == Cave::Entity::Type::ExitDoorOpen || t == Cave::Entity::Type::ExitDoorOpening
+		|| t == Cave::Entity::Type::ExitDoorComplete || t == Cave::Entity::Type::ExitDoorFinished
+		|| t == Cave::Entity::Type::StartDoorOpen)
+		return true;
+	if (Cave::Entity::isPlayer(t) || Cave::Entity::isJimlin(t)) return true;
+	// Other monsters block; the builder itself may stand inside the footprint.
+	if (Cave::Entity::isMonster(t) && t != Cave::Entity::Type::HiveBuilder)
+		return true;
+	if (isFallableEntity(cell)) return true;
+	if (Cave::Entity::isDirtLike(t) || t == Cave::Entity::Type::Space)
+		return false;
+	if (hasTrait(Cave::Entity::Trait::Empty, cell)) return false;
+	return true;
+}
+
+bool Cave::Map::isHiveBuilderSiteClearable(const int& cell) const {
+	if (!inBounds(cell)) return false;
+	if (getEntityType(cell) == Cave::Entity::Type::HiveBuilder) return true;
+	if (Cave::Entity::isDirtLike(getEntityType(cell))) return true;
+	// Fallables are pocketed by the builder before walls go up.
+	if (isFallableEntity(cell)) return true;
+	if (isMonsterWalkable(cell)) return true;
+	return hasTrait(Cave::Entity::Trait::Empty, cell);
+}
+
+bool Cave::Map::isHiveBuildSiteValid(const int& origin, int buildMode) const {
+	using B = Cave::Entity::HiveBuilder;
+	if (!inBounds(origin)) return false;
+	const int ox = origin % width;
+	const int oy = origin / width;
+	if (ox < 0 || oy < 0 || ox + B::ROOM_SIZE > width || oy + B::ROOM_SIZE > height)
+		return false;
+
+	for (int dy = 0; dy < B::ROOM_SIZE; ++dy) {
+		for (int dx = 0; dx < B::ROOM_SIZE; ++dx) {
+			const int cell = (oy + dy) * width + (ox + dx);
+			const Cave::Entity::Type t = getEntityType(cell);
+			const bool wallSlot = isHiveBuilderWallSlot(origin, cell);
+			if (wallSlot) {
+				const Cave::Entity::Type want = hiveBuilderWallTypeForCell(origin, cell, buildMode);
+				// Shared septum / reused corners already in place.
+				if (t == want) continue;
+				if (Cave::Entity::isHiveBuilding(t)) return false;
+			}
+			else if (Cave::Entity::isHiveBuilding(t)) {
+				return false;
+			}
+
+			// Brick / metal / doors — monsters do NOT block picking (diggers / time clear them).
+			if (t == Cave::Entity::Type::Wall || Cave::Entity::isObsidianWall(t)) return false;
+			if (t == Cave::Entity::Type::SolidWall) return false;
+			if (t == Cave::Entity::Type::HorizontalWall
+				|| t == Cave::Entity::Type::VerticalWall
+				|| t == Cave::Entity::Type::HorizontalWallPlaceholder
+				|| t == Cave::Entity::Type::VerticalWallPlaceholder)
+				return false;
+			if (t == Cave::Entity::Type::MagicWallInactive
+				|| t == Cave::Entity::Type::MagicWallActive
+				|| t == Cave::Entity::Type::MagicWallUsed)
+				return false;
+			if (t == Cave::Entity::Type::SolidTubeLeft || t == Cave::Entity::Type::SolidTubeRight
+				|| t == Cave::Entity::Type::SolidTubeUp || t == Cave::Entity::Type::SolidTubeDown
+				|| t == Cave::Entity::Type::SolidTubeHorizontal || t == Cave::Entity::Type::SolidTubeVertical)
+				return false;
+			if (t == Cave::Entity::Type::StartDoor || t == Cave::Entity::Type::ExitDoor
+				|| t == Cave::Entity::Type::ExitDoorOpen || t == Cave::Entity::Type::ExitDoorOpening
+				|| t == Cave::Entity::Type::ExitDoorComplete || t == Cave::Entity::Type::ExitDoorFinished
+				|| t == Cave::Entity::Type::StartDoorOpen)
+				return false;
+			if (Cave::Entity::isPlayer(t) || Cave::Entity::isJimlin(t)) return false;
+			// Fallables OK — builder collects them. Other monsters OK for site selection.
+
+			if (!wallSlot || t != hiveBuilderWallTypeForCell(origin, cell, buildMode)) {
+				// Treat living monsters as clearable for picking (they move / get handled).
+				if (!isHiveBuilderSiteClearable(cell)
+					&& !(Cave::Entity::isMonster(t) && t != Cave::Entity::Type::HiveBuilder))
+					return false;
+			}
+
+			// Don't cover an existing room's hollow (septum walls are outside the mask).
+			if (isMatriarchRoom(cell) || isNurseryRoom(cell)
+				|| isStorageRoom(cell) || isLivingRoom(cell))
+				return false;
+		}
+	}
+	// Never start a room on top of another claimed / unfinished footprint.
+	{
+		std::vector<int> occupied;
+		collectHiveOccupiedFootprintOrigins(occupied);
+		for (int other : occupied) {
+			if (other == origin) continue;
+			using BB = Cave::Entity::HiveBuilder;
+			const int bx0 = other % width;
+			const int by0 = other / width;
+			const int bx1 = bx0 + BB::ROOM_SIZE - 1;
+			const int by1 = by0 + BB::ROOM_SIZE - 1;
+			const int ax0 = ox;
+			const int ay0 = oy;
+			const int ax1 = ox + BB::ROOM_SIZE - 1;
+			const int ay1 = oy + BB::ROOM_SIZE - 1;
+			if (ax0 <= bx1 && bx0 <= ax1 && ay0 <= by1 && by0 <= ay1)
+				return false;
+		}
+	}
+	// Top entrance must stay reachable from above (diggable / fallable / open).
+	if (!isHiveBuildEntranceAccessible(origin))
+		return false;
+	if (!isHiveBuildSiteEntranceClear(origin))
+		return false;
+	if (!isHiveBuildSiteSpacingOk(origin, false))
+		return false;
+	return true;
+}
+
+void Cave::Map::collectAllHiveRoomOrigins(std::vector<int>& out) const {
+	out.clear();
+	std::vector<int> part;
+	collectHiveRoomOrigins(Cave::Entity::Type::HiveMatriarchWall, part);
+	out.insert(out.end(), part.begin(), part.end());
+	collectHiveRoomOrigins(Cave::Entity::Type::HiveNurseryWall, part);
+	out.insert(out.end(), part.begin(), part.end());
+	collectHiveRoomOrigins(Cave::Entity::Type::HiveStorageWall, part);
+	out.insert(out.end(), part.begin(), part.end());
+	collectHiveRoomOrigins(Cave::Entity::Type::HiveLivingWall, part);
+	out.insert(out.end(), part.begin(), part.end());
+	std::sort(out.begin(), out.end());
+	out.erase(std::unique(out.begin(), out.end()), out.end());
+}
+
+void Cave::Map::collectHiveOccupiedFootprintOrigins(std::vector<int>& out) const {
+	using B = Cave::Entity::HiveBuilder;
+	out.clear();
+	std::vector<int> part;
+	collectAllHiveRoomOrigins(part);
+	out.insert(out.end(), part.begin(), part.end());
+
+	// Unfinished corner quads (not yet border-linked) still occupy their footprint.
+	const Cave::Entity::Type corners[] = {
+		Cave::Entity::Type::HiveMatriarchWall,
+		Cave::Entity::Type::HiveNurseryWall,
+		Cave::Entity::Type::HiveStorageWall,
+		Cave::Entity::Type::HiveLivingWall,
+	};
+	for (Cave::Entity::Type corner : corners) {
+		collectHiveCornerQuads(corner, false, part);
+		out.insert(out.end(), part.begin(), part.end());
+	}
+
+	// Active builder claims.
+	const int cellCount = static_cast<int>(caveEntities.size());
+	for (int i = 0; i < cellCount; ++i) {
+		if (getEntityType(i) != Cave::Entity::Type::HiveBuilder) continue;
+		if (!B::isBuilding(caveEntities[i]) && !B::isDepositingDebris(caveEntities[i])
+			&& B::mode(caveEntities[i]) != B::MODE_GATHER)
+			continue;
+		const int site = caveEntities[i].homeIndex;
+		if (inBounds(site))
+			out.push_back(site);
+	}
+
+	// Remembered completed footprints (survive temporary corner loss).
+	for (const HiveKnownRoom& room : m_hiveKnownRooms) {
+		if (inBounds(room.origin))
+			out.push_back(room.origin);
+	}
+
+	std::sort(out.begin(), out.end());
+	out.erase(std::unique(out.begin(), out.end()), out.end());
+}
+
+int Cave::Map::hiveBuildSiteEmptyScore(const int& origin) const {
+	using B = Cave::Entity::HiveBuilder;
+	if (!inBounds(origin)) return 0;
+	const int ox = origin % width;
+	const int oy = origin / width;
+	if (ox + B::ROOM_SIZE > width || oy + B::ROOM_SIZE > height) return 0;
+	int score = 0;
+	for (int dy = 0; dy < B::ROOM_SIZE; ++dy) {
+		for (int dx = 0; dx < B::ROOM_SIZE; ++dx) {
+			const int cell = (oy + dy) * width + (ox + dx);
+			const Cave::Entity::Type t = getEntityType(cell);
+			if (t == Cave::Entity::Type::Space || hasTrait(Cave::Entity::Trait::Empty, cell))
+				score += 2;
+			else if (Cave::Entity::isDirtLike(t))
+				score += 0;
+			else if (isFallableEntity(cell) || Cave::Entity::isMonster(t))
+				score += 1; // better than packed dirt, worse than open space
+		}
+	}
+	return score;
+}
+
+bool Cave::Map::isHiveBuildSiteEntranceClear(const int& origin) const {
+	using B = Cave::Entity::HiveBuilder;
+	if (!inBounds(origin)) return false;
+	std::vector<int> rooms;
+	collectHiveOccupiedFootprintOrigins(rooms);
+	for (int room : rooms) {
+		if (room == origin) continue;
+		const int ex = room % width;
+		const int ey = room / width;
+		// Existing top entrance gap — new footprint must not cover those cells.
+		for (int dx = 1; dx <= B::ROOM_SIZE - 2; ++dx) {
+			const int entrance = ey * width + (ex + dx);
+			if (isHiveBuildFootprintCell(origin, entrance))
+				return false;
+			// Cell directly above the entrance (access shaft) also stays free of our walls.
+			const int above = getIndex(entrance, Cave::Entity::Direction::UP);
+			if (inBounds(above) && isHiveBuilderWallSlot(origin, above))
+				return false;
+		}
+	}
+	return true;
+}
+
+bool Cave::Map::isHiveBuildSiteSpacingOk(const int& origin, bool allowUnaligned) const {
+	using B = Cave::Entity::HiveBuilder;
+	if (!inBounds(origin)) return false;
+	const int ox = origin % width;
+	const int oy = origin / width;
+	if (ox + B::ROOM_SIZE > width || oy + B::ROOM_SIZE > height) return false;
+
+	std::vector<int> rooms;
+	collectHiveOccupiedFootprintOrigins(rooms);
+	return isHiveBuildSiteSpacingOkWithRooms(origin, rooms, allowUnaligned);
+}
+
+bool Cave::Map::isHiveBuildSiteSpacingOkWithRooms(
+	const int& origin, const std::vector<int>& rooms, bool allowUnaligned) const {
+	using B = Cave::Entity::HiveBuilder;
+	if (!inBounds(origin)) return false;
+	const int ox = origin % width;
+	const int oy = origin / width;
+	if (ox + B::ROOM_SIZE > width || oy + B::ROOM_SIZE > height) return false;
+
+	// First room ever — nothing to align with.
+	if (rooms.empty() || (rooms.size() == 1 && rooms[0] == origin)) return true;
+
+	const int ax0 = ox;
+	const int ay0 = oy;
+	const int ax1 = ox + B::ROOM_SIZE - 1;
+	const int ay1 = oy + B::ROOM_SIZE - 1;
+
+	bool aligned = false;
+	for (int room : rooms) {
+		if (room == origin) continue;
+		const int bx0 = room % width;
+		const int by0 = room / width;
+		const int bx1 = bx0 + B::ROOM_SIZE - 1;
+		const int by1 = by0 + B::ROOM_SIZE - 1;
+
+		if (ox == bx0 || oy == by0)
+			aligned = true;
+
+		int gapX = 0;
+		if (ax0 > bx1) gapX = ax0 - bx1 - 1;
+		else if (bx0 > ax1) gapX = bx0 - ax1 - 1;
+		else gapX = -1; // overlap in X
+
+		int gapY = 0;
+		if (ay0 > by1) gapY = ay0 - by1 - 1;
+		else if (by0 > ay1) gapY = by0 - ay1 - 1;
+		else gapY = -1; // overlap in Y
+
+		if (gapX < 0 && gapY < 0)
+			return false; // overlapping footprints
+		if (gapX < 0 && gapY >= 0 && gapY < HIVE_ROOM_GAP)
+			return false; // too close vertically
+		if (gapY < 0 && gapX >= 0 && gapX < HIVE_ROOM_GAP)
+			return false; // too close horizontally
+		if (gapX >= 0 && gapY >= 0 && gapX < HIVE_ROOM_GAP && gapY < HIVE_ROOM_GAP)
+			return false; // diagonal squeeze
+	}
+	return aligned || allowUnaligned;
+}
+
+bool Cave::Map::isHiveTerrainOccludingEntrance(const int& cell) const {
+	if (!inBounds(cell)) return true;
+	const Cave::Entity::Type t = getEntityType(cell);
+	if (Cave::Entity::isDirtLike(t)) return false;
+	if (t == Cave::Entity::Type::Space || hasTrait(Cave::Entity::Trait::Empty, cell))
+		return false;
+	if (isFallableEntity(cell)) return false;
+	if (isMonsterWalkable(cell)) return false;
+	return true;
+}
+
+bool Cave::Map::isHiveBuildEntranceAccessible(const int& origin) const {
+	using B = Cave::Entity::HiveBuilder;
+	if (!inBounds(origin)) return false;
+	const int ox = origin % width;
+	const int oy = origin / width;
+	if (oy <= 0) return false;
+	for (int dx = 1; dx <= B::ROOM_SIZE - 2; ++dx) {
+		const int above = (oy - 1) * width + (ox + dx);
+		if (!isHiveTerrainOccludingEntrance(above))
+			return true;
+	}
+	return false;
+}
+
+int Cave::Map::hiveBuilderWallsNeeded(const int& origin, int buildMode) const {
+	using B = Cave::Entity::HiveBuilder;
+	if (!inBounds(origin)) return B::WALLS_PER_ROOM;
+	const int ox = origin % width;
+	const int oy = origin / width;
+	if (ox + B::ROOM_SIZE > width || oy + B::ROOM_SIZE > height) return B::WALLS_PER_ROOM;
+
+	int needed = 0;
+	for (int dy = 0; dy < B::ROOM_SIZE; ++dy) {
+		for (int dx = 0; dx < B::ROOM_SIZE; ++dx) {
+			const int cell = (oy + dy) * width + (ox + dx);
+			if (!isHiveBuilderWallSlot(origin, cell)) continue;
+			const Cave::Entity::Type want = hiveBuilderWallTypeForCell(origin, cell, buildMode);
+			if (getEntityType(cell) != want)
+				++needed;
+		}
+	}
+	return needed;
+}
+
+void Cave::Map::collectHiveCornerQuads(Cave::Entity::Type cornerType, bool requireLinked, std::vector<int>& out) const {
+	using B = Cave::Entity::HiveBuilder;
+	out.clear();
+	const int cellCount = width * height;
+	std::vector<int> corners;
+	corners.reserve(16);
+	for (int i = 0; i < cellCount; ++i) {
+		if (getEntityType(i) == cornerType)
+			corners.push_back(i);
+	}
+	const int n = static_cast<int>(corners.size());
+	for (int i = 0; i < n; ++i) {
+		const int ax = corners[static_cast<size_t>(i)] % width;
+		const int ay = corners[static_cast<size_t>(i)] / width;
+		for (int j = i + 1; j < n; ++j) {
+			const int bx = corners[static_cast<size_t>(j)] % width;
+			const int by = corners[static_cast<size_t>(j)] / width;
+			if (ax == bx || ay == by) continue;
+			const int x0 = ax < bx ? ax : bx;
+			const int x1 = ax < bx ? bx : ax;
+			const int y0 = ay < by ? ay : by;
+			const int y1 = ay < by ? by : ay;
+			// Builder rooms are exactly ROOM_SIZE on each edge (corner-to-corner inclusive).
+			if (x1 - x0 != B::ROOM_SIZE - 1 || y1 - y0 != B::ROOM_SIZE - 1) continue;
+			const int c01 = y0 * width + x1;
+			const int c10 = y1 * width + x0;
+			if (getEntityType(c01) != cornerType || getEntityType(c10) != cornerType)
+				continue;
+			if (requireLinked && !hiveRoomBorderLinked(x0, y0, x1, y1))
+				continue;
+			out.push_back(y0 * width + x0);
+		}
+	}
+	std::sort(out.begin(), out.end());
+	out.erase(std::unique(out.begin(), out.end()), out.end());
+}
+
+void Cave::Map::collectHiveRoomOrigins(Cave::Entity::Type cornerType, std::vector<int>& out) const {
+	collectHiveCornerQuads(cornerType, true, out);
+}
+
+int Cave::Map::pickHiveBuildSite(const int& from, int buildMode) const {
+	using B = Cave::Entity::HiveBuilder;
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (from < 0 || from >= cellCount) return OUT_OF_BOUNDS_INDEX;
+
+	// Reachability: empty, dirt, or any monster tile (monsters must not hide a good site).
+	ensureEmptyPathScratch(cellCount);
+	beginEmptyPathGen();
+	const int gen = m_emptyPathGen;
+	m_emptyPathVisit[static_cast<size_t>(from)] = gen;
+	m_emptyPathQueue.push_back(from);
+	while (m_emptyPathQueueHead < m_emptyPathQueue.size()) {
+		const int current = m_emptyPathQueue[m_emptyPathQueueHead++];
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, dir);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (m_emptyPathVisit[static_cast<size_t>(next)] == gen) continue;
+			const Cave::Entity::Type t = getEntityType(next);
+			const bool open = isMonsterWalkable(next)
+				|| Cave::Entity::isDirtLike(t)
+				|| (Cave::Entity::isMonster(t)
+					&& !Cave::Entity::isPlayer(t)
+					&& !Cave::Entity::isJimlin(t));
+			if (!open && next != from) continue;
+			m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+			m_emptyPathQueue.push_back(next);
+		}
+	}
+
+	auto footprintReachable = [&](int origin) {
+		const int ox = origin % width;
+		const int oy = origin / width;
+		for (int dy = 0; dy < B::ROOM_SIZE; ++dy) {
+			for (int dx = 0; dx < B::ROOM_SIZE; ++dx) {
+				const int cell = (oy + dy) * width + (ox + dx);
+				if (m_emptyPathVisit[static_cast<size_t>(cell)] == gen)
+					return true;
+			}
+		}
+		return false;
+	};
+
+	std::vector<int> existing;
+	// Align / space against unfinished + claimed footprints, not only linked rooms.
+	collectHiveOccupiedFootprintOrigins(existing);
+	// Evaluate once — never inside per-candidate spacing (that made sim unplayably slow).
+	const bool allowUnaligned = hiveHasLivingOverflow()
+		&& hiveLivingExists() && hiveLivingAllFull();
+
+	std::vector<int> candidates;
+	candidates.reserve(64);
+	const int stride = B::ROOM_SIZE + HIVE_ROOM_GAP;
+
+	auto tryAdd = [&](int nx, int ny) {
+		if (nx < 0 || ny < 0) return;
+		if (nx + B::ROOM_SIZE > width || ny + B::ROOM_SIZE > height) return;
+		candidates.push_back(ny * width + nx);
+	};
+
+	// Axis-aligned rings (1..3 strides). Cheap and enough to keep expanding living.
+	auto addAlignedRings = [&](int maxRings) {
+		for (int roomOrigin : existing) {
+			const int ox = roomOrigin % width;
+			const int oy = roomOrigin / width;
+			for (int ring = 1; ring <= maxRings; ++ring) {
+				const int s = stride * ring;
+				tryAdd(ox + s, oy);
+				tryAdd(ox - s, oy);
+				tryAdd(ox, oy + s);
+				tryAdd(ox, oy - s);
+			}
+		}
+	};
+
+	auto addFirstRoomScan = [&]() {
+		static constexpr int kMaxChecks = 64;
+		int checks = 0;
+		const int start = static_cast<int>(Utils::randomInteger(0, std::max(0, cellCount - 1)));
+		for (int n = 0; n < cellCount && checks < kMaxChecks; ++n) {
+			const int cell = (start + n) % cellCount;
+			if (m_emptyPathVisit[static_cast<size_t>(cell)] != gen) continue;
+			const int ox = cell % width;
+			const int oy = cell / width;
+			if (ox + B::ROOM_SIZE > width || oy + B::ROOM_SIZE > height) continue;
+			++checks;
+			candidates.push_back(cell);
+		}
+	};
+
+	if (existing.empty())
+		addFirstRoomScan();
+	else
+		addAlignedRings(3);
+
+	// Entrance-clear against cached rooms only (no per-candidate collect).
+	auto entranceClearCached = [&](int origin) -> bool {
+		for (int room : existing) {
+			if (room == origin) continue;
+			const int ex = room % width;
+			const int ey = room / width;
+			for (int dx = 1; dx <= B::ROOM_SIZE - 2; ++dx) {
+				const int entrance = ey * width + (ex + dx);
+				if (isHiveBuildFootprintCell(origin, entrance))
+					return false;
+				const int above = getIndex(entrance, Cave::Entity::Direction::UP);
+				if (inBounds(above) && isHiveBuilderWallSlot(origin, above))
+					return false;
+			}
+		}
+		return true;
+	};
+
+	auto overlapsCached = [&](int origin) -> bool {
+		const int ax0 = origin % width;
+		const int ay0 = origin / width;
+		const int ax1 = ax0 + B::ROOM_SIZE - 1;
+		const int ay1 = ay0 + B::ROOM_SIZE - 1;
+		for (int other : existing) {
+			if (other == origin) continue;
+			const int bx0 = other % width;
+			const int by0 = other / width;
+			const int bx1 = bx0 + B::ROOM_SIZE - 1;
+			const int by1 = by0 + B::ROOM_SIZE - 1;
+			if (ax0 <= bx1 && bx0 <= ax1 && ay0 <= by1 && by0 <= ay1)
+				return true;
+		}
+		return false;
+	};
+
+	// Terrain/hollow checks only — spacing/overlap/entrance use the cached room list.
+	auto terrainOk = [&](int origin) -> bool {
+		const int ox = origin % width;
+		const int oy = origin / width;
+		for (int dy = 0; dy < B::ROOM_SIZE; ++dy) {
+			for (int dx = 0; dx < B::ROOM_SIZE; ++dx) {
+				const int cell = (oy + dy) * width + (ox + dx);
+				const Cave::Entity::Type t = getEntityType(cell);
+				const bool wallSlot = isHiveBuilderWallSlot(origin, cell);
+				if (wallSlot) {
+					const Cave::Entity::Type want = hiveBuilderWallTypeForCell(origin, cell, buildMode);
+					if (t == want) continue;
+					if (Cave::Entity::isHiveBuilding(t)) return false;
+				}
+				else if (Cave::Entity::isHiveBuilding(t)) {
+					return false;
+				}
+				if (t == Cave::Entity::Type::Wall || Cave::Entity::isObsidianWall(t)) return false;
+				if (t == Cave::Entity::Type::SolidWall) return false;
+				if (t == Cave::Entity::Type::HorizontalWall
+					|| t == Cave::Entity::Type::VerticalWall
+					|| t == Cave::Entity::Type::HorizontalWallPlaceholder
+					|| t == Cave::Entity::Type::VerticalWallPlaceholder)
+					return false;
+				if (t == Cave::Entity::Type::MagicWallInactive
+					|| t == Cave::Entity::Type::MagicWallActive
+					|| t == Cave::Entity::Type::MagicWallUsed)
+					return false;
+				if (t == Cave::Entity::Type::SolidTubeLeft || t == Cave::Entity::Type::SolidTubeRight
+					|| t == Cave::Entity::Type::SolidTubeUp || t == Cave::Entity::Type::SolidTubeDown
+					|| t == Cave::Entity::Type::SolidTubeHorizontal || t == Cave::Entity::Type::SolidTubeVertical)
+					return false;
+				if (t == Cave::Entity::Type::StartDoor || t == Cave::Entity::Type::ExitDoor
+					|| t == Cave::Entity::Type::ExitDoorOpen || t == Cave::Entity::Type::ExitDoorOpening
+					|| t == Cave::Entity::Type::ExitDoorComplete || t == Cave::Entity::Type::ExitDoorFinished
+					|| t == Cave::Entity::Type::StartDoorOpen)
+					return false;
+				if (Cave::Entity::isPlayer(t) || Cave::Entity::isJimlin(t)) return false;
+				if (!wallSlot || t != hiveBuilderWallTypeForCell(origin, cell, buildMode)) {
+					if (!isHiveBuilderSiteClearable(cell)
+						&& !(Cave::Entity::isMonster(t) && t != Cave::Entity::Type::HiveBuilder))
+						return false;
+				}
+				if (isMatriarchRoom(cell) || isNurseryRoom(cell)
+					|| isStorageRoom(cell) || isLivingRoom(cell))
+					return false;
+			}
+		}
+		return isHiveBuildEntranceAccessible(origin);
+	};
+
+	std::sort(candidates.begin(), candidates.end());
+	candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
+
+	std::vector<int> best;
+	best.reserve(candidates.size());
+	int bestScore = -1;
+	for (int cell : candidates) {
+		if (isHiveBuildSiteClaimed(cell, from)) continue;
+		if (overlapsCached(cell)) continue;
+		if (!isHiveBuildSiteSpacingOkWithRooms(cell, existing, allowUnaligned)) continue;
+		if (!entranceClearCached(cell)) continue;
+		if (!terrainOk(cell)) continue;
+		if (!footprintReachable(cell)) continue;
+		const int score = hiveBuildSiteEmptyScore(cell);
+		if (score > bestScore) {
+			bestScore = score;
+			best.clear();
+			best.push_back(cell);
+		}
+		else if (score == bestScore) {
+			best.push_back(cell);
+		}
+	}
+	if (best.empty()) return OUT_OF_BOUNDS_INDEX;
+	return best[static_cast<size_t>(Utils::randomInteger(0, static_cast<int>(best.size()) - 1))];
+}
+
+int Cave::Map::pickHiveRepairSite(const int& from, int& outBuildMode) const {
+	using B = Cave::Entity::HiveBuilder;
+	outBuildMode = B::MODE_BUILD_MATRIARCH;
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (from < 0 || from >= cellCount) return OUT_OF_BOUNDS_INDEX;
+
+	ensureEmptyPathScratch(cellCount);
+	beginEmptyPathGen();
+	const int gen = m_emptyPathGen;
+	m_emptyPathVisit[static_cast<size_t>(from)] = gen;
+	m_emptyPathQueue.push_back(from);
+	while (m_emptyPathQueueHead < m_emptyPathQueue.size()) {
+		const int current = m_emptyPathQueue[m_emptyPathQueueHead++];
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, dir);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (m_emptyPathVisit[static_cast<size_t>(next)] == gen) continue;
+			const bool open = isMonsterWalkable(next)
+				|| Cave::Entity::isDirtLike(getEntityType(next));
+			if (!open && next != from) continue;
+			m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+			m_emptyPathQueue.push_back(next);
+		}
+	}
+
+	auto footprintReachable = [&](int origin) {
+		const int ox = origin % width;
+		const int oy = origin / width;
+		for (int dy = 0; dy < B::ROOM_SIZE; ++dy) {
+			for (int dx = 0; dx < B::ROOM_SIZE; ++dx) {
+				const int cell = (oy + dy) * width + (ox + dx);
+				if (m_emptyPathVisit[static_cast<size_t>(cell)] == gen)
+					return true;
+			}
+		}
+		return false;
+	};
+
+	struct Cand { int origin; int mode; int needed; };
+	std::vector<Cand> cands;
+	cands.reserve(8);
+
+	// Only repair footprints that were previously fully linked rooms — never stitch
+	// together random corner markers that never formed a room.
+	for (const HiveKnownRoom& room : m_hiveKnownRooms) {
+		const int origin = room.origin;
+		const int mode = room.buildMode;
+		if (isHiveBuildSiteClaimed(origin, from)) continue;
+		if (!isHiveRepairSiteReady(origin, mode)) continue;
+		if (!footprintReachable(origin)) continue;
+		const int needed = hiveBuilderWallsNeeded(origin, mode);
+		cands.push_back({ origin, mode, needed });
+	}
+	if (cands.empty()) return OUT_OF_BOUNDS_INDEX;
+
+	// Prefer the smallest patch (fewest missing walls).
+	int bestNeeded = cands[0].needed;
+	for (const Cand& c : cands) {
+		if (c.needed < bestNeeded) bestNeeded = c.needed;
+	}
+	std::vector<Cand> best;
+	best.reserve(cands.size());
+	for (const Cand& c : cands) {
+		if (c.needed == bestNeeded) best.push_back(c);
+	}
+	const Cand& pick = best[static_cast<size_t>(
+		Utils::randomInteger(0, static_cast<int>(best.size()) - 1))];
+	outBuildMode = pick.mode;
+	return pick.origin;
+}
+
+bool Cave::Map::isHiveBuildSiteRuined(const int& origin) const {
+	using B = Cave::Entity::HiveBuilder;
+	if (!inBounds(origin)) return true;
+	const int ox = origin % width;
+	const int oy = origin / width;
+	if (ox < 0 || oy < 0 || ox + B::ROOM_SIZE > width || oy + B::ROOM_SIZE > height)
+		return true;
+
+	for (int dy = 0; dy < B::ROOM_SIZE; ++dy) {
+		for (int dx = 0; dx < B::ROOM_SIZE; ++dx) {
+			const int cell = (oy + dy) * width + (ox + dx);
+			const Cave::Entity::Type t = getEntityType(cell);
+			if (t == Cave::Entity::Type::Wall || Cave::Entity::isObsidianWall(t)) return true;
+			if (t == Cave::Entity::Type::SolidWall) return true;
+			if (Cave::Entity::isPlayer(t) || Cave::Entity::isJimlin(t)) return true;
+			// Hive diggers/builders (and other hive crew) must work inside the footprint —
+			// treating them as invaders aborted builds after a couple dirt tiles.
+			if (Cave::Entity::isMonster(t) && !Cave::Entity::isHiveCreature(t)
+				&& t != Cave::Entity::Type::HiveTurn)
+				return true;
+		}
+	}
+	return false;
+}
+
+bool Cave::Map::isHiveRepairSiteReady(const int& origin, int buildMode) const {
+	using B = Cave::Entity::HiveBuilder;
+	if (!inBounds(origin) || isHiveBuildSiteRuined(origin)) return false;
+	// Only previously completed / claimed footprints — never invent a repair from loose markers.
+	if (!isHiveKnownRoom(origin, buildMode)) return false;
+	const int ox = origin % width;
+	const int oy = origin / width;
+	if (ox + B::ROOM_SIZE > width || oy + B::ROOM_SIZE > height) return false;
+
+	const int needed = hiveBuilderWallsNeeded(origin, buildMode);
+	if (needed <= 0) return false;
+
+	// Rebuild even if every wall was destroyed — the known origin is enough.
+	for (int dy = 0; dy < B::ROOM_SIZE; ++dy) {
+		for (int dx = 0; dx < B::ROOM_SIZE; ++dx) {
+			const int cell = (oy + dy) * width + (ox + dx);
+			if (!isHiveBuilderWallSlot(origin, cell)) continue;
+			const Cave::Entity::Type want = hiveBuilderWallTypeForCell(origin, cell, buildMode);
+			if (getEntityType(cell) == want) continue;
+			if (!isHiveBuilderSiteClearable(cell)) return false;
+		}
+	}
+	return true;
+}
+
+bool Cave::Map::isHiveBuildFootprintCell(const int& origin, const int& cell) const {
+	using B = Cave::Entity::HiveBuilder;
+	if (!inBounds(origin) || !inBounds(cell)) return false;
+	const int ox = origin % width;
+	const int oy = origin / width;
+	const int cx = cell % width;
+	const int cy = cell / width;
+	return cx >= ox && cy >= oy
+		&& cx < ox + B::ROOM_SIZE && cy < oy + B::ROOM_SIZE;
+}
+
+bool Cave::Map::isHiveBuildHollowCell(const int& origin, const int& cell) const {
+	using B = Cave::Entity::HiveBuilder;
+	if (!isHiveBuildFootprintCell(origin, cell)) return false;
+	const int ox = origin % width;
+	const int oy = origin / width;
+	const int cx = cell % width;
+	const int cy = cell / width;
+	return cx > ox && cy > oy
+		&& cx < ox + B::ROOM_SIZE - 1
+		&& cy < oy + B::ROOM_SIZE - 1;
+}
+
+bool Cave::Map::hiveRoomHasWalkableAccessFromOthers(const int& newSite) const {
+	if (!inBounds(newSite)) return false;
+
+	std::vector<int> rooms;
+	collectAllHiveRoomOrigins(rooms);
+	if (rooms.size() <= 1) return true;
+
+	const int cellCount = static_cast<int>(caveEntities.size());
+	ensureEmptyPathScratch(cellCount);
+	beginEmptyPathGen();
+	const int gen = m_emptyPathGen;
+
+	auto seedHollow = [&](int origin) {
+		using B = Cave::Entity::HiveBuilder;
+		const int ox = origin % width;
+		const int oy = origin / width;
+		if (ox + B::ROOM_SIZE > width || oy + B::ROOM_SIZE > height) return;
+		for (int dy = 1; dy < B::ROOM_SIZE - 1; ++dy) {
+			for (int dx = 1; dx < B::ROOM_SIZE - 1; ++dx) {
+				const int cell = (oy + dy) * width + (ox + dx);
+				if (m_emptyPathVisit[static_cast<size_t>(cell)] == gen) continue;
+				if (!isMonsterWalkable(cell)
+					&& getEntityType(cell) != Cave::Entity::Type::HiveDigger)
+					continue;
+				m_emptyPathVisit[static_cast<size_t>(cell)] = gen;
+				m_emptyPathQueue.push_back(cell);
+			}
+		}
+	};
+
+	for (int origin : rooms) {
+		if (origin == newSite) continue;
+		seedHollow(origin);
+	}
+	if (m_emptyPathQueue.empty()) return false;
+
+	while (m_emptyPathQueueHead < m_emptyPathQueue.size()) {
+		const int current = m_emptyPathQueue[m_emptyPathQueueHead++];
+		if (isHiveBuildHollowCell(newSite, current))
+			return true;
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, dir);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (m_emptyPathVisit[static_cast<size_t>(next)] == gen) continue;
+			if (!isMonsterWalkable(next)
+				&& getEntityType(next) != Cave::Entity::Type::HiveDigger)
+				continue;
+			m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+			m_emptyPathQueue.push_back(next);
+		}
+	}
+	return false;
+}
+
+int Cave::Map::findHiveRoomConnectDigCell(const int& newSite) const {
+	if (!inBounds(newSite)) return OUT_OF_BOUNDS_INDEX;
+	if (hiveRoomHasWalkableAccessFromOthers(newSite))
+		return OUT_OF_BOUNDS_INDEX;
+
+	std::vector<int> rooms;
+	collectAllHiveRoomOrigins(rooms);
+	if (rooms.size() <= 1) return OUT_OF_BOUNDS_INDEX;
+
+	const int cellCount = static_cast<int>(caveEntities.size());
+	ensureEmptyPathScratch(cellCount);
+	beginEmptyPathGen();
+	const int gen = m_emptyPathGen;
+
+	auto canTraverse = [this](int cell) {
+		if (isMonsterWalkable(cell)) return true;
+		if (Cave::Entity::isDirtLike(getEntityType(cell))) return true;
+		if (getEntityType(cell) == Cave::Entity::Type::HiveDigger) return true;
+		return false;
+	};
+
+	auto seedHollow = [&](int origin) {
+		using B = Cave::Entity::HiveBuilder;
+		const int ox = origin % width;
+		const int oy = origin / width;
+		if (ox + B::ROOM_SIZE > width || oy + B::ROOM_SIZE > height) return;
+		for (int dy = 1; dy < B::ROOM_SIZE - 1; ++dy) {
+			for (int dx = 1; dx < B::ROOM_SIZE - 1; ++dx) {
+				const int cell = (oy + dy) * width + (ox + dx);
+				if (m_emptyPathVisit[static_cast<size_t>(cell)] == gen) continue;
+				if (!canTraverse(cell)) continue;
+				m_emptyPathVisit[static_cast<size_t>(cell)] = gen;
+				m_emptyPathParent[static_cast<size_t>(cell)] = OUT_OF_BOUNDS_INDEX;
+				m_emptyPathQueue.push_back(cell);
+			}
+		}
+	};
+
+	for (int origin : rooms) {
+		if (origin == newSite) continue;
+		seedHollow(origin);
+	}
+	if (m_emptyPathQueue.empty()) return OUT_OF_BOUNDS_INDEX;
+
+	int reached = OUT_OF_BOUNDS_INDEX;
+	while (m_emptyPathQueueHead < m_emptyPathQueue.size()) {
+		const int current = m_emptyPathQueue[m_emptyPathQueueHead++];
+		if (isHiveBuildHollowCell(newSite, current)) {
+			reached = current;
+			break;
+		}
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, dir);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (m_emptyPathVisit[static_cast<size_t>(next)] == gen) continue;
+			if (!canTraverse(next)) continue;
+			m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+			m_emptyPathParent[static_cast<size_t>(next)] = current;
+			m_emptyPathQueue.push_back(next);
+		}
+	}
+	if (!inBounds(reached)) return OUT_OF_BOUNDS_INDEX;
+
+	// Walk back toward an older room; dig the dirt closest to the old side first.
+	int cell = reached;
+	int firstDirt = OUT_OF_BOUNDS_INDEX;
+	while (inBounds(cell)) {
+		if (Cave::Entity::isDirtLike(getEntityType(cell)))
+			firstDirt = cell;
+		const int prev = m_emptyPathParent[static_cast<size_t>(cell)];
+		if (!inBounds(prev)) break;
+		cell = prev;
+	}
+	return firstDirt;
+}
+
+void Cave::Map::queueHiveRoomConnect(const int& newSite) {
+	using D = Cave::Entity::HiveDigger;
+	if (!inBounds(newSite)) return;
+
+	std::vector<int> rooms;
+	collectAllHiveRoomOrigins(rooms);
+	// First hive room needs no patent tunnel from an older room.
+	if (rooms.size() <= 1) return;
+	if (hiveRoomHasWalkableAccessFromOthers(newSite)) return;
+
+	for (int queued : m_hiveConnectQueue) {
+		if (queued == newSite) return;
+	}
+
+	auto startConnect = [&](int digger) {
+		D::setMode(caveEntities[digger], D::MODE_CONNECT);
+		caveEntities[digger].homeIndex = newSite;
+		caveEntities[digger].targetIndex = OUT_OF_BOUNDS_INDEX;
+		caveEntities[digger].dutyTicks = 0;
+		caveEntities[digger].extra = 0;
+		// Drop rival affinity so only one digger tunnels this room.
+		const int cellCount = static_cast<int>(caveEntities.size());
+		for (int i = 0; i < cellCount; ++i) {
+			if (i == digger) continue;
+			if (getEntityType(i) != Cave::Entity::Type::HiveDigger) continue;
+			if (caveEntities[i].homeIndex != newSite) continue;
+			if (D::mode(caveEntities[i]) == D::MODE_CONNECT) continue;
+			caveEntities[i].homeIndex = -1;
+		}
+	};
+
+	auto alreadyConnecting = [&]() {
+		const int cellCount = static_cast<int>(caveEntities.size());
+		for (int i = 0; i < cellCount; ++i) {
+			if (getEntityType(i) != Cave::Entity::Type::HiveDigger) continue;
+			if (D::mode(caveEntities[i]) != D::MODE_CONNECT) continue;
+			if (caveEntities[i].homeIndex == newSite) return true;
+		}
+		return false;
+	};
+	if (alreadyConnecting()) return;
+
+	const int cellCount = static_cast<int>(caveEntities.size());
+	int affinity = OUT_OF_BOUNDS_INDEX;
+	int idleNear = OUT_OF_BOUNDS_INDEX;
+	int idleNearDist = std::numeric_limits<int>::max();
+	for (int i = 0; i < cellCount; ++i) {
+		if (getEntityType(i) != Cave::Entity::Type::HiveDigger) continue;
+		if (getEntityTransitioning(i)) continue;
+		if (caveEntities[i].homeIndex == newSite
+			&& D::mode(caveEntities[i]) != D::MODE_CONNECT) {
+			affinity = i;
+			break;
+		}
+	}
+	if (inBounds(affinity)) {
+		startConnect(affinity);
+		return;
+	}
+
+	for (int i = 0; i < cellCount; ++i) {
+		if (getEntityType(i) != Cave::Entity::Type::HiveDigger) continue;
+		if (getEntityTransitioning(i)) continue;
+		if (D::mode(caveEntities[i]) != D::MODE_IDLE) continue;
+		const int dx = (i % width) - (newSite % width);
+		const int dy = (i / width) - (newSite / width);
+		const int dist = dx * dx + dy * dy;
+		if (dist < idleNearDist) {
+			idleNearDist = dist;
+			idleNear = i;
+		}
+	}
+	if (inBounds(idleNear)) {
+		startConnect(idleNear);
+		return;
+	}
+
+	m_hiveConnectQueue.push_back(newSite);
+}
+
+int Cave::Map::findHiveBuilderDigCell(const int& origin) const {
+	using B = Cave::Entity::HiveBuilder;
+	if (!inBounds(origin) || isHiveBuildSiteRuined(origin)) return OUT_OF_BOUNDS_INDEX;
+	const int ox = origin % width;
+	const int oy = origin / width;
+	if (ox + B::ROOM_SIZE > width || oy + B::ROOM_SIZE > height) return OUT_OF_BOUNDS_INDEX;
+
+	for (int dy = 0; dy < B::ROOM_SIZE; ++dy) {
+		for (int dx = 0; dx < B::ROOM_SIZE; ++dx) {
+			const int cell = (oy + dy) * width + (ox + dx);
+			if (Cave::Entity::isDirtLike(getEntityType(cell)))
+				return cell;
+		}
+	}
+	return OUT_OF_BOUNDS_INDEX;
+}
+
+int Cave::Map::findHiveBuilderReachableDigCell(const int& from, const int& origin) const {
+	using B = Cave::Entity::HiveBuilder;
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (from < 0 || from >= cellCount || !inBounds(origin))
+		return OUT_OF_BOUNDS_INDEX;
+	if (isHiveBuildSiteRuined(origin)) return OUT_OF_BOUNDS_INDEX;
+	const int ox = origin % width;
+	const int oy = origin / width;
+	if (ox + B::ROOM_SIZE > width || oy + B::ROOM_SIZE > height)
+		return OUT_OF_BOUNDS_INDEX;
+
+	auto inSiteDirt = [&](int cell) {
+		if (!Cave::Entity::isDirtLike(getEntityType(cell))) return false;
+		const int x = cell % width;
+		const int y = cell / width;
+		return x >= ox && x < ox + B::ROOM_SIZE && y >= oy && y < oy + B::ROOM_SIZE;
+	};
+
+	ensureEmptyPathScratch(cellCount);
+	beginEmptyPathGen();
+	const int gen = m_emptyPathGen;
+	m_emptyPathVisit[static_cast<size_t>(from)] = gen;
+	m_emptyPathQueue.push_back(from);
+
+	while (m_emptyPathQueueHead < m_emptyPathQueue.size()) {
+		const int current = m_emptyPathQueue[m_emptyPathQueueHead++];
+		if (inSiteDirt(current))
+			return current;
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, dir);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (m_emptyPathVisit[static_cast<size_t>(next)] == gen) continue;
+			const bool open = isMonsterWalkable(next)
+				|| Cave::Entity::isDirtLike(getEntityType(next));
+			if (!open && next != from) continue;
+			m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+			m_emptyPathQueue.push_back(next);
+		}
+	}
+	return OUT_OF_BOUNDS_INDEX;
+}
+
+int Cave::Map::findHiveBuilderRequestedDigCell(const int& from) const {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (from < 0 || from >= cellCount) return OUT_OF_BOUNDS_INDEX;
+	if (m_hiveDigDirtGoals.empty()
+		|| static_cast<int>(m_hiveDigDirtMask.size()) != cellCount)
+		return OUT_OF_BOUNDS_INDEX;
+
+	ensureEmptyPathScratch(cellCount);
+	beginEmptyPathGen();
+	const int gen = m_emptyPathGen;
+	m_emptyPathVisit[static_cast<size_t>(from)] = gen;
+	m_emptyPathQueue.push_back(from);
+
+	if (static_cast<int>(m_hiveDigDist.size()) != cellCount)
+		m_hiveDigDist.assign(static_cast<size_t>(cellCount), -1);
+	else
+		std::fill(m_hiveDigDist.begin(), m_hiveDigDist.end(), -1);
+	m_hiveDigDist[static_cast<size_t>(from)] = 0;
+
+	int best = OUT_OF_BOUNDS_INDEX;
+	int bestDist = std::numeric_limits<int>::max();
+
+	while (m_emptyPathQueueHead < m_emptyPathQueue.size()) {
+		const int current = m_emptyPathQueue[m_emptyPathQueueHead++];
+		const int d = m_hiveDigDist[static_cast<size_t>(current)];
+		if (m_hiveDigDirtMask[static_cast<size_t>(current)] && d < bestDist) {
+			bestDist = d;
+			best = current;
+			if (bestDist == 0)
+				return best;
+		}
+		if (d >= bestDist)
+			continue;
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, dir);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (m_emptyPathVisit[static_cast<size_t>(next)] == gen) continue;
+			const bool open = isMonsterWalkable(next)
+				|| Cave::Entity::isDirtLike(getEntityType(next));
+			if (!open && next != from) continue;
+			m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+			m_hiveDigDist[static_cast<size_t>(next)] = d + 1;
+			m_emptyPathQueue.push_back(next);
+		}
+	}
+	return best;
+}
+
+bool Cave::Map::isHiveBuilderSiteDebris(const int& origin, const int& cell) const {
+	if (!isHiveBuildFootprintCell(origin, cell) || getEntityTransitioning(cell)) return false;
+	if (Cave::Entity::isHiveBuilding(getEntityType(cell))) return false;
+	if (getEntityType(cell) == Cave::Entity::Type::HiveBuilder) return false;
+	// Fallables and bubbled packages — top of the mixed pile only.
+	if (!isHiveBuilderPileOccupant(cell) || !isHiveBuilderPileTop(cell))
+		return false;
+	return true;
+}
+
+int Cave::Map::findNearestHiveBuilderSiteDebris(const int& from, const int& origin) const {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (from < 0 || from >= cellCount || !inBounds(origin)) return OUT_OF_BOUNDS_INDEX;
+
+	ensureEmptyPathScratch(cellCount);
+	beginEmptyPathGen();
+	const int gen = m_emptyPathGen;
+	m_emptyPathVisit[static_cast<size_t>(from)] = gen;
+	m_emptyPathQueue.push_back(from);
+
+	while (m_emptyPathQueueHead < m_emptyPathQueue.size()) {
+		const int current = m_emptyPathQueue[m_emptyPathQueueHead++];
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, dir);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (m_emptyPathVisit[static_cast<size_t>(next)] == gen) continue;
+
+			if (isHiveBuilderSiteDebris(origin, next)) {
+				if (current == from || isHiveBuilderSafeStand(current))
+					return next;
+				m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+				continue;
+			}
+
+			m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+			if (!isMonsterWalkable(next) && next != from) continue;
+			if (!isHiveBuilderSafeStand(next) && next != from) continue;
+			m_emptyPathQueue.push_back(next);
+		}
+	}
+	return OUT_OF_BOUNDS_INDEX;
+}
+
+bool Cave::Map::tryHiveBuilderCollectDebris(const int& builder, const Cave::Entity::Direction& dir) {
+	using B = Cave::Entity::HiveBuilder;
+	if (dir == Cave::Entity::Direction::NO_DIRECTION) return false;
+	if (!inBounds(builder) || getEntityType(builder) != Cave::Entity::Type::HiveBuilder)
+		return false;
+	if (getEntityTransitioning(builder)) return false;
+
+	const int site = caveEntities[builder].homeIndex;
+	const int item = getIndex(builder, dir);
+	if (!isHiveBuilderSiteDebris(site, item)) return false;
+
+	const Cave::Entity::Type type = getEntityType(item);
+	const int tex = caveEntities[item].getCurrentTextureIndex();
+	const bool bubbled = isHiveBubbled(item);
+	if (bubbled && item < static_cast<int>(m_cosmicOver.size()))
+		m_cosmicOver[static_cast<size_t>(item)] = Cave::Entity::Base();
+
+	const int stock = B::wallStock(caveEntities[builder]);
+	const int mode = B::mode(caveEntities[builder]);
+	const int focus = caveEntities[builder].targetIndex;
+	const int hold = caveEntities[builder].extra;
+
+	if (!moveEntity(builder, dir)) return false;
+	const int dest = item;
+	B::setMode(caveEntities[dest], mode);
+	B::setWallStock(caveEntities[dest], stock);
+	caveEntities[dest].homeIndex = site;
+	caveEntities[dest].targetIndex = focus;
+	caveEntities[dest].extra = hold;
+	m_hiveBuilderDebrisBySite[site].push_back({ type, tex, bubbled });
+	m_game->soundManager.play(Sound::Effect::Drop);
+	return true;
+}
+
+void Cave::Map::clearHiveBuilderSiteDebris(const int& origin) {
+	m_hiveBuilderDebrisBySite.erase(origin);
+}
+
+bool Cave::Map::hiveBuilderSiteHasStorageHollow(const int& site) const {
+	if (!inBounds(site)) return false;
+	using BB = Cave::Entity::HiveBuilder;
+	const int ox = site % width;
+	const int oy = site / width;
+	for (int dy = 1; dy < BB::ROOM_SIZE - 1; ++dy) {
+		for (int dx = 1; dx < BB::ROOM_SIZE - 1; ++dx) {
+			if (isStorageRoom((oy + dy) * width + (ox + dx)))
+				return true;
+		}
+	}
+	return false;
+}
+
+bool Cave::Map::isHiveBuilderSiteStorageDeposit(const int& site, const int& cell) const {
+	if (!isStorageRoom(cell) || !isHiveHaulerDeposit(cell)) return false;
+	// Prefer the hollow of the room just built.
+	if (isHiveBuildFootprintCell(site, cell)) return true;
+	// Non-storage builds still deposit pocketed bubbled packages into any hive storage.
+	return !hiveBuilderSiteHasStorageHollow(site);
+}
+
+bool Cave::Map::isHiveBuilderSiteDropStand(const int& stand, const int& site) const {
+	// Same rules as collector pit stands, scoped to this site's new storage hollow
+	// (or any storage when the finished room has none).
+	if (!inBounds(stand) || !inBounds(site)) return false;
+	const bool here = isMonsterWalkable(stand)
+		|| getEntityType(stand) == Cave::Entity::Type::HiveBuilder;
+	if (!here) return false;
+	if (getEntityTransitioning(stand)
+		&& getEntityType(stand) != Cave::Entity::Type::HiveBuilder)
+		return false;
+
+	const int below = getIndex(stand, Cave::Entity::Direction::DOWN);
+	if (isHiveBuilderSiteStorageDeposit(site, below))
+		return true;
+
+	// Builder parked on the only free deposit cell — stand one up still counts
+	// so he can climb and pit-drop like a collector.
+	if (!inBounds(below) || getEntityType(below) != Cave::Entity::Type::HiveBuilder)
+		return false;
+	if (!isStorageRoom(below)) return false;
+	if (hiveBuilderSiteHasStorageHollow(site) && !isHiveBuildFootprintCell(site, below))
+		return false;
+	if (getEntityTransitioning(below)) return false;
+	const int under = getIndex(below, Cave::Entity::Direction::DOWN);
+	if (!inBounds(under) || getEntityType(under) == Cave::Entity::Type::Space)
+		return false;
+	if (Cave::Entity::isMonster(getEntityType(under)) && !isHiveBubbled(under))
+		return false;
+	return true;
+}
+
+bool Cave::Map::isHiveBuilderSiteFlatFloor(const int& cell, const int& site) const {
+	if (!inBounds(cell) || !isHiveBuildFootprintCell(site, cell) || !isStorageRoom(cell))
+		return false;
+	const Cave::Entity::Type t = getEntityType(cell);
+	if (t != Cave::Entity::Type::HiveBuilder && !hasTrait(Cave::Entity::Trait::Empty, cell))
+		return false;
+	if (getEntityTransitioning(cell) && t != Cave::Entity::Type::HiveBuilder)
+		return false;
+	return isHiveHaulerFloorSupport(getIndex(cell, Cave::Entity::Direction::DOWN));
+}
+
+int Cave::Map::findNearestHiveBuilderSiteDepositStand(const int& from, const int& site) const {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (from < 0 || from >= cellCount || !inBounds(site)) return OUT_OF_BOUNDS_INDEX;
+
+	if (isHiveBuilderSiteDropStand(from, site))
+		return from;
+
+	ensureEmptyPathScratch(cellCount);
+	beginEmptyPathGen();
+	const int gen = m_emptyPathGen;
+	m_emptyPathVisit[static_cast<size_t>(from)] = gen;
+	m_emptyPathQueue.push_back(from);
+
+	while (m_emptyPathQueueHead < m_emptyPathQueue.size()) {
+		const int current = m_emptyPathQueue[m_emptyPathQueueHead++];
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, dir);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (m_emptyPathVisit[static_cast<size_t>(next)] == gen) continue;
+			m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+
+			if (isHiveBuilderSiteDropStand(next, site))
+				return next;
+
+			if (!isMonsterWalkable(next) && next != from) continue;
+			m_emptyPathQueue.push_back(next);
+		}
+	}
+	return OUT_OF_BOUNDS_INDEX;
+}
+
+bool Cave::Map::tryHiveBuilderDepositDebris(const int& builder) {
+	if (!inBounds(builder) || getEntityType(builder) != Cave::Entity::Type::HiveBuilder)
+		return false;
+	if (getEntityTransitioning(builder)) return false;
+
+	const int site = caveEntities[builder].homeIndex;
+	auto it = m_hiveBuilderDebrisBySite.find(site);
+	if (it == m_hiveBuilderDebrisBySite.end() || it->second.empty())
+		return true;
+
+	const HiveBuilderDebrisItem item = it->second.back();
+	const int below = getIndex(builder, Cave::Entity::Direction::DOWN);
+	if (!isHiveBuilderSiteStorageDeposit(site, below)) return false;
+
+	Cave::Entity::Base cargo = hiveCargoEntity(item.type, item.texture);
+	Cave::Entity::Animation cargoAnim = cargo.getAnimation();
+	Cave::Entity::Animation spaceAnim = Cave::Entity::Space().getAnimation();
+	setEntity(below, std::move(cargo));
+	if (item.bubbled) {
+		ensureCosmicUnder();
+		using Bubble = Cave::Entity::HiveHunterBubble;
+		m_cosmicOver[static_cast<size_t>(below)] = Bubble();
+		m_cosmicOver[static_cast<size_t>(below)].setAnimationFrame(Bubble::FRAME_LAST);
+	}
+	caveEntities[below].applyIntoTransition(Cave::Entity::Direction::DOWN, spaceAnim);
+	caveEntities[builder].applyAwayTransition(Cave::Entity::Direction::DOWN, cargoAnim);
+	it->second.pop_back();
+	if (it->second.empty())
+		m_hiveBuilderDebrisBySite.erase(it);
+	m_game->soundManager.play(Sound::Effect::Drop);
+	return true;
+}
+
+bool Cave::Map::isHiveBuilderWallSlot(const int& origin, const int& cell) const {
+	using B = Cave::Entity::HiveBuilder;
+	if (!inBounds(origin) || !inBounds(cell)) return false;
+	const int ox = origin % width;
+	const int oy = origin / width;
+	const int cx = cell % width;
+	const int cy = cell / width;
+	const int dx = cx - ox;
+	const int dy = cy - oy;
+	if (dx < 0 || dy < 0 || dx >= B::ROOM_SIZE || dy >= B::ROOM_SIZE) return false;
+	const bool isBorder = dx == 0 || dx == B::ROOM_SIZE - 1 || dy == 0 || dy == B::ROOM_SIZE - 1;
+	const bool isTopGap = dy == 0 && dx >= 1 && dx <= B::ROOM_SIZE - 2;
+	return isBorder && !isTopGap;
+}
+
+Cave::Entity::Type Cave::Map::hiveBuilderWallTypeForCell(const int& origin, const int& cell, int buildMode) const {
+	using B = Cave::Entity::HiveBuilder;
+	if (!isHiveBuilderWallSlot(origin, cell)) return Cave::Entity::Type::NoType;
+	const int ox = origin % width;
+	const int oy = origin / width;
+	const int dx = (cell % width) - ox;
+	const int dy = (cell / width) - oy;
+	const bool isCorner = (dx == 0 || dx == B::ROOM_SIZE - 1)
+		&& (dy == 0 || dy == B::ROOM_SIZE - 1);
+	if (isCorner) return B::cornerWallType(buildMode);
+	return Cave::Entity::Type::HiveWall;
+}
+
+int Cave::Map::findNextHiveBuilderWallSlot(const int& origin, int buildMode) const {
+	using B = Cave::Entity::HiveBuilder;
+	if (!inBounds(origin) || isHiveBuildSiteRuined(origin)) return OUT_OF_BOUNDS_INDEX;
+	const int ox = origin % width;
+	const int oy = origin / width;
+	if (ox + B::ROOM_SIZE > width || oy + B::ROOM_SIZE > height) return OUT_OF_BOUNDS_INDEX;
+
+	// Clockwise from top-left so the builder walks the border.
+	auto needsWall = [&](int dx, int dy) -> int {
+		const bool isBorder = dx == 0 || dx == B::ROOM_SIZE - 1 || dy == 0 || dy == B::ROOM_SIZE - 1;
+		const bool isTopGap = dy == 0 && dx >= 1 && dx <= B::ROOM_SIZE - 2;
+		if (!isBorder || isTopGap) return OUT_OF_BOUNDS_INDEX;
+		const int cell = (oy + dy) * width + (ox + dx);
+		const Cave::Entity::Type want = hiveBuilderWallTypeForCell(origin, cell, buildMode);
+		if (getEntityType(cell) == want) return OUT_OF_BOUNDS_INDEX;
+		return cell;
+	};
+
+	// Top row: left corner only (gap in middle), right corner.
+	if (const int c = needsWall(0, 0); inBounds(c)) return c;
+	if (const int c = needsWall(B::ROOM_SIZE - 1, 0); inBounds(c)) return c;
+	// Right column top→bottom (skip top corner already done).
+	for (int dy = 1; dy < B::ROOM_SIZE; ++dy) {
+		if (const int c = needsWall(B::ROOM_SIZE - 1, dy); inBounds(c)) return c;
+	}
+	// Bottom row right→left (skip right corner).
+	for (int dx = B::ROOM_SIZE - 2; dx >= 0; --dx) {
+		if (const int c = needsWall(dx, B::ROOM_SIZE - 1); inBounds(c)) return c;
+	}
+	// Left column bottom→top (skip both corners).
+	for (int dy = B::ROOM_SIZE - 2; dy >= 1; --dy) {
+		if (const int c = needsWall(0, dy); inBounds(c)) return c;
+	}
+	return OUT_OF_BOUNDS_INDEX;
+}
+
+int Cave::Map::findHiveBuilderPlaceStand(const int& wallCell, const int& origin, const int& from) const {
+	using B = Cave::Entity::HiveBuilder;
+	if (!inBounds(wallCell) || !inBounds(origin)) return OUT_OF_BOUNDS_INDEX;
+	const int ox = origin % width;
+	const int oy = origin / width;
+
+	int best = OUT_OF_BOUNDS_INDEX;
+	int bestDist = std::numeric_limits<int>::max();
+
+	for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+		const int stand = getIndex(wallCell, dir);
+		if (!inBounds(stand)) continue;
+		if (getEntityTransitioning(stand)) continue;
+		if (!isMonsterWalkable(stand) && !Cave::Entity::isDirtLike(getEntityType(stand))
+			&& getEntityType(stand) != Cave::Entity::Type::HiveBuilder)
+			continue;
+
+		const int sx = stand % width;
+		const int sy = stand / width;
+		const bool inFoot = sx >= ox && sx < ox + B::ROOM_SIZE
+			&& sy >= oy && sy < oy + B::ROOM_SIZE;
+		const bool isTopGap = inFoot && sy == oy && sx > ox && sx < ox + B::ROOM_SIZE - 1;
+		const bool isInterior = inFoot && sx > ox && sx < ox + B::ROOM_SIZE - 1
+			&& sy > oy && sy < oy + B::ROOM_SIZE - 1;
+		// Prefer standing in the hollow / entrance, not outside.
+		const int prefer = (isInterior || isTopGap) ? 0 : 1000;
+		const int dist = std::abs(sx - (from % width)) + std::abs(sy - (from / width)) + prefer;
+		if (dist < bestDist) {
+			bestDist = dist;
+			best = stand;
+		}
+	}
+	return best;
+}
+
+bool Cave::Map::tryHiveBuilderPlaceWall(const int& builder, const int& wallCell, int buildMode) {
+	using B = Cave::Entity::HiveBuilder;
+	if (!inBounds(builder) || getEntityType(builder) != Cave::Entity::Type::HiveBuilder)
+		return false;
+	if (!inBounds(wallCell) || getEntityTransitioning(builder)) return false;
+	if (B::wallStock(caveEntities[builder]) < 1) return false;
+
+	const Cave::Entity::Type want = hiveBuilderWallTypeForCell(
+		caveEntities[builder].homeIndex, wallCell, buildMode);
+	if (want == Cave::Entity::Type::NoType) return false;
+	if (getEntityType(wallCell) == want) return true;
+
+	auto stampWall = [&](int cell) {
+		if (want == Cave::Entity::Type::HiveMatriarchWall)
+			setEntity(cell, Cave::Entity::HiveMatriarchWall());
+		else if (want == Cave::Entity::Type::HiveNurseryWall)
+			setEntity(cell, Cave::Entity::HiveNurseryWall());
+		else if (want == Cave::Entity::Type::HiveStorageWall)
+			setEntity(cell, Cave::Entity::HiveStorageWall());
+		else if (want == Cave::Entity::Type::HiveLivingWall)
+			setEntity(cell, Cave::Entity::HiveLivingWall());
+		else
+			setEntity(cell, Cave::Entity::HiveWall());
+		B::setWallStock(caveEntities[builder], B::wallStock(caveEntities[builder]) - 1);
+		m_game->soundManager.play(Sound::Effect::Land);
+	};
+
+	// Standing on the empty slot — step into a stand cell and leave the wall behind.
+	if (builder == wallCell) {
+		const int origin = caveEntities[builder].homeIndex;
+		const int stand = findHiveBuilderPlaceStand(wallCell, origin, builder);
+		if (!inBounds(stand) || stand == builder) return false;
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			if (getIndex(builder, dir) != stand) continue;
+			const int stock = B::wallStock(caveEntities[builder]);
+			const int mode = B::mode(caveEntities[builder]);
+			const int site = caveEntities[builder].homeIndex;
+			const int focus = caveEntities[builder].targetIndex;
+			const int hold = caveEntities[builder].extra;
+			if (!tryMoveHiveBuilder(builder, dir)) return false;
+			const int dest = stand;
+			// Vacated cell should be Space — place the wall there.
+			const int vacated = getIndex(dest, Cave::Entity::oppositeDirection(dir));
+			if (!inBounds(vacated) || getEntityType(vacated) != Cave::Entity::Type::Space)
+				return false;
+			if (want == Cave::Entity::Type::HiveMatriarchWall)
+				setEntity(vacated, Cave::Entity::HiveMatriarchWall());
+			else if (want == Cave::Entity::Type::HiveNurseryWall)
+				setEntity(vacated, Cave::Entity::HiveNurseryWall());
+			else if (want == Cave::Entity::Type::HiveStorageWall)
+				setEntity(vacated, Cave::Entity::HiveStorageWall());
+			else if (want == Cave::Entity::Type::HiveLivingWall)
+				setEntity(vacated, Cave::Entity::HiveLivingWall());
+			else
+				setEntity(vacated, Cave::Entity::HiveWall());
+			B::setMode(caveEntities[dest], mode);
+			B::setWallStock(caveEntities[dest], stock - 1);
+			caveEntities[dest].homeIndex = site;
+			caveEntities[dest].targetIndex = focus;
+			caveEntities[dest].extra = hold;
+			m_game->soundManager.play(Sound::Effect::Land);
+			// Claim footprint as soon as walls exist so later jobs don't overlap it.
+			rememberHiveKnownRoom(site, mode);
+			return true;
+		}
+		return false;
+	}
+
+	// Adjacent place into an empty/clearable slot.
+	bool adjacent = false;
+	for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+		if (getIndex(builder, dir) == wallCell) {
+			adjacent = true;
+			break;
+		}
+	}
+	if (!adjacent) return false;
+	if (getEntityTransitioning(wallCell)) return false;
+	if (!hasTrait(Cave::Entity::Trait::Empty, wallCell)
+		&& getEntityType(wallCell) != Cave::Entity::Type::Space
+		&& !Cave::Entity::isDirtLike(getEntityType(wallCell)))
+		return false;
+
+	stampWall(wallCell);
+	rememberHiveKnownRoom(caveEntities[builder].homeIndex, buildMode);
+	// stampWall decremented stock on builder — still at same cell.
+	return true;
+}
+
+Cave::Entity::Direction Cave::Map::findPathForHiveBuilder(const int& index, const int& goal) const {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (index < 0 || index >= cellCount || goal < 0 || goal >= cellCount)
+		return Cave::Entity::Direction::NO_DIRECTION;
+	if (index == goal) return Cave::Entity::Direction::NO_DIRECTION;
+
+	auto canPlanThrough = [this, index, goal](int cell) {
+		if (cell == goal)
+			return isMonsterWalkable(cell) || cell == index;
+		// Stay out of another builder's claimed footprint.
+		if (isHiveForeignBuildSite(index, cell)) return false;
+		// On-duty builders must not cut through living — allow evacuating out.
+		if (isLivingRoom(cell) && !isLivingRoom(index)) return false;
+		// Builders no longer dig — diggers open dirt paths for them.
+		if (!isMonsterWalkable(cell)) return false;
+		// Don't path under resting piles while gathering / walking the cave.
+		if (!isHiveBuilderSafeStand(cell) && cell != index) return false;
+		return true;
+	};
+
+	if (canPlanThrough(goal)) {
+		for (Cave::Entity::Direction step : Cave::Entity::ALL_DIRECTIONS) {
+			if (getIndex(index, step) == goal)
+				return step;
+		}
+	}
+
+	ensureEmptyPathScratch(cellCount);
+	beginEmptyPathGen();
+	const int gen = m_emptyPathGen;
+	m_emptyPathVisit[static_cast<size_t>(index)] = gen;
+	m_emptyPathQueue.push_back(index);
+
+	while (m_emptyPathQueueHead < m_emptyPathQueue.size()) {
+		const int current = m_emptyPathQueue[m_emptyPathQueueHead++];
+		for (Cave::Entity::Direction step : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, step);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (m_emptyPathVisit[static_cast<size_t>(next)] == gen) continue;
+			if (!canPlanThrough(next)) continue;
+			// Prefer climbing / circling stacks — never plan a trench-dive beside them.
+			if (step == Cave::Entity::Direction::DOWN
+				&& next != goal
+				&& isHiveBuilderDiveBesidePile(next))
+				continue;
+			m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+			const Cave::Entity::Direction first = (current == index)
+				? step
+				: m_emptyPathFirst[static_cast<size_t>(current)];
+			m_emptyPathFirst[static_cast<size_t>(next)] = first;
+			if (next == goal)
+				return first;
+			m_emptyPathQueue.push_back(next);
+		}
+	}
+	return Cave::Entity::Direction::NO_DIRECTION;
+}
+
+bool Cave::Map::tryMoveHiveBuilder(const int& index, const Cave::Entity::Direction& dir) {
+	if (dir == Cave::Entity::Direction::NO_DIRECTION) return false;
+	setEntityDirection(index, dir);
+	const int destination = getIndex(index, dir);
+	if (destination == OUT_OF_BOUNDS_INDEX) return false;
+	if (getEntityTransitioning(destination)) return false;
+	if (isHiveForeignBuildSite(index, destination)) return false;
+	if (!isMonsterWalkable(destination)) return false;
+	if (!isHiveBuilderSafeStand(destination)) return false;
+	// Never drop into the empty shaft beside a fallable column.
+	if (dir == Cave::Entity::Direction::DOWN
+		&& isHiveBuilderDiveBesidePile(destination))
+		return false;
+
+	using B = Cave::Entity::HiveBuilder;
+	const int stock = B::wallStock(caveEntities[index]);
+	const int mode = B::mode(caveEntities[index]);
+	const int site = caveEntities[index].homeIndex;
+	const int focus = caveEntities[index].targetIndex;
+	const int hold = caveEntities[index].extra;
+
+	if (!tryMoveEnemy(index, Cave::Entity::Trait::Empty, dir))
+		return false;
+
+	// Preserve builder job state across the vacated/occupied cells.
+	if (getEntityType(destination) == Cave::Entity::Type::HiveBuilder) {
+		B::setMode(caveEntities[destination], mode);
+		B::setWallStock(caveEntities[destination], stock);
+		caveEntities[destination].homeIndex = site;
+		caveEntities[destination].targetIndex = focus;
+		caveEntities[destination].extra = hold;
+	}
+	return true;
+}
+
+void Cave::Map::updateHiveBuilder(const int& index) {
+	using B = Cave::Entity::HiveBuilder;
+	using L = Cave::Entity::HiveLarva;
+	if (handleEnemyBasicUpdate(index)) return;
+
+	// Survive first — only dodge objects that are already falling (walk-only).
+	if (tryHiveWorkerDodgeCrush(index, false))
+		return;
+	// Other builders leave a claimed footprint; the owner stays.
+	if (tryHiveEvacuateBuildSite(index))
+		return;
+	if (tryHiveWorkerGoLive(index))
+		return;
+
+	auto goIdle = [&]() -> bool {
+		// Abandoned / ruined mid-build: drop pocketed debris rather than dumping into an old storage.
+		const int site = caveEntities[index].homeIndex;
+		const int abandonMode = B::mode(caveEntities[index]);
+		// Partial walls stay claimed so a later job repairs them instead of overlapping.
+		if (inBounds(site) && B::isBuilding(caveEntities[index])
+			&& hiveBuilderWallsNeeded(site, abandonMode) < B::WALLS_PER_ROOM)
+			rememberHiveKnownRoom(site, abandonMode);
+		if (inBounds(site))
+			clearHiveBuilderSiteDebris(site);
+		B::setMode(caveEntities[index], B::MODE_IDLE);
+		caveEntities[index].homeIndex = -1;
+		caveEntities[index].targetIndex = OUT_OF_BOUNDS_INDEX;
+		return true;
+	};
+
+	auto wantToBuildMode = [](Cave::Entity::Type want) {
+		if (want == Cave::Entity::Type::HiveNurseryWall) return B::MODE_BUILD_NURSERY;
+		if (want == Cave::Entity::Type::HiveStorageWall) return B::MODE_BUILD_STORAGE;
+		if (want == Cave::Entity::Type::HiveLivingWall) return B::MODE_BUILD_LIVING;
+		return B::MODE_BUILD_MATRIARCH;
+	};
+
+	auto tryEatOrPathFood = [&]() -> bool {
+		// Any exposed top is fair game — take the closest. If that rock sits beside a
+		// taller column, climb to that peak first (don't chomp the low red-X underfoot).
+		static const Cave::Entity::Direction kEatDirs[] = {
+			Cave::Entity::Direction::LEFT,
+			Cave::Entity::Direction::RIGHT,
+			Cave::Entity::Direction::DOWN,
+			Cave::Entity::Direction::UP,
+		};
+
+		auto climbAdjacentPeak = [&](int food) -> int {
+			if (!inBounds(food) || !isHiveBuilderFood(food)) return food;
+			int best = food;
+			int bestY = food / width;
+			auto consider = [&](int cell) {
+				if (!inBounds(cell)) return;
+				int top = OUT_OF_BOUNDS_INDEX;
+				if (isHiveBuilderPileOccupant(cell))
+					top = hiveBuilderPileColumnTop(cell);
+				else {
+					const int down = getIndex(cell, Cave::Entity::Direction::DOWN);
+					if (inBounds(down) && isHiveBuilderPileOccupant(down))
+						top = hiveBuilderPileColumnTop(down);
+				}
+				if (!inBounds(top) || !isHiveBuilderFood(top)) return;
+				const int y = top / width;
+				if (y < bestY) {
+					best = top;
+					bestY = y;
+				}
+			};
+			for (int origin : { food, index }) {
+				for (Cave::Entity::Direction side : {
+					Cave::Entity::Direction::LEFT,
+					Cave::Entity::Direction::RIGHT }) {
+					consider(getIndex(origin, side));
+				}
+			}
+			return best;
+		};
+
+		int& focus = caveEntities[index].targetIndex;
+		const int best = findNearestHiveBuilderFood(index);
+		int gather = OUT_OF_BOUNDS_INDEX;
+		if (inBounds(focus) && isHiveBuilderFood(focus)
+			&& inBounds(best) && (focus / width) == (best / width)) {
+			// Sticky among equal-height closest tops (stops L/R moonwalking).
+			gather = focus;
+		}
+		else {
+			gather = best;
+		}
+		gather = climbAdjacentPeak(gather);
+		if (!inBounds(gather)) {
+			focus = OUT_OF_BOUNDS_INDEX;
+			return false;
+		}
+		focus = gather;
+
+		for (Cave::Entity::Direction dir : kEatDirs) {
+			if (getIndex(index, dir) != gather) continue;
+			return tryHiveBuilderEat(index, dir);
+		}
+
+		// Path to a safe stand beside the top — never walk the boulder cell / trench-dive.
+		const int stand = findHiveBuilderGatherStand(gather);
+		if (!inBounds(stand)) {
+			requestHiveBuilderFoodAccessDig(index, gather);
+			setEntityMoving(index, false);
+			return inBounds(findHiveBuilderFoodAccessDigCell(index, gather));
+		}
+		if (index == stand) {
+			// On the UP stand of our focus — should have eaten above; if not, hold.
+			setEntityMoving(index, false);
+			return true;
+		}
+		const Cave::Entity::Direction step = findPathForHiveBuilder(index, stand);
+		if (step != Cave::Entity::Direction::NO_DIRECTION
+			&& tryMoveHiveBuilder(index, step))
+			return true;
+		requestHiveBuilderFoodAccessDig(index, gather);
+		if (inBounds(findHiveBuilderFoodAccessDigCell(index, gather))) {
+			setEntityMoving(index, false);
+			return true;
+		}
+		setEntityMoving(index, false);
+		return false;
+	};
+
+	auto beginStorageExpandForDebris = [&](int debrisSite) -> bool {
+		const int buildMode = B::MODE_BUILD_STORAGE;
+		const int newSite = pickHiveBuildSite(index, buildMode);
+		if (!inBounds(newSite) || hiveBuilderWallsNeeded(newSite, buildMode) <= 0)
+			return false;
+		// Keep pocketed inventory; re-key it to the new storage footprint.
+		auto it = m_hiveBuilderDebrisBySite.find(debrisSite);
+		std::vector<HiveBuilderDebrisItem> carried;
+		if (it != m_hiveBuilderDebrisBySite.end()) {
+			carried = std::move(it->second);
+			m_hiveBuilderDebrisBySite.erase(it);
+		}
+		if (inBounds(debrisSite) && debrisSite != newSite)
+			clearHiveBuilderSiteDebris(debrisSite);
+		if (!carried.empty())
+			m_hiveBuilderDebrisBySite[newSite] = std::move(carried);
+		B::setMode(caveEntities[index], buildMode);
+		caveEntities[index].homeIndex = newSite;
+		caveEntities[index].targetIndex = OUT_OF_BOUNDS_INDEX;
+		setEntityMoving(index, false);
+		return true;
+	};
+
+	auto tryCollectOrPathDebris = [&](int site) -> bool {
+		static const Cave::Entity::Direction kDirs[] = {
+			Cave::Entity::Direction::LEFT,
+			Cave::Entity::Direction::RIGHT,
+			Cave::Entity::Direction::DOWN,
+			Cave::Entity::Direction::UP,
+		};
+
+		int& focus = caveEntities[index].targetIndex;
+		const int best = findNearestHiveBuilderSiteDebris(index, site);
+		int debris = OUT_OF_BOUNDS_INDEX;
+		if (inBounds(focus) && isHiveBuilderSiteDebris(site, focus)
+			&& inBounds(best) && (focus / width) == (best / width))
+			debris = focus;
+		else
+			debris = best;
+		if (!inBounds(debris)) {
+			focus = OUT_OF_BOUNDS_INDEX;
+			return false;
+		}
+		focus = debris;
+
+		for (Cave::Entity::Direction dir : kDirs) {
+			if (getIndex(index, dir) != debris) continue;
+			return tryHiveBuilderCollectDebris(index, dir);
+		}
+		// Stand beside the debris top — don't path into the pile cell itself.
+		int stand = OUT_OF_BOUNDS_INDEX;
+		for (Cave::Entity::Direction dir : {
+			Cave::Entity::Direction::UP,
+			Cave::Entity::Direction::LEFT,
+			Cave::Entity::Direction::RIGHT,
+			Cave::Entity::Direction::DOWN }) {
+			const int s = getIndex(debris, dir);
+			if (!inBounds(s) || !isHiveBuilderSafeStand(s)) continue;
+			if (dir == Cave::Entity::Direction::DOWN && isHiveBuilderDiveBesidePile(s))
+				continue;
+			stand = s;
+			break;
+		}
+		if (!inBounds(stand)) {
+			setEntityMoving(index, false);
+			return true;
+		}
+		if (index == stand) {
+			setEntityMoving(index, false);
+			return true;
+		}
+		const Cave::Entity::Direction step = findPathForHiveBuilder(index, stand);
+		if (step != Cave::Entity::Direction::NO_DIRECTION
+			&& tryMoveHiveBuilder(index, step))
+			return true;
+		setEntityMoving(index, false);
+		return true;
+	};
+
+	auto finishBuildOrDeposit = [&](int site) {
+		rebuildHiveRooms();
+		rememberCompletedHiveRooms();
+		refreshHiveGameplayCaches();
+		queueHiveRoomConnect(site);
+		const auto it = m_hiveBuilderDebrisBySite.find(site);
+		const bool hasDebris = it != m_hiveBuilderDebrisBySite.end() && !it->second.empty();
+		if (hasDebris) {
+			const bool siteStorage = hiveBuilderSiteHasStorageHollow(site);
+			const bool existingRoom = hiveStorageExists() && !hiveStorageAllFull();
+			if (siteStorage || existingRoom) {
+				B::setMode(caveEntities[index], B::MODE_DEPOSIT_DEBRIS);
+				caveEntities[index].homeIndex = site;
+				caveEntities[index].targetIndex = OUT_OF_BOUNDS_INDEX;
+				setEntityMoving(index, false);
+				return;
+			}
+			// Inventory waiting and every storage is full — gather/build another storage.
+			if (beginStorageExpandForDebris(site))
+				return;
+		}
+		clearHiveBuilderSiteDebris(site);
+		B::setMode(caveEntities[index], B::MODE_IDLE);
+		caveEntities[index].homeIndex = -1;
+		caveEntities[index].targetIndex = OUT_OF_BOUNDS_INDEX;
+		setEntityMoving(index, false);
+	};
+
+	// Legacy MODE_GATHER → pick repair / needed room, or idle. Never force storage.
+	if (B::mode(caveEntities[index]) == B::MODE_GATHER) {
+		if (isHiveBuilderJobTaken(index) || m_hiveBuilderSitePickTried) {
+			if (goIdle())
+				wanderHiveAdult(index, L::HOLD_TICKS);
+			return;
+		}
+		m_hiveBuilderSitePickTried = true;
+		int buildMode = B::MODE_BUILD_MATRIARCH;
+		int site = pickHiveRepairSite(index, buildMode);
+		if (!inBounds(site)) {
+			const Cave::Entity::Type want = pickHiveBuilderRoomType();
+			if (want == Cave::Entity::Type::NoType) {
+				if (goIdle())
+					wanderHiveAdult(index, L::HOLD_TICKS);
+				return;
+			}
+			buildMode = wantToBuildMode(want);
+			site = pickHiveBuildSite(index, buildMode);
+		}
+		if (inBounds(site) && hiveBuilderWallsNeeded(site, buildMode) > 0) {
+			B::setMode(caveEntities[index], buildMode);
+			caveEntities[index].homeIndex = site;
+			caveEntities[index].targetIndex = OUT_OF_BOUNDS_INDEX;
+		}
+		else {
+			if (goIdle())
+				wanderHiveAdult(index, L::HOLD_TICKS);
+			return;
+		}
+	}
+
+	if (B::isDepositingDebris(caveEntities[index])) {
+		const int site = caveEntities[index].homeIndex;
+		auto it = m_hiveBuilderDebrisBySite.find(site);
+		if (!inBounds(site) || it == m_hiveBuilderDebrisBySite.end() || it->second.empty()) {
+			clearHiveBuilderSiteDebris(site);
+			B::setMode(caveEntities[index], B::MODE_IDLE);
+			caveEntities[index].homeIndex = -1;
+			caveEntities[index].targetIndex = OUT_OF_BOUNDS_INDEX;
+			wanderHiveAdult(index, L::HOLD_TICKS);
+			return;
+		}
+
+		int& focus = caveEntities[index].targetIndex;
+		const int stand = (inBounds(focus) && isHiveBuilderSiteDropStand(focus, site))
+			? focus
+			: findNearestHiveBuilderSiteDepositStand(index, site);
+
+		if (!inBounds(stand)) {
+			// No free storage slot — collect stock and raise a new storage for this inventory.
+			if (beginStorageExpandForDebris(site))
+				return;
+			setEntityMoving(index, false);
+			return;
+		}
+
+		focus = stand;
+
+		// On the pit stand — spit straight down into the new storage (collector-style).
+		if (index == focus) {
+			if (tryHiveBuilderDepositDebris(index))
+				return;
+
+			// Standing on the floor deposit cell: climb one up, then pit-drop next tick.
+			if (isHiveBuilderSiteFlatFloor(index, site)) {
+				const int up = getIndex(index, Cave::Entity::Direction::UP);
+				if (inBounds(up) && isMonsterWalkable(up) && !getEntityTransitioning(up)
+					&& tryMoveHiveBuilder(index, Cave::Entity::Direction::UP)) {
+					focus = up;
+					return;
+				}
+			}
+
+			focus = OUT_OF_BOUNDS_INDEX;
+			setEntityMoving(index, false);
+			return;
+		}
+
+		// Prefer the direct climb onto the stand above us.
+		if (getIndex(index, Cave::Entity::Direction::UP) == focus
+			&& !getEntityTransitioning(focus)
+			&& tryMoveHiveBuilder(index, Cave::Entity::Direction::UP))
+			return;
+
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			if (getIndex(index, dir) != focus) continue;
+			if (tryMoveHiveBuilder(index, dir))
+				return;
+			setEntityMoving(index, false);
+			return;
+		}
+
+		const Cave::Entity::Direction step = findPathForHiveBuilder(index, focus);
+		if (step != Cave::Entity::Direction::NO_DIRECTION
+			&& tryMoveHiveBuilder(index, step))
+			return;
+		setEntityMoving(index, false);
+		return;
+	}
+
+	if (B::isBuilding(caveEntities[index])) {
+		int site = caveEntities[index].homeIndex;
+		int buildMode = B::mode(caveEntities[index]);
+
+		// Finish the current footprint before starting anything else — mid-build switches
+		// left unfinished walls that later sites overlapped into conglomerations.
+		if (!inBounds(site) || isHiveBuildSiteRuined(site)) {
+			if (goIdle())
+				wanderHiveAdult(index, L::HOLD_TICKS);
+			return;
+		}
+
+		const int needed = hiveBuilderWallsNeeded(site, buildMode);
+		if (needed <= 0) {
+			finishBuildOrDeposit(site);
+			return;
+		}
+
+		// 1) Pocket reachable fallables in the footprint (before spending storage boulders).
+		if (tryCollectOrPathDebris(site))
+			return;
+
+		// 2) Wait for diggers to clear dirt — builders no longer dig.
+		const int dig = findHiveBuilderDigCell(site);
+		if (inBounds(dig)) {
+			caveEntities[index].targetIndex = dig;
+			setEntityMoving(index, false);
+			return;
+		}
+
+		// 3) Eat the full wall count for this job, then place.
+		if (B::wallStock(caveEntities[index]) < needed) {
+			if (tryEatOrPathFood())
+				return;
+			setEntityMoving(index, false);
+			return;
+		}
+
+		// 4) Place one missing wall at a time (stock already covers the full job).
+		const int slot = findNextHiveBuilderWallSlot(site, buildMode);
+		if (!inBounds(slot)) {
+			finishBuildOrDeposit(site);
+			return;
+		}
+
+		caveEntities[index].targetIndex = slot;
+
+		bool adjacentToSlot = (index == slot);
+		if (!adjacentToSlot) {
+			for (Cave::Entity::Direction d : Cave::Entity::ALL_DIRECTIONS) {
+				if (getIndex(index, d) == slot) {
+					adjacentToSlot = true;
+					break;
+				}
+			}
+		}
+		if (adjacentToSlot && tryHiveBuilderPlaceWall(index, slot, buildMode))
+			return;
+
+		const int stand = findHiveBuilderPlaceStand(slot, site, index);
+		const bool slotOpen = getEntityType(slot) == Cave::Entity::Type::Space
+			|| hasTrait(Cave::Entity::Trait::Empty, slot);
+		const int goal = slotOpen ? slot : stand;
+
+		if (inBounds(goal) && index != goal) {
+			for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+				if (getIndex(index, dir) != goal) continue;
+				if (tryMoveHiveBuilder(index, dir))
+					return;
+				setEntityMoving(index, false);
+				return;
+			}
+			const Cave::Entity::Direction step = findPathForHiveBuilder(index, goal);
+			if (step != Cave::Entity::Direction::NO_DIRECTION
+				&& tryMoveHiveBuilder(index, step))
+				return;
+		}
+
+		if (tryHiveBuilderPlaceWall(index, slot, buildMode))
+			return;
+
+		setEntityMoving(index, false);
+		return;
+	}
+
+	// IDLE — at most one builder holds a construction job; the rest keep roaming.
+	// Also at most one expensive site-pick BFS per tick (all idle builders used to hammer this).
+	if (caveEntities[index].extra <= 0 && !isHiveBuilderJobTaken(index)
+		&& !m_hiveBuilderSitePickTried) {
+		m_hiveBuilderSitePickTried = true;
+		auto tryBeginBuild = [&](int buildMode) -> bool {
+			const int site = pickHiveBuildSite(index, buildMode);
+			if (!inBounds(site) || hiveBuilderWallsNeeded(site, buildMode) <= 0)
+				return false;
+			B::setMode(caveEntities[index], buildMode);
+			caveEntities[index].homeIndex = site;
+			caveEntities[index].targetIndex = OUT_OF_BOUNDS_INDEX;
+			return true;
+		};
+
+		// Overflow with a packed living room — expand living before patching old rooms.
+		if (hiveHasLivingOverflow() && hiveLivingExists() && hiveLivingAllFull()) {
+			if (tryBeginBuild(B::MODE_BUILD_LIVING))
+				return;
+		}
+
+		int repairMode = B::MODE_BUILD_MATRIARCH;
+		const int repairSite = pickHiveRepairSite(index, repairMode);
+		if (inBounds(repairSite)) {
+			B::setMode(caveEntities[index], repairMode);
+			caveEntities[index].homeIndex = repairSite;
+			caveEntities[index].targetIndex = OUT_OF_BOUNDS_INDEX;
+			return;
+		}
+
+		const Cave::Entity::Type want = pickHiveBuilderRoomType();
+		if (want != Cave::Entity::Type::NoType
+			&& tryBeginBuild(wantToBuildMode(want)))
+			return;
+	}
+
+	wanderHiveAdult(index, L::HOLD_TICKS);
+}
+
+bool Cave::Map::isHiveCollectable(const int& cell) const {
+	if (!inBounds(cell) || getEntityTransitioning(cell)) return false;
+	// Storage stockpiles stay put.
+	if (isStorageRoom(cell)) return false;
+	// Matriarch room: haul fallen loot, but leave bubbled prey as her food.
+	if (isMatriarchRoom(cell) && isHiveBubbled(cell)) return false;
+	// Nursery: haul anything that falls in (larvae don't need stockpiles).
+	// Don't target loot inside a claimed build footprint (stops evacuate thrash).
+	if (findHiveActiveBuildSiteAt(cell) != OUT_OF_BOUNDS_INDEX) return false;
+	if (isHiveBubbled(cell)) return true;
+	const Cave::Entity::Type t = getEntityType(cell);
+	if (Cave::Entity::isBoulder(t) || Cave::Entity::isHotBoulder(t)) return true;
+	if (t == Cave::Entity::Type::MagicBoulder) return true;
+	if (Cave::Entity::isDiamondTile(t)) return true;
+	if (t == Cave::Entity::Type::Ore) return true;
+	return false;
+}
+
+bool Cave::Map::isHiveCollectableItem(const int& cell) const {
+	return isHiveCollectable(cell) && !isHiveBubbled(cell);
+}
+
+bool Cave::Map::isHiveCollectableBubbled(const int& cell) const {
+	return isHiveCollectable(cell) && isHiveBubbled(cell);
+}
+
+int Cave::Map::pickHiveCollectable(const int& from) const {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (from < 0 || from >= cellCount) return OUT_OF_BOUNDS_INDEX;
+
+	// One BFS for both categories — callers used to scan the whole cave twice per tick.
+	std::vector<int> items;
+	std::vector<int> bubbled;
+	items.reserve(16);
+	bubbled.reserve(16);
+
+	ensureEmptyPathScratch(cellCount);
+	beginEmptyPathGen();
+	const int gen = m_emptyPathGen;
+	m_emptyPathVisit[static_cast<size_t>(from)] = gen;
+	m_emptyPathQueue.push_back(from);
+	while (m_emptyPathQueueHead < m_emptyPathQueue.size()) {
+		const int current = m_emptyPathQueue[m_emptyPathQueueHead++];
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, dir);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (m_emptyPathVisit[static_cast<size_t>(next)] == gen) continue;
+			m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+			if (isHiveCollectableBubbled(next))
+				bubbled.push_back(next);
+			else if (isHiveCollectableItem(next))
+				items.push_back(next);
+			if (!isMonsterWalkable(next) && next != from) continue;
+			m_emptyPathQueue.push_back(next);
+		}
+	}
+
+	const bool wantBubbled = Utils::randomInteger(0, 1) == 0;
+	const std::vector<int>& preferred = wantBubbled ? bubbled : items;
+	const std::vector<int>& fallback = wantBubbled ? items : bubbled;
+	if (!preferred.empty()) {
+		return preferred[static_cast<size_t>(
+			Utils::randomInteger(0, static_cast<int>(preferred.size()) - 1))];
+	}
+	if (fallback.empty()) return OUT_OF_BOUNDS_INDEX;
+	return fallback[static_cast<size_t>(
+		Utils::randomInteger(0, static_cast<int>(fallback.size()) - 1))];
+}
+
+int Cave::Map::findNearestHiveCollectable(const int& from) const {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (from < 0 || from >= cellCount) return OUT_OF_BOUNDS_INDEX;
+
+	ensureEmptyPathScratch(cellCount);
+	beginEmptyPathGen();
+	const int gen = m_emptyPathGen;
+	m_emptyPathVisit[static_cast<size_t>(from)] = gen;
+	m_emptyPathQueue.push_back(from);
+
+	while (m_emptyPathQueueHead < m_emptyPathQueue.size()) {
+		const int current = m_emptyPathQueue[m_emptyPathQueueHead++];
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, dir);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (m_emptyPathVisit[static_cast<size_t>(next)] == gen) continue;
+			m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+
+			if (isHiveCollectable(next))
+				return next;
+
+			if (!isMonsterWalkable(next) && next != from) continue;
+			m_emptyPathQueue.push_back(next);
+		}
+	}
+	return OUT_OF_BOUNDS_INDEX;
+}
+
+bool Cave::Map::isHiveHaulerDeposit(const int& cell) const {
+	if (!inBounds(cell)) return false;
+	if (!hasTrait(Cave::Entity::Trait::Empty, cell)) return false;
+	if (getEntityTransitioning(cell)) return false;
+	// Must rest on a real tile — not open Space underneath (stacking on cargo is OK).
+	const int under = getIndex(cell, Cave::Entity::Direction::DOWN);
+	if (!inBounds(under)) return false;
+	if (getEntityType(under) == Cave::Entity::Type::Space) return false;
+	// Never pile onto free monsters — bubbled packages are fine.
+	if (Cave::Entity::isMonster(getEntityType(under)) && !isHiveBubbled(under))
+		return false;
+	return true;
+}
+
+bool Cave::Map::isHiveHaulerFloorSupport(const int& cell) const {
+	// True room floor/wall — not air and not already-stored cargo (avoids up/down thrash above stacks).
+	if (!inBounds(cell)) return false;
+	const Cave::Entity::Type t = getEntityType(cell);
+	if (t == Cave::Entity::Type::Space) return false;
+	if (hasTrait(Cave::Entity::Trait::Empty, cell)) return false;
+	if (isHiveBubbled(cell)) return false;
+	if (Cave::Entity::isMonster(t)) return false;
+	if (Cave::Entity::isBoulder(t) || Cave::Entity::isHotBoulder(t)) return false;
+	if (t == Cave::Entity::Type::MagicBoulder) return false;
+	if (Cave::Entity::isDiamondTile(t) || t == Cave::Entity::Type::Ore) return false;
+	return true;
+}
+
+bool Cave::Map::isHiveHaulerFlatFloor(const int& cell, bool inRoom, Cave::Entity::Type hauler) const {
+	if (!inBounds(cell) || !inRoom) return false;
+	const Cave::Entity::Type t = getEntityType(cell);
+	if (t != hauler && !hasTrait(Cave::Entity::Trait::Empty, cell))
+		return false;
+	if (getEntityTransitioning(cell) && t != hauler)
+		return false;
+	return isHiveHaulerFloorSupport(getIndex(cell, Cave::Entity::Direction::DOWN));
+}
+
+bool Cave::Map::isHiveHaulerStackStand(const int& stand, bool inRoom, Cave::Entity::Type hauler) const {
+	// Occupied deposit slot: standing on cargo/boulder/diamond/bubbled (side-step leave).
+	if (!inBounds(stand) || !inRoom) return false;
+	const Cave::Entity::Type t = getEntityType(stand);
+	if (t != hauler && !hasTrait(Cave::Entity::Trait::Empty, stand))
+		return false;
+	if (getEntityTransitioning(stand) && t != hauler)
+		return false;
+	const int under = getIndex(stand, Cave::Entity::Direction::DOWN);
+	if (!inBounds(under) || getEntityType(under) == Cave::Entity::Type::Space)
+		return false;
+	if (isHiveHaulerFloorSupport(under)) return false;
+	// Free monsters are not a pile — bubbled packages are.
+	if (Cave::Entity::isMonster(getEntityType(under)) && !isHiveBubbled(under))
+		return false;
+	return true;
+}
+
+bool Cave::Map::isHiveHaulerDropStand(const int& stand, bool depositInRoom, Cave::Entity::Type hauler) const {
+	if (!inBounds(stand) || !depositInRoom) return false;
+	const bool here = isMonsterWalkable(stand) || getEntityType(stand) == hauler;
+	if (!here) return false;
+	const int below = getIndex(stand, Cave::Entity::Direction::DOWN);
+	// Deposits are always downward into a supported empty cell under the stand.
+	if (isHiveHaulerDeposit(below)) return true;
+	// Hauler parked on the only free deposit cell — stand above (even outside the room) still counts.
+	if (!inBounds(below) || getEntityType(below) != hauler) return false;
+	if (getEntityTransitioning(below)) return false;
+	const int under = getIndex(below, Cave::Entity::Direction::DOWN);
+	if (!inBounds(under)) return false;
+	if (getEntityType(under) == Cave::Entity::Type::Space) return false;
+	if (Cave::Entity::isMonster(getEntityType(under)) && !isHiveBubbled(under))
+		return false;
+	return true;
+}
+
+int Cave::Map::findNearestHiveHaulerDropStand(const int& from, const std::vector<char>& room,
+	Cave::Entity::Type hauler) const {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (from < 0 || from >= cellCount) return OUT_OF_BOUNDS_INDEX;
+
+	auto inRoom = [this, &room](int cell) {
+		if (!inBounds(cell) || cell >= static_cast<int>(room.size())) return false;
+		return room[static_cast<size_t>(cell)] != 0;
+	};
+	auto depositInRoom = [&](int stand) {
+		return inRoom(getIndex(stand, Cave::Entity::Direction::DOWN));
+	};
+
+	if (isHiveHaulerDropStand(from, depositInRoom(from), hauler))
+		return from;
+
+	ensureEmptyPathScratch(cellCount);
+	beginEmptyPathGen();
+	const int gen = m_emptyPathGen;
+	m_emptyPathVisit[static_cast<size_t>(from)] = gen;
+	m_emptyPathQueue.push_back(from);
+
+	while (m_emptyPathQueueHead < m_emptyPathQueue.size()) {
+		const int current = m_emptyPathQueue[m_emptyPathQueueHead++];
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, dir);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (m_emptyPathVisit[static_cast<size_t>(next)] == gen) continue;
+			m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+			// Stand may sit outside the room; the deposit cell below must be inside.
+			if (isHiveHaulerDropStand(next, depositInRoom(next), hauler))
+				return next;
+			if (!isMonsterWalkable(next)) continue;
+			m_emptyPathQueue.push_back(next);
+		}
+	}
+	return OUT_OF_BOUNDS_INDEX;
+}
+
+bool Cave::Map::isHiveCollectorFlatFloor(const int& cell) const {
+	return isHiveHaulerFlatFloor(cell, isStorageRoom(cell), Cave::Entity::Type::HiveCollector);
+}
+
+bool Cave::Map::isHiveCollectorStackStand(const int& stand) const {
+	return isHiveHaulerStackStand(stand, isStorageRoom(stand), Cave::Entity::Type::HiveCollector);
+}
+
+bool Cave::Map::isHiveCollectorDropStand(const int& stand) const {
+	const int below = getIndex(stand, Cave::Entity::Direction::DOWN);
+	return isHiveHaulerDropStand(stand, isStorageRoom(below), Cave::Entity::Type::HiveCollector);
+}
+
+int Cave::Map::findNearestHiveCollectorDropStand(const int& from) const {
+	return findNearestHiveHaulerDropStand(from, m_storageRoom, Cave::Entity::Type::HiveCollector);
+}
+
+bool Cave::Map::isHiveServantMatriarchDepositHeightOk(const int& cell) const {
+	using B = Cave::Entity::HiveBuilder;
+	if (!inBounds(cell) || !isMatriarchRoom(cell)) return false;
+
+	std::vector<int> origins;
+	collectHiveRoomOrigins(Cave::Entity::Type::HiveMatriarchWall, origins);
+	const int cx = cell % width;
+	const int cy = cell / width;
+	for (int origin : origins) {
+		const int ox = origin % width;
+		const int oy = origin / width;
+		if (cx <= ox || cx >= ox + B::ROOM_SIZE - 1) continue;
+		if (cy <= oy || cy >= oy + B::ROOM_SIZE - 1) continue;
+		const int bottom = oy + B::ROOM_SIZE - 2;
+		const int topAllowed = bottom - (HIVE_SERVANT_MATRIARCH_STACK_ROWS - 1);
+		return cy >= topAllowed && cy <= bottom;
+	}
+
+	// Irregular marked rooms: count how far above the floor support this cell sits.
+	int depth = 1;
+	for (int scan = getIndex(cell, Cave::Entity::Direction::DOWN);
+		inBounds(scan) && isMatriarchRoom(scan);
+		scan = getIndex(scan, Cave::Entity::Direction::DOWN)) {
+		if (isHiveHaulerFloorSupport(scan))
+			break;
+		++depth;
+		if (depth > HIVE_SERVANT_MATRIARCH_STACK_ROWS)
+			return false;
+	}
+	return depth <= HIVE_SERVANT_MATRIARCH_STACK_ROWS;
+}
+
+bool Cave::Map::isHiveServantMatriarchDeposit(const int& cell) const {
+	return isHiveHaulerDeposit(cell)
+		&& isMatriarchRoom(cell)
+		&& isHiveServantMatriarchDepositHeightOk(cell);
+}
+
+bool Cave::Map::isHiveServantFlatFloor(const int& cell) const {
+	return isHiveHaulerFlatFloor(cell, isMatriarchRoom(cell), Cave::Entity::Type::HiveServant)
+		&& isHiveServantMatriarchDepositHeightOk(cell);
+}
+
+bool Cave::Map::isHiveServantStackStand(const int& stand) const {
+	if (!isHiveHaulerStackStand(stand, isMatriarchRoom(stand), Cave::Entity::Type::HiveServant))
+		return false;
+	// Only stand on stacks whose under-cell is still within the 3-row cap.
+	return isHiveServantMatriarchDepositHeightOk(getIndex(stand, Cave::Entity::Direction::DOWN));
+}
+
+bool Cave::Map::isHiveServantDropStand(const int& stand) const {
+	if (!inBounds(stand)) return false;
+	const bool here = isMonsterWalkable(stand)
+		|| getEntityType(stand) == Cave::Entity::Type::HiveServant;
+	if (!here) return false;
+	const int below = getIndex(stand, Cave::Entity::Direction::DOWN);
+	if (isHiveServantMatriarchDeposit(below)) return true;
+	// Servant parked on the only free deposit cell — stand above still counts.
+	if (!inBounds(below) || getEntityType(below) != Cave::Entity::Type::HiveServant)
+		return false;
+	if (getEntityTransitioning(below)) return false;
+	if (!isHiveServantMatriarchDepositHeightOk(below)) return false;
+	const int under = getIndex(below, Cave::Entity::Direction::DOWN);
+	if (!inBounds(under) || getEntityType(under) == Cave::Entity::Type::Space)
+		return false;
+	if (Cave::Entity::isMonster(getEntityType(under)) && !isHiveBubbled(under))
+		return false;
+	return true;
+}
+
+int Cave::Map::findNearestHiveServantDropStand(const int& from) const {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (from < 0 || from >= cellCount) return OUT_OF_BOUNDS_INDEX;
+
+	if (isHiveServantDropStand(from))
+		return from;
+
+	ensureEmptyPathScratch(cellCount);
+	beginEmptyPathGen();
+	const int gen = m_emptyPathGen;
+	m_emptyPathVisit[static_cast<size_t>(from)] = gen;
+	m_emptyPathQueue.push_back(from);
+
+	while (m_emptyPathQueueHead < m_emptyPathQueue.size()) {
+		const int current = m_emptyPathQueue[m_emptyPathQueueHead++];
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, dir);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (m_emptyPathVisit[static_cast<size_t>(next)] == gen) continue;
+			m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+			if (isHiveServantDropStand(next))
+				return next;
+			if (!isMonsterWalkable(next)) continue;
+			m_emptyPathQueue.push_back(next);
+		}
+	}
+	return OUT_OF_BOUNDS_INDEX;
+}
+
+bool Cave::Map::isHiveServantCollectable(const int& cell) const {
+	if (!inBounds(cell) || getEntityTransitioning(cell)) return false;
+	return isStorageRoom(cell) && isHiveBubbled(cell);
+}
+
+int Cave::Map::findNearestHiveServantCollectable(const int& from) const {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (from < 0 || from >= cellCount) return OUT_OF_BOUNDS_INDEX;
+
+	ensureEmptyPathScratch(cellCount);
+	beginEmptyPathGen();
+	const int gen = m_emptyPathGen;
+	m_emptyPathVisit[static_cast<size_t>(from)] = gen;
+	m_emptyPathQueue.push_back(from);
+
+	while (m_emptyPathQueueHead < m_emptyPathQueue.size()) {
+		const int current = m_emptyPathQueue[m_emptyPathQueueHead++];
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, dir);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (m_emptyPathVisit[static_cast<size_t>(next)] == gen) continue;
+			m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+
+			if (isHiveServantCollectable(next))
+				return next;
+
+			if (!isMonsterWalkable(next) && next != from) continue;
+			m_emptyPathQueue.push_back(next);
+		}
+	}
+	return OUT_OF_BOUNDS_INDEX;
+}
+
+Cave::Entity::Base Cave::Map::hiveCargoEntity(Cave::Entity::Type type, int textureHint, int lookHint) const {
+	Cave::Entity::Base item;
+	switch (type) {
+	case Cave::Entity::Type::Boulder: item = Cave::Entity::Boulder(); break;
+	case Cave::Entity::Type::MossyBoulder: item = Cave::Entity::MossyBoulder(); break;
+	case Cave::Entity::Type::HotBoulder: item = Cave::Entity::HotBoulder(); break;
+	case Cave::Entity::Type::HotBoulderCracked: item = Cave::Entity::HotBoulderCracked(); break;
+	case Cave::Entity::Type::MagicBoulder: item = Cave::Entity::MagicBoulder(); break;
+	case Cave::Entity::Type::Diamond: item = Cave::Entity::Diamond(); break;
+	case Cave::Entity::Type::FragileDiamond: item = Cave::Entity::FragileDiamond(); break;
+	case Cave::Entity::Type::HollowDiamond: item = Cave::Entity::HollowDiamond(); break;
+	case Cave::Entity::Type::Ore: item = Cave::Entity::Ore(); break;
+	default: {
+		// Keep the monster's multi-frame anim so it still idles inside a deposit bubble.
+		item = monsterFromType(type);
+		if (type == Cave::Entity::Type::Genom
+			&& (lookHint & Cave::Entity::Genom::LOOK_VALID) != 0) {
+			item.spawnCredit = lookHint;
+			Cave::Entity::Genom::resetBreed(item);
+		}
+		if (textureHint >= 0) {
+			const auto& frames = item.animation().frames;
+			for (int i = 0; i < static_cast<int>(frames.size()); ++i) {
+				if (frames[static_cast<size_t>(i)] == textureHint) {
+					item.setAnimationFrame(i);
+					break;
+				}
+			}
+		}
+		return item;
+	}
+	}
+	if (textureHint >= 0) {
+		const auto& frames = item.animation().frames;
+		// Keep multi-frame sheets (diamonds) cycling after deposit — only pin
+		// single-frame cargo (boulders/ore) to the carried texture.
+		if (frames.size() > 1) {
+			for (int i = 0; i < static_cast<int>(frames.size()); ++i) {
+				if (frames[static_cast<size_t>(i)] == textureHint) {
+					item.setAnimationFrame(i);
+					break;
+				}
+			}
+		}
+		else {
+			Cave::Entity::Animation anim{ std::vector<int>{ textureHint }, 0 };
+			item.setAnimation(anim);
+		}
+	}
+	return item;
+}
+
+bool Cave::Map::tryHiveCollectorEat(const int& collector, const Cave::Entity::Direction& dir) {
+	using C = Cave::Entity::HiveCollector;
+	if (dir == Cave::Entity::Direction::NO_DIRECTION) return false;
+	if (!inBounds(collector)) return false;
+	if (getEntityType(collector) != Cave::Entity::Type::HiveCollector) return false;
+	if (C::isCarrying(caveEntities[collector])) return false;
+	if (getEntityTransitioning(collector)) return false;
+
+	const int item = getIndex(collector, dir);
+	if (!isHiveCollectable(item) || getEntityTransitioning(item)) return false;
+
+	const bool bubbled = isHiveBubbled(item);
+	const Cave::Entity::Type type = getEntityType(item);
+	const int tex = caveEntities[item].getCurrentTextureIndex();
+	const int look = (type == Cave::Entity::Type::Genom
+		&& Cave::Entity::Genom::hasLook(caveEntities[item]))
+		? caveEntities[item].spawnCredit
+		: 0;
+
+	// Strip the cosmic bubble before the step — otherwise it sticks to the collector.
+	// The eat into-slide still shows the shell via TileRenderer on the prey wedge.
+	if (bubbled && item < static_cast<int>(m_cosmicOver.size()))
+		m_cosmicOver[static_cast<size_t>(item)] = Cave::Entity::Base();
+
+	if (!moveEntity(collector, dir)) return false;
+	const int dest = item;
+	// Genom look packs into homeIndex (LOOK_VALID); other cargo stores Type there.
+	caveEntities[dest].homeIndex = look != 0 ? look : static_cast<int>(type);
+	caveEntities[dest].dutyTicks = tex;
+	caveEntities[dest].spawnCredit = bubbled ? C::MODE_CARRY_BUBBLED : C::MODE_CARRY;
+	caveEntities[dest].targetIndex = OUT_OF_BOUNDS_INDEX;
+	// Boulder start-to-fall / push sound (not diamond collect).
+	m_game->soundManager.play(Sound::Effect::Drop);
+	return true;
+}
+
+bool Cave::Map::tryHiveCollectorDrop(const int& collector) {
+	using C = Cave::Entity::HiveCollector;
+	if (!inBounds(collector)) return false;
+	if (getEntityType(collector) != Cave::Entity::Type::HiveCollector) return false;
+	if (!C::isCarrying(caveEntities[collector])) return false;
+	if (getEntityTransitioning(collector)) return false;
+
+	// Pit drop only: empty supported cell directly under the collector (matriarch birth style).
+	const int below = getIndex(collector, Cave::Entity::Direction::DOWN);
+	if (!isHiveCollectorDeposit(below)) return false;
+
+	const Cave::Entity::Type cargoType = C::cargoType(caveEntities[collector]);
+	const int cargoTex = C::cargoTexture(caveEntities[collector]);
+	const int cargoLook = C::cargoLook(caveEntities[collector]);
+	const bool bubbled = C::isCarryingBubbled(caveEntities[collector]);
+
+	Cave::Entity::Base cargo = hiveCargoEntity(cargoType, cargoTex, cargoLook);
+	Cave::Entity::Animation cargoAnim = cargo.getAnimation();
+	Cave::Entity::Animation spaceAnim = Cave::Entity::Space().getAnimation();
+
+	setEntity(below, std::move(cargo));
+	if (bubbled) {
+		ensureCosmicUnder();
+		using B = Cave::Entity::HiveHunterBubble;
+		m_cosmicOver[static_cast<size_t>(below)] = B();
+		m_cosmicOver[static_cast<size_t>(below)].setAnimationFrame(B::FRAME_LAST);
+		caveEntities[below].removeTrait(Cave::Entity::Trait::Crushable);
+		caveEntities[below].addTrait(Cave::Entity::Trait::Slippery);
+	}
+	caveEntities[below].applyIntoTransition(Cave::Entity::Direction::DOWN, spaceAnim);
+	caveEntities[collector].applyAwayTransition(Cave::Entity::Direction::DOWN, cargoAnim);
+	if (bubbled)
+		C::clearCargoKeepBubbledAway(caveEntities[collector]);
+	else
+		C::clearCargo(caveEntities[collector]);
+	caveEntities[collector].targetIndex = OUT_OF_BOUNDS_INDEX;
+	m_game->soundManager.play(Sound::Effect::Drop);
+	return true;
+}
+
+bool Cave::Map::tryHiveCollectorFlatDeposit(const int& collector) {
+	using C = Cave::Entity::HiveCollector;
+	if (!inBounds(collector)) return false;
+	if (getEntityType(collector) != Cave::Entity::Type::HiveCollector) return false;
+	if (!C::isCarrying(caveEntities[collector])) return false;
+	if (getEntityTransitioning(collector)) return false;
+	if (!isHiveCollectorFlatFloor(collector) && !isHiveCollectorStackStand(collector))
+		return false;
+
+	const Cave::Entity::Type cargoType = C::cargoType(caveEntities[collector]);
+	const int cargoTex = C::cargoTexture(caveEntities[collector]);
+	const int cargoLook = C::cargoLook(caveEntities[collector]);
+	const bool bubbled = C::isCarryingBubbled(caveEntities[collector]);
+	Cave::Entity::Animation spaceAnim = Cave::Entity::Space().getAnimation();
+
+	// No headroom — step sideways and leave cargo settling downward on this floor tile.
+	const Cave::Entity::Direction exits[2] = {
+		Cave::Entity::Direction::LEFT,
+		Cave::Entity::Direction::RIGHT,
+	};
+	for (Cave::Entity::Direction exit : exits) {
+		const int dest = getIndex(collector, exit);
+		if (!inBounds(dest) || !isMonsterWalkable(dest) || getEntityTransitioning(dest))
+			continue;
+		if (!moveEntity(collector, exit)) continue;
+
+		const int vacated = getIndex(dest, Cave::Entity::oppositeDirection(exit));
+		Cave::Entity::Base cargo = hiveCargoEntity(cargoType, cargoTex, cargoLook);
+		setEntity(vacated, std::move(cargo));
+		if (bubbled) {
+			ensureCosmicUnder();
+			using B = Cave::Entity::HiveHunterBubble;
+			m_cosmicOver[static_cast<size_t>(vacated)] = B();
+			m_cosmicOver[static_cast<size_t>(vacated)].setAnimationFrame(B::FRAME_LAST);
+			caveEntities[vacated].removeTrait(Cave::Entity::Trait::Crushable);
+			caveEntities[vacated].addTrait(Cave::Entity::Trait::Slippery);
+		}
+		caveEntities[vacated].applyIntoTransition(Cave::Entity::Direction::DOWN, spaceAnim);
+		C::clearCargo(caveEntities[dest]);
+		caveEntities[dest].targetIndex = OUT_OF_BOUNDS_INDEX;
+		m_game->soundManager.play(Sound::Effect::Drop);
+		return true;
+	}
+	return false;
+}
+
+bool Cave::Map::tryMoveHiveCollector(const int& index, const Cave::Entity::Direction& dir) {
+	using C = Cave::Entity::HiveCollector;
+	if (dir == Cave::Entity::Direction::NO_DIRECTION) return false;
+	const int dest = getIndex(index, dir);
+	if (inBounds(dest) && isHiveForeignBuildSite(index, dest))
+		return false;
+	const bool carrying = getEntityType(index) == Cave::Entity::Type::HiveCollector
+		&& C::isCarrying(caveEntities[index]);
+	const int mode = carrying ? caveEntities[index].spawnCredit : 0;
+	const int cargoHome = carrying ? caveEntities[index].homeIndex : -1;
+	const int cargoTex = carrying ? caveEntities[index].dutyTicks : C::NO_CARGO_TEX;
+
+	if (!tryMoveEnemy(index, Cave::Entity::Trait::Empty, dir)) return false;
+
+	// index is now the vacated Space — stamp cargo so the away-slide keeps the haul attached.
+	if (carrying && getEntityType(index) == Cave::Entity::Type::Space) {
+		caveEntities[index].spawnCredit = mode;
+		caveEntities[index].homeIndex = cargoHome;
+		caveEntities[index].dutyTicks = cargoTex;
+	}
+	return true;
+}
+
+void Cave::Map::updateHiveCollector(const int& index) {
+	using C = Cave::Entity::HiveCollector;
+	using L = Cave::Entity::HiveLarva;
+	if (handleEnemyBasicUpdate(index)) return;
+
+	// Bubbled-deposit away flag is only for the spit slide render.
+	if (C::isDepositAwayBubbled(caveEntities[index]) && !getEntityTransitioning(index))
+		C::clearCargo(caveEntities[index]);
+
+	// Clear out of claimed build footprints (even while carrying).
+	if (tryHiveEvacuateBuildSite(index))
+		return;
+	if (tryHiveWorkerGoLive(index))
+		return;
+
+	int& focus = caveEntities[index].targetIndex;
+
+	if (C::isCarrying(caveEntities[index])) {
+		// No storage yet — keep cargo and adult-roam until a room appears.
+		if (!hiveStorageExists()) {
+			wanderHiveAdult(index, L::HOLD_TICKS);
+			return;
+		}
+
+		const int stand = (inBounds(focus) && isHiveCollectorDropStand(focus))
+			? focus
+			: findNearestHiveCollectorDropStand(index);
+
+		if (!inBounds(stand)) {
+			focus = OUT_OF_BOUNDS_INDEX;
+			wanderTowardHiveRoom(index, m_storageRoom, L::HOLD_TICKS);
+			return;
+		}
+
+		focus = stand;
+		if (index == focus) {
+			// Pit spit straight down when an empty supported cell is under us.
+			if (tryHiveCollectorDrop(index)) {
+				hiveClearStuck(index);
+				return;
+			}
+
+			// Flat storage floor: climb one tile up so the next tick can pit-spit downward.
+			if (isHiveCollectorFlatFloor(index)) {
+				const int up = getIndex(index, Cave::Entity::Direction::UP);
+				if (inBounds(up) && isMonsterWalkable(up) && !getEntityTransitioning(up)
+					&& tryMoveHiveCollector(index, Cave::Entity::Direction::UP)) {
+					focus = up;
+					hiveClearStuck(index);
+					return;
+				}
+			}
+
+			// Never side-deposit — clear stand and look for another pit.
+			focus = OUT_OF_BOUNDS_INDEX;
+			if (hiveAdvanceStuck(index)) return;
+			setEntityMoving(index, false);
+			return;
+		}
+
+		// Parked on the deposit cell with stand directly above (may be outside the room).
+		if (getIndex(index, Cave::Entity::Direction::UP) == focus
+			&& !getEntityTransitioning(focus)
+			&& tryMoveHiveCollector(index, Cave::Entity::Direction::UP)) {
+			hiveClearStuck(index);
+			return;
+		}
+
+		const Cave::Entity::Direction step = findPathThroughEmpty(index, focus, false);
+		if (step != Cave::Entity::Direction::NO_DIRECTION
+			&& tryMoveHiveCollector(index, step)) {
+			hiveClearStuck(index);
+			return;
+		}
+		// Unreachable drop stand was freezing collectors indefinitely.
+		focus = OUT_OF_BOUNDS_INDEX;
+		if (hiveAdvanceStuck(index)) return;
+		setEntityMoving(index, false);
+		return;
+	}
+
+	// SEEK — roam goals share targetIndex with loot. Keep committing to a roam point
+	// (and its pause) instead of wiping the goal every tick when a loot scan misses.
+	if (!isHiveCollectable(focus)) {
+		if (inBounds(focus) || caveEntities[index].extra > 0) {
+			wanderHiveAdult(index, L::HOLD_TICKS);
+			return;
+		}
+		const int loot = pickHiveCollectable(index);
+		if (isHiveCollectable(loot)) {
+			focus = loot;
+		}
+		else {
+			wanderHiveAdult(index, L::HOLD_TICKS);
+			return;
+		}
+	}
+
+	const int item = focus;
+	for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+		if (getIndex(index, dir) != item) continue;
+		if (tryHiveCollectorEat(index, dir)) {
+			hiveClearStuck(index);
+			return;
+		}
+		focus = OUT_OF_BOUNDS_INDEX;
+		if (hiveAdvanceStuck(index)) return;
+		setEntityMoving(index, false);
+		return;
+	}
+
+	const Cave::Entity::Direction step = findPathThroughEmpty(index, item, false);
+	if (step != Cave::Entity::Direction::NO_DIRECTION) {
+		const int dest = getIndex(index, step);
+		if (!isHiveForeignBuildSite(index, dest)
+			&& tryMoveEnemy(index, Cave::Entity::Trait::Empty, step)) {
+			hiveClearStuck(index);
+			return;
+		}
+		// Path skimmed a build footprint — drop loot focus and roam around it.
+		focus = OUT_OF_BOUNDS_INDEX;
+		wanderHiveAdult(index, L::HOLD_TICKS);
+		return;
+	}
+	// Unreachable loot — drop focus and repath / explode if sealed.
+	focus = OUT_OF_BOUNDS_INDEX;
+	if (hiveAdvanceStuck(index)) return;
+	setEntityMoving(index, false);
+}
+
+bool Cave::Map::tryHiveServantEat(const int& servant, const Cave::Entity::Direction& dir) {
+	using S = Cave::Entity::HiveServant;
+	if (dir == Cave::Entity::Direction::NO_DIRECTION) return false;
+	if (!inBounds(servant)) return false;
+	if (getEntityType(servant) != Cave::Entity::Type::HiveServant) return false;
+	if (S::isCarrying(caveEntities[servant])) return false;
+	if (getEntityTransitioning(servant)) return false;
+
+	const int item = getIndex(servant, dir);
+	if (!isHiveServantCollectable(item) || getEntityTransitioning(item)) return false;
+
+	const Cave::Entity::Type type = getEntityType(item);
+	const int tex = caveEntities[item].getCurrentTextureIndex();
+	const int look = (type == Cave::Entity::Type::Genom
+		&& Cave::Entity::Genom::hasLook(caveEntities[item]))
+		? caveEntities[item].spawnCredit
+		: 0;
+
+	if (item < static_cast<int>(m_cosmicOver.size()))
+		m_cosmicOver[static_cast<size_t>(item)] = Cave::Entity::Base();
+
+	if (!moveEntity(servant, dir)) return false;
+	const int dest = item;
+	caveEntities[dest].homeIndex = look != 0 ? look : static_cast<int>(type);
+	caveEntities[dest].dutyTicks = tex;
+	caveEntities[dest].spawnCredit = S::MODE_CARRY_BUBBLED;
+	caveEntities[dest].targetIndex = OUT_OF_BOUNDS_INDEX;
+	m_game->soundManager.play(Sound::Effect::Drop);
+	return true;
+}
+
+bool Cave::Map::tryHiveServantDrop(const int& servant) {
+	using S = Cave::Entity::HiveServant;
+	if (!inBounds(servant)) return false;
+	if (getEntityType(servant) != Cave::Entity::Type::HiveServant) return false;
+	if (!S::isCarrying(caveEntities[servant])) return false;
+	if (getEntityTransitioning(servant)) return false;
+
+	const int below = getIndex(servant, Cave::Entity::Direction::DOWN);
+	if (!isHiveServantMatriarchDeposit(below)) return false;
+
+	const Cave::Entity::Type cargoType = S::cargoType(caveEntities[servant]);
+	const int cargoTex = S::cargoTexture(caveEntities[servant]);
+	const int cargoLook = S::cargoLook(caveEntities[servant]);
+
+	Cave::Entity::Base cargo = hiveCargoEntity(cargoType, cargoTex, cargoLook);
+	Cave::Entity::Animation cargoAnim = cargo.getAnimation();
+	Cave::Entity::Animation spaceAnim = Cave::Entity::Space().getAnimation();
+
+	setEntity(below, std::move(cargo));
+	ensureCosmicUnder();
+	using B = Cave::Entity::HiveHunterBubble;
+	m_cosmicOver[static_cast<size_t>(below)] = B();
+	m_cosmicOver[static_cast<size_t>(below)].setAnimationFrame(B::FRAME_LAST);
+	caveEntities[below].removeTrait(Cave::Entity::Trait::Crushable);
+	caveEntities[below].addTrait(Cave::Entity::Trait::Slippery);
+	caveEntities[below].applyIntoTransition(Cave::Entity::Direction::DOWN, spaceAnim);
+	caveEntities[servant].applyAwayTransition(Cave::Entity::Direction::DOWN, cargoAnim);
+	S::clearCargoKeepBubbledAway(caveEntities[servant]);
+	caveEntities[servant].targetIndex = OUT_OF_BOUNDS_INDEX;
+	m_game->soundManager.play(Sound::Effect::Drop);
+	return true;
+}
+
+bool Cave::Map::tryHiveServantFlatDeposit(const int& servant) {
+	using S = Cave::Entity::HiveServant;
+	if (!inBounds(servant)) return false;
+	if (getEntityType(servant) != Cave::Entity::Type::HiveServant) return false;
+	if (!S::isCarrying(caveEntities[servant])) return false;
+	if (getEntityTransitioning(servant)) return false;
+	if (!isHiveServantFlatFloor(servant) && !isHiveServantStackStand(servant))
+		return false;
+
+	const Cave::Entity::Type cargoType = S::cargoType(caveEntities[servant]);
+	const int cargoTex = S::cargoTexture(caveEntities[servant]);
+	const int cargoLook = S::cargoLook(caveEntities[servant]);
+	Cave::Entity::Animation spaceAnim = Cave::Entity::Space().getAnimation();
+
+	const Cave::Entity::Direction exits[2] = {
+		Cave::Entity::Direction::LEFT,
+		Cave::Entity::Direction::RIGHT,
+	};
+	for (Cave::Entity::Direction exit : exits) {
+		const int dest = getIndex(servant, exit);
+		if (!inBounds(dest) || !isMonsterWalkable(dest) || getEntityTransitioning(dest))
+			continue;
+		if (!moveEntity(servant, exit)) continue;
+
+		const int vacated = getIndex(dest, Cave::Entity::oppositeDirection(exit));
+		Cave::Entity::Base cargo = hiveCargoEntity(cargoType, cargoTex, cargoLook);
+		setEntity(vacated, std::move(cargo));
+		ensureCosmicUnder();
+		using B = Cave::Entity::HiveHunterBubble;
+		m_cosmicOver[static_cast<size_t>(vacated)] = B();
+		m_cosmicOver[static_cast<size_t>(vacated)].setAnimationFrame(B::FRAME_LAST);
+		caveEntities[vacated].removeTrait(Cave::Entity::Trait::Crushable);
+		caveEntities[vacated].addTrait(Cave::Entity::Trait::Slippery);
+		caveEntities[vacated].applyIntoTransition(Cave::Entity::Direction::DOWN, spaceAnim);
+		S::clearCargo(caveEntities[dest]);
+		caveEntities[dest].targetIndex = OUT_OF_BOUNDS_INDEX;
+		m_game->soundManager.play(Sound::Effect::Drop);
+		return true;
+	}
+	return false;
+}
+
+bool Cave::Map::tryMoveHiveServant(const int& index, const Cave::Entity::Direction& dir) {
+	using S = Cave::Entity::HiveServant;
+	if (dir == Cave::Entity::Direction::NO_DIRECTION) return false;
+	const int dest = getIndex(index, dir);
+	if (inBounds(dest) && isHiveForeignBuildSite(index, dest))
+		return false;
+	const bool carrying = getEntityType(index) == Cave::Entity::Type::HiveServant
+		&& S::isCarrying(caveEntities[index]);
+	const int mode = carrying ? caveEntities[index].spawnCredit : 0;
+	const int cargoHome = carrying ? caveEntities[index].homeIndex : -1;
+	const int cargoTex = carrying ? caveEntities[index].dutyTicks : S::NO_CARGO_TEX;
+
+	if (!tryMoveEnemy(index, Cave::Entity::Trait::Empty, dir)) return false;
+
+	if (carrying && getEntityType(index) == Cave::Entity::Type::Space) {
+		caveEntities[index].spawnCredit = mode;
+		caveEntities[index].homeIndex = cargoHome;
+		caveEntities[index].dutyTicks = cargoTex;
+	}
+	return true;
+}
+
+void Cave::Map::updateHiveServant(const int& index) {
+	using S = Cave::Entity::HiveServant;
+	using L = Cave::Entity::HiveLarva;
+	if (handleEnemyBasicUpdate(index)) return;
+
+	if (S::isDepositAwayBubbled(caveEntities[index]) && !getEntityTransitioning(index))
+		S::clearCargo(caveEntities[index]);
+
+	if (tryHiveEvacuateBuildSite(index))
+		return;
+	if (tryHiveWorkerGoLive(index))
+		return;
+
+	int& focus = caveEntities[index].targetIndex;
+
+	if (S::isCarrying(caveEntities[index])) {
+		// No matriarch room yet — keep cargo and adult-roam until a room appears.
+		if (!hiveMatriarchRoomExists()) {
+			wanderHiveAdult(index, L::HOLD_TICKS);
+			return;
+		}
+
+		const int stand = (inBounds(focus) && isHiveServantDropStand(focus))
+			? focus
+			: findNearestHiveServantDropStand(index);
+
+		if (!inBounds(stand)) {
+			// Bottom 3 deposit rows are full — keep cargo and roam outside the room
+			// until a pit opens (do not loiter inside the matriarch hollow).
+			focus = OUT_OF_BOUNDS_INDEX;
+			wanderHiveAdult(index, L::HOLD_TICKS);
+			return;
+		}
+
+		focus = stand;
+		if (index == focus) {
+			if (tryHiveServantDrop(index)) {
+				hiveClearStuck(index);
+				return;
+			}
+
+			if (isHiveServantFlatFloor(index)) {
+				const int up = getIndex(index, Cave::Entity::Direction::UP);
+				if (inBounds(up) && isMonsterWalkable(up) && !getEntityTransitioning(up)
+					&& tryMoveHiveServant(index, Cave::Entity::Direction::UP)) {
+					focus = up;
+					hiveClearStuck(index);
+					return;
+				}
+			}
+
+			// Never side-deposit — clear stand and look for another pit.
+			focus = OUT_OF_BOUNDS_INDEX;
+			if (hiveAdvanceStuck(index)) return;
+			setEntityMoving(index, false);
+			return;
+		}
+
+		// Parked on the deposit cell with stand directly above (may be outside the room).
+		if (getIndex(index, Cave::Entity::Direction::UP) == focus
+			&& !getEntityTransitioning(focus)
+			&& tryMoveHiveServant(index, Cave::Entity::Direction::UP)) {
+			hiveClearStuck(index);
+			return;
+		}
+
+		const Cave::Entity::Direction step = findPathThroughEmpty(index, focus, false);
+		if (step != Cave::Entity::Direction::NO_DIRECTION
+			&& tryMoveHiveServant(index, step)) {
+			hiveClearStuck(index);
+			return;
+		}
+		focus = OUT_OF_BOUNDS_INDEX;
+		if (hiveAdvanceStuck(index)) return;
+		setEntityMoving(index, false);
+		return;
+	}
+
+	// SEEK — bubbled package in storage; otherwise adult-roam outside hive rooms.
+	const int item = findNearestHiveServantCollectable(index);
+	if (!inBounds(item)) {
+		wanderHiveAdult(index, L::HOLD_TICKS);
+		return;
+	}
+
+	for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+		if (getIndex(index, dir) != item) continue;
+		if (tryHiveServantEat(index, dir)) {
+			hiveClearStuck(index);
+			return;
+		}
+		if (hiveAdvanceStuck(index)) return;
+		setEntityMoving(index, false);
+		return;
+	}
+
+	const Cave::Entity::Direction step = findPathThroughEmpty(index, item, false);
+	if (step != Cave::Entity::Direction::NO_DIRECTION
+		&& tryMoveEnemy(index, Cave::Entity::Trait::Empty, step)) {
+		hiveClearStuck(index);
+		return;
+	}
+	if (hiveAdvanceStuck(index)) return;
+	setEntityMoving(index, false);
+}
+
+int Cave::Map::findNearestHiveHuntPrey(const int& from) const {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (from < 0 || from >= cellCount) return OUT_OF_BOUNDS_INDEX;
+
+	ensureEmptyPathScratch(cellCount);
+	beginEmptyPathGen();
+	const int gen = m_emptyPathGen;
+	m_emptyPathVisit[static_cast<size_t>(from)] = gen;
+	m_emptyPathQueue.push_back(from);
+
+	while (m_emptyPathQueueHead < m_emptyPathQueue.size()) {
+		const int current = m_emptyPathQueue[m_emptyPathQueueHead++];
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, dir);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (m_emptyPathVisit[static_cast<size_t>(next)] == gen) continue;
+			m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+
+			const Cave::Entity::Type t = getEntityType(next);
+			if (Cave::Entity::isHiveHuntPrey(t) && !isHiveBubbled(next))
+				return next;
+
+			if (!isMonsterWalkable(next) && next != from) continue;
+			m_emptyPathQueue.push_back(next);
+		}
+	}
+	return OUT_OF_BOUNDS_INDEX;
+}
+
+void Cave::Map::updateHiveHunter(const int& index) {
+	using H = Cave::Entity::HiveHunter;
+	if (handleEnemyBasicUpdate(index)) return;
+	// Sidestep falling bubbled packages before hunting / waiting on a bubble.
+	if (tryHiveDodgeCrush(index, true, false)) {
+		hiveClearStuck(index);
+		return;
+	}
+	if (tryHiveEvacuateBuildSite(index))
+		return;
+	if (tryHiveWorkerGoLive(index))
+		return;
+
+	int& mode = caveEntities[index].spawnCredit;
+	// targetIndex is prey while hunting/bubbling, and the larva wander goal while idle.
+	// Never wipe it with a failed prey search — that made idle repath every tick.
+	int& focus = caveEntities[index].targetIndex;
+
+	if (mode == H::MODE_BUBBLING) {
+		if (!inBounds(focus) || !isHiveBubbled(focus)) {
+			mode = H::MODE_HUNT;
+			focus = OUT_OF_BOUNDS_INDEX;
+		}
+		else {
+			using B = Cave::Entity::HiveHunterBubble;
+			const int frame = m_cosmicOver[static_cast<size_t>(focus)].getAnimation().currentFrame;
+			if (frame < B::FRAME_LAST) {
+				hiveClearStuck(index);
+				setEntityMoving(index, false);
+				return;
+			}
+			mode = H::MODE_HUNT;
+			focus = OUT_OF_BOUNDS_INDEX;
+		}
+	}
+
+	const int prey = findNearestHiveHuntPrey(index);
+	if (!inBounds(prey)) {
+		// No huntable monster — adult roam outside hive rooms.
+		wanderHiveAdult(index, Cave::Entity::HiveLarva::HOLD_TICKS);
+		return;
+	}
+
+	focus = prey;
+
+	for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+		if (getIndex(index, dir) != prey) continue;
+		// Wait out the prey's slide so the bubble isn't stamped mid-seam.
+		if (getEntityTransitioning(prey)) {
+			hiveClearStuck(index);
+			setEntityMoving(index, false);
+			return;
+		}
+		beginHiveBubble(prey);
+		mode = H::MODE_BUBBLING;
+		hiveClearStuck(index);
+		setEntityMoving(index, false);
+		return;
+	}
+
+	// Empty/gates only — never plan through other monsters or bubbled prey.
+	const Cave::Entity::Direction step = findPathThroughEmpty(index, prey, false);
+	if (step != Cave::Entity::Direction::NO_DIRECTION) {
+		const int dest = getIndex(index, step);
+		if (inBounds(dest) && !hiveCrushThreatAbove(dest, true)
+			&& tryMoveEnemy(index, Cave::Entity::Trait::Empty, step)) {
+			hiveClearStuck(index);
+			return;
+		}
+	}
+
+	focus = OUT_OF_BOUNDS_INDEX;
+	if (hiveAdvanceStuck(index)) return;
+	setEntityMoving(index, false);
+}
+
+int Cave::Map::findGenomBreedPartner(const int& index) {
+	using G = Cave::Entity::Genom;
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (index < 0 || index >= cellCount) return OUT_OF_BOUNDS_INDEX;
+
+	auto isEligibleMate = [this, index](int cell) {
+		if (cell == index) return false;
+		if (getEntityType(cell) != Cave::Entity::Type::Genom) return false;
+		const int mode = G::breedMode(caveEntities[cell]);
+		return mode == G::MODE_BREED || mode == G::MODE_COURT;
+	};
+
+	// Prefer someone already locked onto us (stable reciprocal pair).
+	for (int i = 0; i < cellCount; ++i) {
+		if (!isEligibleMate(i)) continue;
+		if (G::mateCell(caveEntities[i]) == index)
+			return i;
+	}
+
+	// Prefer an already-adjacent mate (no BFS).
+	for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+		const int neighbour = getIndex(index, dir);
+		if (neighbour != OUT_OF_BOUNDS_INDEX && isEligibleMate(neighbour))
+			return neighbour;
+	}
+
+	// One BFS through empty only: first free mate reached by a clear path.
+	auto isFreeMate = [this, &isEligibleMate](int cell) {
+		if (!isEligibleMate(cell)) return false;
+		const int theirMate = Cave::Entity::Genom::mateCell(caveEntities[cell]);
+		if (!inBounds(theirMate)) return true;
+		if (getEntityType(theirMate) != Cave::Entity::Type::Genom) return true;
+		// Already paired with another breeding genom — leave them alone.
+		const int theirMode = Cave::Entity::Genom::breedMode(caveEntities[theirMate]);
+		return theirMode != Cave::Entity::Genom::MODE_BREED
+			&& theirMode != Cave::Entity::Genom::MODE_COURT;
+	};
+
+	ensureEmptyPathScratch(cellCount);
+	beginEmptyPathGen();
+	const int gen = m_emptyPathGen;
+	m_emptyPathVisit[static_cast<size_t>(index)] = gen;
+	m_emptyPathQueue.push_back(index);
+
+	while (m_emptyPathQueueHead < m_emptyPathQueue.size()) {
+		const int current = m_emptyPathQueue[m_emptyPathQueueHead++];
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, dir);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (m_emptyPathVisit[static_cast<size_t>(next)] == gen) continue;
+			if (isFreeMate(next))
+				return next;
+			if (!isMonsterWalkable(next)) continue;
+			m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+			m_emptyPathQueue.push_back(next);
+		}
+	}
+	return OUT_OF_BOUNDS_INDEX;
+}
+
+bool Cave::Map::isGenomEggNest(const int& cell) const {
+	if (!inBounds(cell)) return false;
+	if (!hasTrait(Cave::Entity::Trait::Empty, cell)) return false;
+	if (getEntityTransitioning(cell)) return false;
+	const int below = getIndex(cell, Cave::Entity::Direction::DOWN);
+	if (!inBounds(below)) return false;
+	const Cave::Entity::Type support = getEntityType(below);
+	return support == Cave::Entity::Type::Dirt
+		|| support == Cave::Entity::Type::Moss
+		|| support == Cave::Entity::Type::SolidWall;
+}
+
+int Cave::Map::findGenomEggNest(const int& from) {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (from < 0 || from >= cellCount) return OUT_OF_BOUNDS_INDEX;
+
+	ensureEmptyPathScratch(cellCount);
+	beginEmptyPathGen();
+	const int gen = m_emptyPathGen;
+	m_emptyPathVisit[static_cast<size_t>(from)] = gen;
+	m_emptyPathQueue.push_back(from);
+
+	while (m_emptyPathQueueHead < m_emptyPathQueue.size()) {
+		const int current = m_emptyPathQueue[m_emptyPathQueueHead++];
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, dir);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (m_emptyPathVisit[static_cast<size_t>(next)] == gen) continue;
+			const bool nest = isGenomEggNest(next);
+			// Empty path only — monsters block nest search.
+			if (!isMonsterWalkable(next) && !nest) continue;
+			m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+			m_emptyPathQueue.push_back(next);
+			if (next != from && nest)
+				m_emptyPathHits.push_back(next);
+		}
+	}
+
+	if (m_emptyPathHits.empty()) return OUT_OF_BOUNDS_INDEX;
+	return m_emptyPathHits[static_cast<size_t>(
+		Utils::randomInteger(0, static_cast<int>(m_emptyPathHits.size()) - 1))];
+}
+
+bool Cave::Map::tryLayGenomEgg(const int& index) {
+	using G = Cave::Entity::Genom;
+	if (getEntityType(index) != Cave::Entity::Type::Genom) return false;
+	if (G::breedMode(caveEntities[index]) != G::MODE_PREGNANT) return false;
+
+	const int nest = caveEntities[index].targetIndex;
+	if (!isGenomEggNest(nest) || !isAdjacentCell(index, nest)) return false;
+
+	const int babyLook = G::pregnancyLook(caveEntities[index]);
+	if ((babyLook & G::LOOK_VALID) == 0) return false;
+
+	setEntity(nest, Cave::Entity::GenomEgg(babyLook));
+	m_game->soundManager.play(Sound::Effect::Drop);
+	G::resetBreed(caveEntities[index]);
+	return true;
+}
+
+void Cave::Map::updateGenom(const int& index) {
+	using G = Cave::Entity::Genom;
+	if (handleEnemyBasicUpdate(index)) return;
+
+	// Normalize legacy / unset breed packing (homeIndex == -1).
+	if (caveEntities[index].homeIndex < 0
+		|| (caveEntities[index].homeIndex & G::LOOK_VALID) != 0)
+		G::setBreedState(caveEntities[index], G::MODE_IDLE,
+			Utils::randomInteger(1, G::BREED_CHECK_TICKS));
+
+	int mode = G::breedMode(caveEntities[index]);
+	int timer = G::breedTimer(caveEntities[index]);
+
+	if (mode == G::MODE_COURT) {
+		setEntityMoving(index, false);
+		const int partner = G::mateCell(caveEntities[index]);
+		const bool partnerOk = inBounds(partner)
+			&& getEntityType(partner) == Cave::Entity::Type::Genom
+			&& isAdjacentCell(index, partner);
+		if (!partnerOk) {
+			G::resetBreed(caveEntities[index]);
+			return;
+		}
+		if (timer > 0) {
+			G::setBreedState(caveEntities[index], G::MODE_COURT, timer - 1);
+			return;
+		}
+		// Lower index becomes pregnant and seeks a nest; partner returns to idle.
+		if (index < partner) {
+			const int babyLook = G::mixLooks(
+				caveEntities[index].spawnCredit, caveEntities[partner].spawnCredit);
+			G::setBreedState(caveEntities[index], G::MODE_PREGNANT, 0);
+			G::setPregnancyLook(caveEntities[index], babyLook);
+			caveEntities[index].targetIndex = OUT_OF_BOUNDS_INDEX;
+			caveEntities[index].extra = 0;
+			G::resetBreed(caveEntities[partner]);
+		}
+		else {
+			G::resetBreed(caveEntities[index]);
+		}
+		return;
+	}
+
+	if (mode == G::MODE_PREGNANT) {
+		int nest = caveEntities[index].targetIndex;
+		if (!isGenomEggNest(nest)) {
+			if (timer > 0) {
+				G::setBreedState(caveEntities[index], G::MODE_PREGNANT, timer - 1);
+				// Same wander as Jelly — keep goal/hold across cooldown ticks.
+				wanderTowardRandomEmpty(index, G::HOLD_TICKS);
+				return;
+			}
+			nest = findGenomEggNest(index);
+			caveEntities[index].targetIndex = nest;
+			if (!inBounds(nest)) {
+				G::setBreedState(caveEntities[index], G::MODE_PREGNANT, G::SEARCH_RETRY_TICKS);
+				wanderTowardRandomEmpty(index, G::HOLD_TICKS);
+				return;
+			}
+			G::setBreedState(caveEntities[index], G::MODE_PREGNANT, 0);
+			caveEntities[index].extra = 0;
+		}
+		if (isAdjacentCell(index, nest) && tryLayGenomEgg(index))
+			return;
+		const Cave::Entity::Direction dir = findPathThroughEmpty(index, nest, false);
+		if (dir != Cave::Entity::Direction::NO_DIRECTION
+			&& tryMoveEnemy(index, Cave::Entity::Trait::Empty, dir))
+			return;
+		// Soft block — keep nest and retry (same as wander). Hard-drop only if nest invalid next pass.
+		setEntityMoving(index, false);
+		return;
+	}
+
+	if (mode == G::MODE_BREED) {
+		int partner = G::mateCell(caveEntities[index]);
+		const bool partnerOk = inBounds(partner)
+			&& getEntityType(partner) == Cave::Entity::Type::Genom
+			&& (G::breedMode(caveEntities[partner]) == G::MODE_BREED
+				|| G::breedMode(caveEntities[partner]) == G::MODE_COURT)
+			&& G::mateCell(caveEntities[partner]) == index;
+		if (!partnerOk) {
+			G::clearMateCell(caveEntities[index]);
+			if (timer > 0) {
+				G::setBreedState(caveEntities[index], G::MODE_BREED, timer - 1);
+				// Jelly-style wander while waiting to re-scan — do not wipe the goal.
+				wanderTowardRandomEmpty(index, G::HOLD_TICKS);
+				return;
+			}
+			partner = findGenomBreedPartner(index);
+			if (!inBounds(partner)) {
+				G::setBreedState(caveEntities[index], G::MODE_BREED, G::SEARCH_RETRY_TICKS);
+				wanderTowardRandomEmpty(index, G::HOLD_TICKS);
+				return;
+			}
+			// Mutual lock: one seeker walks, the other waits — stops head-on oscillation.
+			// Mate lives in dutyTicks so wander goal/hold (targetIndex/extra) stay intact.
+			const bool theyAlreadySeekUs =
+				G::mateCell(caveEntities[partner]) == index
+				&& G::breedMode(caveEntities[partner]) == G::MODE_BREED
+				&& G::breedRole(caveEntities[partner]) == G::BREED_SEEKER;
+			G::setMateCell(caveEntities[index], partner);
+			G::setMateCell(caveEntities[partner], index);
+			if (theyAlreadySeekUs) {
+				G::setBreedState(caveEntities[index], G::MODE_BREED, 0, G::BREED_WAITER);
+			}
+			else {
+				G::setBreedState(caveEntities[index], G::MODE_BREED, 0, G::BREED_SEEKER);
+				G::setBreedState(caveEntities[partner], G::MODE_BREED, 0, G::BREED_WAITER);
+			}
+		}
+		if (isAdjacentCell(index, partner)) {
+			G::setBreedState(caveEntities[index], G::MODE_COURT, G::COURT_TICKS);
+			G::setMateCell(caveEntities[index], partner);
+			G::setBreedState(caveEntities[partner], G::MODE_COURT, G::COURT_TICKS);
+			G::setMateCell(caveEntities[partner], index);
+			setEntityMoving(index, false);
+			setEntityMoving(partner, false);
+			return;
+		}
+		// Waiter stands still so the seeker can close without mutual chase thrash.
+		if (G::breedRole(caveEntities[index]) == G::BREED_WAITER) {
+			setEntityMoving(index, false);
+			return;
+		}
+		const Cave::Entity::Direction dir = findPathThroughEmpty(index, partner, false);
+		if (dir != Cave::Entity::Direction::NO_DIRECTION) {
+			const int from = index;
+			if (tryMoveEnemy(index, Cave::Entity::Trait::Empty, dir)) {
+				// Entity moved to dest — keep waiter's lock pointed at us.
+				const int dest = getIndex(from, dir);
+				if (inBounds(partner)
+					&& getEntityType(partner) == Cave::Entity::Type::Genom
+					&& G::mateCell(caveEntities[partner]) == from)
+					G::setMateCell(caveEntities[partner], dest);
+				G::setBreedState(caveEntities[dest], G::MODE_BREED, 0, G::BREED_SEEKER);
+				return;
+			}
+		}
+		// Soft occlude — keep the lock and retry; unlock only after patience expires.
+		if (timer <= 0) {
+			G::setBreedState(caveEntities[index], G::MODE_BREED, G::SEARCH_RETRY_TICKS, G::BREED_SEEKER);
+			setEntityMoving(index, false);
+			return;
+		}
+		G::setBreedState(caveEntities[index], G::MODE_BREED, timer - 1, G::BREED_SEEKER);
+		if (timer <= 1) {
+			if (inBounds(partner)
+				&& getEntityType(partner) == Cave::Entity::Type::Genom
+				&& G::mateCell(caveEntities[partner]) == index) {
+				G::clearMateCell(caveEntities[partner]);
+				if (G::breedMode(caveEntities[partner]) == G::MODE_BREED)
+					G::setBreedState(caveEntities[partner], G::MODE_BREED, G::SEARCH_RETRY_TICKS);
+			}
+			G::clearMateCell(caveEntities[index]);
+			G::setBreedState(caveEntities[index], G::MODE_BREED, G::SEARCH_RETRY_TICKS);
+			wanderTowardRandomEmpty(index, G::HOLD_TICKS);
+			return;
+		}
+		setEntityMoving(index, false);
+		return;
+	}
+
+	// MODE_IDLE: same wander as Jelly/Grouper; breed roll does not reset goal/hold.
+	if (timer > 0) {
+		G::setBreedState(caveEntities[index], G::MODE_IDLE, timer - 1);
+	}
+	else {
+		G::setBreedState(caveEntities[index], G::MODE_IDLE, G::BREED_CHECK_TICKS);
+		if (Utils::randomInteger(0, 1) == 0)
+			G::setBreedState(caveEntities[index], G::MODE_BREED, 0);
+	}
+	wanderTowardRandomEmpty(index, G::HOLD_TICKS);
 }
 
 Cave::Entity::Direction Cave::Map::caterpillarHuntStep(const int& index) {
@@ -2156,7 +9071,7 @@ bool Cave::Map::tryMoveCaterpillar(const int& index, const Cave::Entity::Directi
 	const int dest = getIndex(index, direction);
 	if (dest == OUT_OF_BOUNDS_INDEX) return false;
 
-	const bool empty = hasTrait(Cave::Entity::Trait::Empty, dest) || isPassableGate(dest);
+	const bool empty = isMonsterWalkable(dest);
 	const bool prey = getEntityType(dest) == Cave::Entity::Type::MacowEggCooked;
 	if (!empty && !prey) return false;
 
@@ -2216,6 +9131,7 @@ void Cave::Map::updateCaterpillar(const int& index) {
 
 bool Cave::Map::isPredatorPrey(const int& index) const {
 	if (!inBounds(index)) return false;
+	if (isHiveBubbled(index)) return false;
 	const Cave::Entity::Type type = getEntityType(index);
 	if (type == Cave::Entity::Type::Predator) return false;
 	if (Cave::Entity::isActiveJimlinShip(type)) return false;
@@ -2224,6 +9140,9 @@ bool Cave::Map::isPredatorPrey(const int& index) const {
 	if (type == Cave::Entity::Type::Puffer || type == Cave::Entity::Type::PufferBody) return false;
 	if (type == Cave::Entity::Type::Charger || type == Cave::Entity::Type::ChargerBody) return false;
 	if (Cave::Entity::isCosmic(type) || type == Cave::Entity::Type::Singularity) return false;
+	if (type == Cave::Entity::Type::Shade
+		&& Cave::Entity::Shade::isStealthed(caveEntities[index]))
+		return false;
 	if (Cave::Entity::isHuntTarget(type)) {
 		if (type == Cave::Entity::Type::Jim)
 			return !isJimInvincible(index);
@@ -2289,14 +9208,23 @@ bool Cave::Map::tryMovePredator(const int& index, const Cave::Entity::Direction&
 	if (dest == OUT_OF_BOUNDS_INDEX) return false;
 
 	const Cave::Entity::Type destType = getEntityType(dest);
-	const bool empty = hasTrait(Cave::Entity::Trait::Empty, dest) || isPassableGate(dest);
+	const bool empty = isMonsterWalkable(dest);
 	const bool prey = isPredatorPrey(dest);
 	if (!empty && !prey) return false;
 
+	// Never swallow a guard — settled adjacency detonates them instead.
+	if (destType == Cave::Entity::Type::HiveGuard)
+		return false;
+
 	const bool atePlayer = Cave::Entity::isPlayer(destType);
+	const int genomLook = (prey && destType == Cave::Entity::Type::Genom
+		&& (caveEntities[dest].spawnCredit & Cave::Entity::Genom::LOOK_VALID) != 0)
+		? caveEntities[dest].spawnCredit : 0;
 	if (!moveEntity(index, direction)) return false;
 
 	setEntityMoving(dest, true);
+	// Keep layered Genom look on the predator so the prey stack draws during the into-slide.
+	caveEntities[dest].homeIndex = genomLook != 0 ? genomLook : -1;
 	if (prey) {
 		m_game->soundManager.play(Sound::Effect::Drop);
 		notifyFusion5Stimulus(dest);
@@ -2323,11 +9251,17 @@ void Cave::Map::updatePredator(const int& index) {
 		updateEntityAnimation(index);
 
 	bool adjacentPrey = false;
-	if (!transforming) {
+	if (!transforming && !getEntityTransitioning(index)) {
 		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
 			const int next = getIndex(index, dir);
 			if (next == OUT_OF_BOUNDS_INDEX || !isPredatorPrey(next)) continue;
 			adjacentPrey = true;
+			// Only after both finishes sliding onto neighboring tiles — not mid-into.
+			if (getEntityType(next) == Cave::Entity::Type::HiveGuard
+				&& !getEntityTransitioning(next)) {
+				createExplosion(next);
+				return;
+			}
 			if (mode == P::MODE_AGGRO && tryMovePredator(index, dir))
 				return;
 		}
@@ -2375,6 +9309,7 @@ void Cave::Map::updatePredator(const int& index) {
 	}
 
 	if (getEntityTransitioning(index)) return;
+	caveEntities[index].homeIndex = -1;
 
 	const Cave::Entity::Direction dir = predatorHuntStep(index);
 	if (mode == P::MODE_IDLE) {
@@ -2419,21 +9354,31 @@ void Cave::Map::updatePlankton(const int& index) {
 
 	if (getEntityTransitioning(index)) return;
 
-		if (timer >= P::SPLIT_TICKS) {
+	if (timer >= P::SPLIT_TICKS) {
 		const bool atCap = m_planktonGrowthMax > 0 && m_planktonCount >= m_planktonGrowthMax;
 		if (!atCap) {
-			int empties[4];
+			struct EmptySlot { int cell; Cave::Entity::Direction dir; };
+			EmptySlot empties[4];
 			int count = 0;
 			for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
 				const int next = getIndex(index, dir);
 				if (next == OUT_OF_BOUNDS_INDEX) continue;
 				if (!hasTrait(Cave::Entity::Trait::Empty, next)) continue;
 				if (getEntityTransitioning(next)) continue;
-				empties[count++] = next;
+				empties[count++] = { next, dir };
 			}
 			if (count > 0) {
-				const int dest = empties[Utils::randomInteger(0, count - 1)];
-				setEntity(dest, Cave::Entity::Plankton());
+				const EmptySlot pick = empties[Utils::randomInteger(0, count - 1)];
+				Cave::Entity::Plankton child;
+				Cave::Entity::Animation babyAnim = child.getAnimation();
+				Cave::Entity::Animation spaceAnim = Cave::Entity::Space().getAnimation();
+				// Child slides out of the parent tile into the empty neighbour.
+				setEntity(pick.cell, std::move(child));
+				caveEntities[pick.cell].extra = 0;
+				caveEntities[pick.cell].applyIntoTransition(pick.dir, spaceAnim);
+				// Parent keeps its cell: baby is the away-layer on top, sliding out
+				// while the parent is revealed underneath.
+				caveEntities[index].applyAwayTransition(pick.dir, babyAnim);
 				timer = 0;
 				m_planktonCount++;
 			}
@@ -2591,7 +9536,7 @@ bool Cave::Map::tryMoveMacow(const int& index, const Cave::Entity::Direction& di
 	const int dest = getIndex(index, direction);
 	if (dest == OUT_OF_BOUNDS_INDEX) return false;
 
-	const bool empty = hasTrait(Cave::Entity::Trait::Empty, dest) || isPassableGate(dest);
+	const bool empty = isMonsterWalkable(dest);
 	const bool prey = Cave::Entity::isMacowFood(getEntityType(dest));
 	if (!empty && !prey) return false;
 
@@ -3083,9 +10028,9 @@ bool Cave::Map::tryMoveWorm(const int& index, Cave::Entity::Direction direction)
 		&& getEntityType(dest) == Cave::Entity::Type::WormBody
 		&& caveEntities[dest].targetIndex == index;
 	const Cave::Entity::Type destType = getEntityType(dest);
-	const bool match = hasTrait(Cave::Entity::Trait::Empty, dest)
-		|| isPassableGate(dest)
+	const bool match = isMonsterWalkable(dest)
 		|| destType == Cave::Entity::Type::Fire
+		|| destType == Cave::Entity::Type::Landmine
 		|| ownTail;
 	if (!match) return false;
 	if (getEntityTransitioning(dest) && !ownTail) return false;
@@ -3145,7 +10090,9 @@ bool Cave::Map::tryMoveWorm(const int& index, Cave::Entity::Direction direction)
 		setEntityMoving(cell, true);
 	}
 
-	if (destType == Cave::Entity::Type::Fire
+	if (destType == Cave::Entity::Type::Landmine)
+		createExplosion(dest);
+	else if (destType == Cave::Entity::Type::Fire
 		&& !Cave::Entity::isFireImmune(getEntityType(dest)))
 		createExplosion(dest);
 	return true;
@@ -3363,6 +10310,7 @@ bool Cave::Map::tryWanderBoulderEater(const int& index, bool canEat) {
 	auto arc = anticlockwiseArc(getEntityDirection(index));
 	auto eatFood = [this, index](Cave::Entity::Direction dir) {
 		return tryMoveEnemy(index, Cave::Entity::Type::Boulder, dir)
+			|| tryMoveEnemy(index, Cave::Entity::Type::MossyBoulder, dir)
 			|| tryMoveEnemy(index, Cave::Entity::Type::MagicBoulder, dir)
 			|| tryMoveEnemy(index, Cave::Entity::Type::GallopEgg, dir)
 			|| tryMoveEnemy(index, Cave::Entity::Type::MacowEgg, dir)
@@ -3501,7 +10449,7 @@ bool Cave::Map::godTileUnsafe(const int& cell) const {
 		scan != OUT_OF_BOUNDS_INDEX;
 		scan = getIndex(scan, Cave::Entity::Direction::UP)) {
 		const Cave::Entity::Type type = getEntityType(scan);
-		if (type == Cave::Entity::Type::Boulder || type == Cave::Entity::Type::GallopEgg
+		if (Cave::Entity::isBoulder(type) || type == Cave::Entity::Type::GallopEgg
 			|| Cave::Entity::isMacowEgg(type)
 			|| type == Cave::Entity::Type::Chrysalis) return true;
 		if (type != Cave::Entity::Type::MagicBoulder
@@ -3608,7 +10556,32 @@ int Cave::Map::findNearestReachableTypeForGod(const int& index, Cave::Entity::Ty
 }
 
 int Cave::Map::findNearestReachableBoulderForGod(const int& index) const {
-	return findNearestReachableTypeForGod(index, Cave::Entity::Type::Boulder);
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (index < 0 || index >= cellCount) return OUT_OF_BOUNDS_INDEX;
+
+	std::vector<char> visited(static_cast<size_t>(cellCount), 0);
+	std::queue<int> frontier;
+	visited[static_cast<size_t>(index)] = 1;
+	frontier.push(index);
+
+	while (!frontier.empty()) {
+		const int current = frontier.front();
+		frontier.pop();
+		for (Cave::Entity::Direction step : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(current, step);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (visited[static_cast<size_t>(next)]) continue;
+			if (Cave::Entity::isBoulder(getEntityType(next))) return next;
+			if (godTileUnsafe(next)) continue;
+			if (!hasTrait(Cave::Entity::Trait::Empty, next)
+				&& !Cave::Entity::isDirtLike(getEntityType(next))) {
+				continue;
+			}
+			visited[static_cast<size_t>(next)] = 1;
+			frontier.push(next);
+		}
+	}
+	return OUT_OF_BOUNDS_INDEX;
 }
 
 int Cave::Map::findNearestReachableRubyForGod(const int& index) const {
@@ -3676,6 +10649,20 @@ Cave::Entity::Base Cave::Map::monsterFromType(Cave::Entity::Type type) const {
 	case Cave::Entity::Type::Macow: return Cave::Entity::Macow();
 	case Cave::Entity::Type::Caterpillar: return Cave::Entity::Caterpillar();
 	case Cave::Entity::Type::Butterfly: return Cave::Entity::Butterfly();
+	case Cave::Entity::Type::Jelly: return Cave::Entity::Jelly();
+	case Cave::Entity::Type::Mimic: return Cave::Entity::Mimic();
+	case Cave::Entity::Type::Shade: return Cave::Entity::Shade();
+	case Cave::Entity::Type::Grouper: return Cave::Entity::Grouper();
+	case Cave::Entity::Type::Genom: return Cave::Entity::Genom();
+	case Cave::Entity::Type::Compressor: return Cave::Entity::Compressor();
+	case Cave::Entity::Type::HiveMatriarch: return Cave::Entity::HiveMatriarch();
+	case Cave::Entity::Type::HiveLarva: return Cave::Entity::HiveLarva();
+	case Cave::Entity::Type::HiveServant: return Cave::Entity::HiveServant();
+	case Cave::Entity::Type::HiveCollector: return Cave::Entity::HiveCollector();
+	case Cave::Entity::Type::HiveHunter: return Cave::Entity::HiveHunter();
+	case Cave::Entity::Type::HiveBuilder: return Cave::Entity::HiveBuilder();
+	case Cave::Entity::Type::HiveGuard: return Cave::Entity::HiveGuard();
+	case Cave::Entity::Type::HiveDigger: return Cave::Entity::HiveDigger();
 	default: return Cave::Entity::Protozo();
 	}
 }
@@ -3734,7 +10721,7 @@ void Cave::Map::updateWell(const int& index) {
 
 bool Cave::Map::animateBoulderToMonster(const int& cell) {
 	if (cell == OUT_OF_BOUNDS_INDEX || !inBounds(cell)) return false;
-	if (getEntityType(cell) != Cave::Entity::Type::Boulder) return false;
+	if (!Cave::Entity::isBoulder(getEntityType(cell))) return false;
 	setEntity(cell, randomMonsterExceptGod());
 	if (getEntityType(cell) == Cave::Entity::Type::GallopQueen) {
 		caveEntities[cell].targetIndex = cell;
@@ -3819,19 +10806,22 @@ bool Cave::Map::tryMoveGod(const int& index, const Cave::Entity::Direction& dire
 		caveEntities[index].targetIndex = -Cave::Entity::God::SEEK_TICKS;
 		return true;
 	}
-	if (getEntityType(destination) == Cave::Entity::Type::Boulder
+	if (Cave::Entity::isBoulder(getEntityType(destination))
 		&& caveEntities[index].targetIndex == destination) {
 		if (!animateBoulderToMonster(destination)) return false;
 		caveEntities[index].targetIndex = -Cave::Entity::God::SEEK_TICKS;
 		return true;
 	}
 	if (godTileUnsafe(destination)) return false;
-	const bool empty = hasTrait(Cave::Entity::Trait::Empty, destination) || isPassableGate(destination);
-	const bool dirt = Cave::Entity::isDirtLike(getEntityType(destination));
-	if (!empty && !dirt) return false;
+	const Cave::Entity::Type destType = getEntityType(destination);
+	const bool empty = isMonsterWalkable(destination);
+	const bool dirt = Cave::Entity::isDirtLike(destType);
+	const bool mine = destType == Cave::Entity::Type::Landmine;
+	if (!empty && !dirt && !mine) return false;
 	if (!moveEntity(index, direction)) return false;
 	setEntityMoving(destination, true);
 	if (dirt) m_traversingDirt = true;
+	if (mine) createExplosion(destination);
 	return true;
 }
 
@@ -3886,13 +10876,13 @@ void Cave::Map::updateGod(const int& index) {
 
 	int& memory = caveEntities[index].targetIndex;
 	if (memory >= 0) {
-		if (!inBounds(memory) || getEntityType(memory) != Cave::Entity::Type::Boulder) {
+		if (!inBounds(memory) || !Cave::Entity::isBoulder(getEntityType(memory))) {
 			const int nextBoulder = findNearestReachableBoulderForGod(index);
 			memory = (nextBoulder == OUT_OF_BOUNDS_INDEX)
 				? -Cave::Entity::God::SEEK_TICKS
 				: nextBoulder;
 		}
-		if (memory >= 0 && getEntityType(memory) == Cave::Entity::Type::Boulder) {
+		if (memory >= 0 && Cave::Entity::isBoulder(getEntityType(memory))) {
 			if (godTouches(index, memory)) {
 				animateBoulderToMonster(memory);
 				memory = -Cave::Entity::God::SEEK_TICKS;
@@ -3920,7 +10910,7 @@ void Cave::Map::updateGod(const int& index) {
 				memory = -Cave::Entity::God::SEEK_TICKS;
 			}
 		}
-		if (memory >= 0 && getEntityType(memory) == Cave::Entity::Type::Boulder) {
+		if (memory >= 0 && Cave::Entity::isBoulder(getEntityType(memory))) {
 			const Cave::Entity::Direction dir = findPathToGoalForGod(index, memory);
 			if (dir != Cave::Entity::Direction::NO_DIRECTION) {
 				tryMoveGod(index, dir);
@@ -4133,6 +11123,10 @@ bool Cave::Map::tryMoveChaos(const int& index, const Cave::Entity::Direction& di
 		return true;
 	}
 	if (Cave::Entity::isJimlinShip(destType)) return false;
+	if (destType == Cave::Entity::Type::Landmine) {
+		createExplosion(destination);
+		return true;
+	}
 	chaosClearOccupant(destination);
 	const bool dirt = Cave::Entity::isDirtLike(destType);
 	if (!moveEntityTo(index, destination, direction)) return false;
@@ -4497,11 +11491,15 @@ void Cave::Map::updatePuffer(const int& index) {
 			createExplosion(index);
 			return;
 		}
+		if (detonateLandmineIn3x3(index))
+			return;
 		const int dest = findPufferPuffCenter(index);
 		if (dest == OUT_OF_BOUNDS_INDEX) {
 			createExplosion(index);
 			return;
 		}
+		if (detonateLandmineIn3x3(dest))
+			return;
 		inflatePuffer(index, dest);
 		m_game->soundManager.play(Sound::Effect::Inflate);
 		return;
@@ -4678,10 +11676,15 @@ void Cave::Map::freezePuffersBlockedAt(const int& cell) {
 }
 
 void Cave::Map::updatePyram(const int& index) {
-	if (handleEnemyBasicUpdate(index)) return;
-
 	int& mem = caveEntities[index].targetIndex;
 	const bool fullTick = Utils::TickCounter::onTick();
+	// Animation stays on the normal tick rate; half-ticks only drive rush movement.
+	if (fullTick)
+		updateEntityAnimation(index);
+	if (editorIdle()) return;
+	if (handleEnemyDeath(index)) return;
+	if (getEntityTransitioning(index)) return;
+
 	using P = Cave::Entity::Pyram;
 
 	if (mem > P::MODE_CHARGE && mem < P::MODE_RUSH) {
@@ -4994,7 +11997,7 @@ bool Cave::Map::tryMoveGallopQueen(const int& index, const Cave::Entity::Directi
 	const int destination = getIndex(index, direction);
 	if (destination == OUT_OF_BOUNDS_INDEX) return false;
 
-	const bool empty = hasTrait(Cave::Entity::Trait::Empty, destination) || isPassableGate(destination);
+	const bool empty = isMonsterWalkable(destination);
 	const bool food = isGallopDiamond(destination);
 	if (!empty && !food) return false;
 	if (!moveEntity(index, direction)) return false;
@@ -5511,7 +12514,7 @@ bool Cave::Map::tryMoveGallop(const int& index, const Cave::Entity::Direction& d
 	const int destination = getIndex(index, direction);
 	if (destination == OUT_OF_BOUNDS_INDEX) return false;
 
-	const bool empty = hasTrait(Cave::Entity::Trait::Empty, destination) || isPassableGate(destination);
+	const bool empty = isMonsterWalkable(destination);
 	const bool gem = allowDiamond && isGallopDiamond(destination) && !inAnyGallopQueenNest(destination);
 	if (!empty && !gem) return false;
 	if (!moveEntity(index, direction)) return false;
@@ -5560,7 +12563,7 @@ bool Cave::Map::tryWanderEmpty(const int& index, Cave::Entity::Direction directi
 	if (dest == OUT_OF_BOUNDS_INDEX) return false;
 	if (nestOnly && inBounds(nest) && !inGallopQueenNest(nest, dest)) return false;
 	if (nestAvoid && inBounds(nest) && inGallopQueenNest(nest, dest)) return false;
-	if (!hasTrait(Cave::Entity::Trait::Empty, dest) && !isPassableGate(dest)) return false;
+	if (!isMonsterWalkable(dest)) return false;
 	return tryMoveEnemy(index, Cave::Entity::Trait::Empty, direction);
 }
 
@@ -5630,6 +12633,20 @@ static bool isWanderMonster(Cave::Entity::Type type) {
 	case Cave::Entity::Type::Chrysalis:
 	case Cave::Entity::Type::ButterflyRelease:
 	case Cave::Entity::Type::Butterfly:
+	case Cave::Entity::Type::Jelly:
+	case Cave::Entity::Type::Mimic:
+	case Cave::Entity::Type::Shade:
+	case Cave::Entity::Type::Grouper:
+	case Cave::Entity::Type::Genom:
+	case Cave::Entity::Type::HiveMatriarch:
+	case Cave::Entity::Type::HiveLarva:
+	case Cave::Entity::Type::HiveServant:
+	case Cave::Entity::Type::HiveCollector:
+	case Cave::Entity::Type::HiveHunter:
+	case Cave::Entity::Type::HiveBuilder:
+	case Cave::Entity::Type::HiveGuard:
+	case Cave::Entity::Type::HiveDigger:
+	case Cave::Entity::Type::HiveTurn:
 		return true;
 	default:
 		return false;
@@ -5739,7 +12756,7 @@ void Cave::Map::wanderStraightThenFollow(const int& index, const int& nest, bool
 			if (dest == OUT_OF_BOUNDS_INDEX) return false;
 			if (nestOnly && inBounds(nest) && !inGallopQueenNest(nest, dest)) return false;
 			if (nestAvoid && inBounds(nest) && inGallopQueenNest(nest, dest)) return false;
-			return hasTrait(Cave::Entity::Trait::Empty, dest) || isPassableGate(dest);
+			return isMonsterWalkable(dest);
 		};
 
 		const bool canLeft = canEnter(Cave::Entity::Direction::LEFT);
@@ -5766,6 +12783,7 @@ void Cave::Map::wanderStraightThenFollow(const int& index, const int& nest, bool
 
 bool Cave::Map::isGluttonFood(const int& index) const {
 	if (index < 0 || index >= static_cast<int>(caveEntities.size())) return false;
+	if (isHiveBubbled(index)) return false;
 	switch (getEntityType(index)) {
 	case Cave::Entity::Type::Diamond:
 	case Cave::Entity::Type::FragileDiamond:
@@ -5872,7 +12890,7 @@ bool Cave::Map::tryMoveGlutton(const int& index, const Cave::Entity::Direction& 
 	const int destination = getIndex(index, direction);
 	if (destination == OUT_OF_BOUNDS_INDEX) return false;
 
-	const bool empty = hasTrait(Cave::Entity::Trait::Empty, destination) || isPassableGate(destination);
+	const bool empty = isMonsterWalkable(destination);
 	const Cave::Entity::Type foodType = getEntityType(destination);
 	const bool food = isGluttonFood(destination);
 	if (!empty && !food) return false;
@@ -5994,7 +13012,7 @@ bool Cave::Map::tryMoveSludg(const int& index, const Cave::Entity::Direction& di
 	const int destination = getIndex(index, direction);
 	if (destination == OUT_OF_BOUNDS_INDEX) return false;
 
-	const bool empty = hasTrait(Cave::Entity::Trait::Empty, destination) || isPassableGate(destination);
+	const bool empty = isMonsterWalkable(destination);
 	const bool plasma = getEntityType(destination) == Cave::Entity::Type::Plasma;
 	if (!empty && !plasma) return false;
 	if (!moveEntity(index, direction)) return false;
@@ -6122,7 +13140,7 @@ bool Cave::Map::tryMoveBinocule(const int& index, const Cave::Entity::Direction&
 	const int destination = getIndex(index, direction);
 	if (destination == OUT_OF_BOUNDS_INDEX) return false;
 
-	const bool empty = hasTrait(Cave::Entity::Trait::Empty, destination) || isPassableGate(destination);
+	const bool empty = isMonsterWalkable(destination);
 	const bool dirt = Cave::Entity::isDirtLike(getEntityType(destination));
 	const bool gem = allowDiamond && isDiamond(destination);
 	if (!empty && !dirt && !gem) return false;
@@ -6174,14 +13192,26 @@ bool Cave::Map::isPathfindMonster(const int& index) const {
 	case Cave::Entity::Type::Macow:
 	case Cave::Entity::Type::Caterpillar:
 	case Cave::Entity::Type::Butterfly:
+	case Cave::Entity::Type::Jelly:
+	case Cave::Entity::Type::Mimic:
+	case Cave::Entity::Type::Shade:
+	case Cave::Entity::Type::Grouper:
+	case Cave::Entity::Type::Genom:
+	case Cave::Entity::Type::HiveMatriarch:
+	case Cave::Entity::Type::HiveLarva:
+	case Cave::Entity::Type::HiveServant:
+	case Cave::Entity::Type::HiveCollector:
+	case Cave::Entity::Type::HiveHunter:
+	case Cave::Entity::Type::HiveBuilder:
+	case Cave::Entity::Type::HiveGuard:
+	case Cave::Entity::Type::HiveDigger:
 		return true;
 	default:
 		return false;
 	}
 }
 
-Cave::Entity::Direction Cave::Map::findPathToJim(const int& index) {
-	const int goal = nearestJimIndex(index);
+Cave::Entity::Direction Cave::Map::findPathToHuntGoal(const int& index, const int& goal) {
 	const int cellCount = static_cast<int>(caveEntities.size());
 	if (index < 0 || index >= cellCount || goal < 0 || goal >= cellCount) {
 		return Cave::Entity::Direction::NO_DIRECTION;
@@ -6197,54 +13227,57 @@ Cave::Entity::Direction Cave::Map::findPathToJim(const int& index) {
 		return false;
 	};
 
-	std::vector<char> visited(static_cast<size_t>(cellCount), 0);
-	std::vector<int> parent(static_cast<size_t>(cellCount), OUT_OF_BOUNDS_INDEX);
-	std::vector<Cave::Entity::Direction> via(static_cast<size_t>(cellCount), Cave::Entity::Direction::NO_DIRECTION);
-	std::queue<int> frontier;
+	auto acceptFirst = [this, index, goal](Cave::Entity::Direction first) {
+		const int stepCell = getIndex(index, first);
+		if (!inBounds(stepCell)) return Cave::Entity::Direction::NO_DIRECTION;
+		if (!isMonsterWalkable(stepCell) && stepCell != goal)
+			return Cave::Entity::Direction::NO_DIRECTION;
+		return first;
+	};
 
-	visited[static_cast<size_t>(index)] = 1;
-	frontier.push(index);
-
-	bool reached = false;
-	while (!frontier.empty()) {
-		const int current = frontier.front();
-		frontier.pop();
-		if (current == goal) {
-			reached = true;
-			break;
+	if (canPlanThrough(goal)) {
+		for (Cave::Entity::Direction step : Cave::Entity::ALL_DIRECTIONS) {
+			if (getIndex(index, step) != goal) continue;
+			return acceptFirst(step);
 		}
+	}
 
+	ensureEmptyPathScratch(cellCount);
+	beginEmptyPathGen();
+	const int gen = m_emptyPathGen;
+	m_emptyPathVisit[static_cast<size_t>(index)] = gen;
+	m_emptyPathQueue.push_back(index);
+
+	while (m_emptyPathQueueHead < m_emptyPathQueue.size()) {
+		const int current = m_emptyPathQueue[m_emptyPathQueueHead++];
 		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
 			const int next = getIndex(current, dir);
 			if (next == OUT_OF_BOUNDS_INDEX) continue;
-			if (visited[static_cast<size_t>(next)]) continue;
+			if (m_emptyPathVisit[static_cast<size_t>(next)] == gen) continue;
 			if (!canPlanThrough(next)) continue;
 
-			visited[static_cast<size_t>(next)] = 1;
-			parent[static_cast<size_t>(next)] = current;
-			via[static_cast<size_t>(next)] = dir;
-			frontier.push(next);
+			m_emptyPathVisit[static_cast<size_t>(next)] = gen;
+			const Cave::Entity::Direction first = (current == index)
+				? dir
+				: m_emptyPathFirst[static_cast<size_t>(current)];
+			m_emptyPathFirst[static_cast<size_t>(next)] = first;
+			if (next == goal)
+				return acceptFirst(first);
+			m_emptyPathQueue.push_back(next);
 		}
 	}
+	return Cave::Entity::Direction::NO_DIRECTION;
+}
 
-	if (!reached) return Cave::Entity::Direction::NO_DIRECTION;
-
-	int step = goal;
-	while (parent[static_cast<size_t>(step)] != index) {
-		step = parent[static_cast<size_t>(step)];
-		if (step == OUT_OF_BOUNDS_INDEX) return Cave::Entity::Direction::NO_DIRECTION;
-	}
-
-	if (!isMonsterWalkable(step) && step != goal)
-		return Cave::Entity::Direction::NO_DIRECTION;
-
-	return via[static_cast<size_t>(step)];
+Cave::Entity::Direction Cave::Map::findPathToJim(const int& index) {
+	return findPathToHuntGoal(index, nearestJimIndex(index));
 }
 
 bool Cave::Map::isFallableEntity(const int& index) const {
 	if (index == OUT_OF_BOUNDS_INDEX) return false;
 	switch (getEntityType(index)) {
 	case Cave::Entity::Type::Boulder:
+	case Cave::Entity::Type::MossyBoulder:
 	case Cave::Entity::Type::MagicBoulder:
 	case Cave::Entity::Type::HotBoulder:
 	case Cave::Entity::Type::HotBoulderCracked:
@@ -6255,17 +13288,21 @@ bool Cave::Map::isFallableEntity(const int& index) const {
 	case Cave::Entity::Type::Bomb:
 	case Cave::Entity::Type::TNT:
 	case Cave::Entity::Type::TimeBomb:
+	case Cave::Entity::Type::TrapEmpty:
+	case Cave::Entity::Type::TrapFull:
 	case Cave::Entity::Type::Ruby:
 	case Cave::Entity::Type::Pyrobe:
 	case Cave::Entity::Type::GallopEgg:
 	case Cave::Entity::Type::MacowEgg:
 	case Cave::Entity::Type::MacowEggCooked:
+	case Cave::Entity::Type::GenomEgg:
 	case Cave::Entity::Type::Chrysalis:
 	case Cave::Entity::Type::JimlinShipInactive:
 	case Cave::Entity::Type::KingShipInactive:
+	case Cave::Entity::Type::Compressor:
 		return true;
 	default:
-		return false;
+		return isHiveBubbled(index);
 	}
 }
 
@@ -6329,6 +13366,9 @@ bool Cave::Map::isAdjacentToJimlin(const int& index) const {
 bool Cave::Map::handleEnemyDeath(const int& index) {
 	if (Cave::Entity::isCosmic(getEntityType(index)))
 		return false;
+	// Bubbled prey are sealed packages — ignore lava / amoeba / Jimlin / ruby eat.
+	if (isHiveBubbled(index))
+		return false;
 	const Cave::Entity::Type type = getEntityType(index);
 	if (type == Cave::Entity::Type::Singularity)
 		return false;
@@ -6340,17 +13380,38 @@ bool Cave::Map::handleEnemyDeath(const int& index) {
 		pufferCenter = caveEntities[index].targetIndex;
 	}
 
-	if (type != Cave::Entity::Type::God && isAdjacentToJimlin(index)) {
-		if (pufferCenter != OUT_OF_BOUNDS_INDEX) {
+	const bool shadeStealthed = type == Cave::Entity::Type::Shade
+		&& Cave::Entity::Shade::isStealthed(caveEntities[index]);
+
+	if (type != Cave::Entity::Type::God
+		&& type != Cave::Entity::Type::Compressor
+		&& isAdjacentToJimlin(index)) {
+		if (shadeStealthed) {
+			// Invisible Shade does not explode on Jimlin contact (would kill the player).
+		}
+		else if (pufferCenter != OUT_OF_BOUNDS_INDEX) {
 			if (inBounds(pufferCenter) && getEntityType(pufferCenter) == Cave::Entity::Type::Puffer)
 				createExplosion(pufferCenter);
 			else
 				createExplosion(index);
+			return true;
 		}
 		else {
 			createExplosion(index);
+			return true;
 		}
-		return true;
+	}
+	// Hive Guard vs Predator: explode only when both are settled on neighboring tiles
+	// (not while either is mid-slide into adjacency).
+	if (type == Cave::Entity::Type::HiveGuard && !getEntityTransitioning(index)) {
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int next = getIndex(index, dir);
+			if (!inBounds(next)) continue;
+			if (getEntityType(next) != Cave::Entity::Type::Predator) continue;
+			if (getEntityTransitioning(next)) continue;
+			createExplosion(index);
+			return true;
+		}
 	}
 	if (isJimInvincible() && isRubyPrey(index) && isAdjacentTo(index, Cave::Entity::Type::Jim)) {
 		if (pufferCenter != OUT_OF_BOUNDS_INDEX) {
@@ -6399,6 +13460,16 @@ bool Cave::Map::handleEnemyDeath(const int& index) {
 		return false;
 	}
 	if (isAdjacentTo(index, Cave::Entity::Trait::Reactive)) {
+		if (type == Cave::Entity::Type::Compressor) {
+			// Safe for Jim/Jimlin; still dies to amoeba.
+			if (!isAdjacentTo(index, Cave::Entity::Type::Amoeba))
+				return false;
+		}
+		if (shadeStealthed) {
+			// Still die to amoeba while stealthed; ignore Jim/Jimlin Reactive.
+			if (!isAdjacentTo(index, Cave::Entity::Type::Amoeba))
+				return false;
+		}
 		if (pufferCenter != OUT_OF_BOUNDS_INDEX) {
 			bool amoebaTouch = false;
 			for (int offset : m_adjacentOffsets) {
@@ -6433,17 +13504,69 @@ void Cave::Map::tryWallFollowEmpty(const int& index, bool clockwise, int slideIn
 	setEntityMoving(index, false);
 }
 
+bool Cave::Map::isLandmineCell(const int& cell) const {
+	return inBounds(cell) && Cave::Entity::isLandmine(getEntityType(cell));
+}
+
+bool Cave::Map::landmineHasAdjacentMonster(const int& cell) const {
+	if (!inBounds(cell)) return false;
+	for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+		const int neighbour = getIndex(cell, dir);
+		if (neighbour == OUT_OF_BOUNDS_INDEX) continue;
+		// Wait until the slide into the neighbour tile has finished.
+		if (cosmicRef(neighbour).isTransitioning()) continue;
+		// Full-trap release: monster is under TrapOpen until the open strip ends.
+		if (neighbour < static_cast<int>(m_cosmicOver.size())
+			&& m_cosmicOver[static_cast<size_t>(neighbour)].getType()
+				== Cave::Entity::Type::TrapOpen)
+			continue;
+		// Hive bubbles seal the prey — landmines ignore them.
+		if (isHiveBubbled(neighbour)) continue;
+		if (Cave::Entity::isMonster(cosmicType(neighbour)))
+			return true;
+	}
+	return false;
+}
+
+bool Cave::Map::detonateLandmineAt(const int& cell) {
+	if (!isLandmineCell(cell)) return false;
+	createExplosion(cell);
+	return true;
+}
+
+bool Cave::Map::detonateLandmineIn3x3(const int& center) {
+	if (!inBounds(center) || width <= 0) return false;
+	const int cx = center % width;
+	const int cy = center / width;
+	for (int dy = -1; dy <= 1; ++dy) {
+		for (int dx = -1; dx <= 1; ++dx) {
+			const int x = cx + dx;
+			const int y = cy + dy;
+			if (x < 0 || y < 0 || x >= width || y >= height) continue;
+			if (detonateLandmineAt(y * width + x))
+				return true;
+		}
+	}
+	return false;
+}
+
 bool Cave::Map::tryMoveEnemy(const int& index, const Cave::Entity::Trait& trait, const Cave::Entity::Direction& direction, int slideInc) {
 	if (editorIdle()) return false;
 	setEntityDirection(index, direction);
 	const int destination = getIndex(index, direction);
 	if (destination == OUT_OF_BOUNDS_INDEX) return false;
+	if (trait == Cave::Entity::Trait::Empty && isMimicTurnOccupied(destination))
+		return false;
 	const Cave::Entity::Type destType = getEntityType(destination);
 	const bool match = hasTrait(trait, destination)
-		|| (trait == Cave::Entity::Trait::Empty && (isPassableGate(destination) || destType == Cave::Entity::Type::Fire));
+		|| (trait == Cave::Entity::Trait::Empty && (isPassableGate(destination)
+			|| destType == Cave::Entity::Type::Fire
+			|| destType == Cave::Entity::Type::Landmine));
 	if (match && moveEntity(index, direction, slideInc)) {
 		setEntityMoving(destination, true);
-		if (destType == Cave::Entity::Type::Fire
+		if (destType == Cave::Entity::Type::Landmine)
+			createExplosion(destination);
+		else if (destType == Cave::Entity::Type::Fire
 			&& !Cave::Entity::isFireImmune(getEntityType(destination)))
 			createExplosion(destination);
 		return true;
@@ -6837,6 +13960,12 @@ bool Cave::Map::chargerRushStep(const int& index) {
 		}
 		if (hasTrait(Cave::Entity::Trait::Empty, front)) {
 			plan.kind = Ok;
+			continue;
+		}
+		if (getEntityType(front) == Cave::Entity::Type::Landmine) {
+			plan.kind = Boom;
+			plan.cell = front;
+			halt = true;
 			continue;
 		}
 		if (const int victim = pufferVictim(front); victim != OUT_OF_BOUNDS_INDEX) {

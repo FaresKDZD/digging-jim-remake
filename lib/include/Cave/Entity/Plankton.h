@@ -9,7 +9,7 @@ namespace Cave::Entity {
     /**
      * @class Plankton
      * @brief Wanders like a Protozo (turns left). Every 5 seconds it splits
-     * into a second Plankton if an adjacent cell is empty.
+     * into a second Plankton that slides out of the parent tile into an empty neighbour.
      */
     class Plankton : public Base {
     public:

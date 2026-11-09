@@ -94,14 +94,10 @@ bool Cave::Map::handleEntityFalling(const int& index, const int& ahead, const Ca
 	}
 
 	if (caveEntities[index].fallPending) {
+		// Delay expired but the cell is occupied (Jim stepped in after digging, a
+		// monster filled the gap, etc.). Clear the pending flag only — do not invent
+		// a falling/airborne state. Crush requires an actual fall into the cell.
 		caveEntities[index].fallPending = false;
-		// Occupied hole after the delay tick: Jim who walked under can still be crushed
-		// because fallables cannot enter an occupied cell. A monster that filled the gap
-		// is support, not a landing — only a real fall (airborne) should crush it.
-		if (inBounds(ahead) && Cave::Entity::isPlayer(getEntityType(ahead))) {
-			setEntityFalling(index, true);
-			caveEntities[index].airborne = true;
-		}
 	}
 
 	if (!caveEntities[index].isFullyInTile()) {
@@ -127,13 +123,18 @@ bool Cave::Map::handleEntityLanding(const int& index, const int& ahead) {
 		return false;
 	}
 
-	if (!caveEntities[index].isFullyInTile()
+	// Bubbled packages soft-land: they fall and settle but never crush.
+	const bool bubbledSoft = isHiveBubbled(index);
+
+	if (!bubbledSoft
+		&& !caveEntities[index].isFullyInTile()
 		&& (hasTrait(Cave::Entity::Trait::Crushable, ahead)
 			|| Cave::Entity::isPlayer(getEntityType(ahead)))) {
 		return true;
 	}
 
-	if (Cave::Entity::isJimlin(getEntityType(ahead)) && tryJimlinDodgeCrush(ahead)) {
+	if (!bubbledSoft
+		&& Cave::Entity::isJimlin(getEntityType(ahead)) && tryJimlinDodgeCrush(ahead)) {
 		const Cave::Entity::Direction gravity = (getEntityType(index) == Cave::Entity::Type::MagicBoulder)
 			? Cave::Entity::Direction::UP
 			: Cave::Entity::Direction::DOWN;
@@ -145,8 +146,9 @@ bool Cave::Map::handleEntityLanding(const int& index, const int& ahead) {
 		}
 	}
 
-	if ((hasTrait(Cave::Entity::Trait::Crushable, ahead)
-		|| Cave::Entity::isPlayer(getEntityType(ahead)))
+	if (!bubbledSoft
+		&& (hasTrait(Cave::Entity::Trait::Crushable, ahead)
+			|| Cave::Entity::isPlayer(getEntityType(ahead)))
 		&& !caveEntities[ahead].isFullyInTile()) {
 		return true;
 	}
@@ -172,11 +174,24 @@ bool Cave::Map::handleEntityLanding(const int& index, const int& ahead) {
 		return true;
 	}
 
+	// Full trap: wait until the fall slide finishes, then crush like any fallable, then pop.
+	if (landingType == Cave::Entity::Type::TrapFull
+		&& !caveEntities[index].isFullyInTile()) {
+		return true;
+	}
+
 	setEntityFalling(index, false);
 	caveEntities[index].fallPending = false;
 	caveEntities[index].airborne = false;
 
 	Cave::Entity::Type type = getEntityType(index);
+
+	// Full trap on compressor: open/release and eat — do not crush the compressor.
+	if (type == Cave::Entity::Type::TrapFull
+		&& getEntityType(ahead) == Cave::Entity::Type::Compressor) {
+		beginCompressorEat(ahead, index);
+		return true;
+	}
 
 	if (type == Cave::Entity::Type::Bomb) {
 		createExplosion(index);
@@ -208,6 +223,18 @@ bool Cave::Map::handleEntityLanding(const int& index, const int& ahead) {
 		crackHotBoulder(ahead);
 
 	if (hasTrait(Cave::Entity::Trait::Crushable, ahead)) {
+		// Bubbled hive packages settle without crushing whatever they land on.
+		if (bubbledSoft) {
+			m_game->soundManager.play(Sound::Effect::Land);
+			return false;
+		}
+		// Compressors stack: falling onto another compressor does not crush it.
+		if (type == Cave::Entity::Type::Compressor
+			&& getEntityType(ahead) == Cave::Entity::Type::Compressor) {
+			m_game->soundManager.play(Sound::Effect::Land);
+			notifyFusion5Stimulus(index);
+			return false;
+		}
 		if (getEntityType(ahead) == Cave::Entity::Type::Chaos) {
 			chaosHitByFallable(ahead);
 			return true;
@@ -243,12 +270,19 @@ bool Cave::Map::handleEntityLanding(const int& index, const int& ahead) {
 		if (Cave::Entity::isPegul(getEntityType(blast)))
 			m_pegulFuseHunt = true;
 		createExplosion(blast);
+		if (type == Cave::Entity::Type::TrapFull)
+			releaseTrapMonster(index);
+		return true;
+	}
+
+	if (type == Cave::Entity::Type::TrapFull) {
+		releaseTrapMonster(index);
 		return true;
 	}
 
 	Cave::Entity::Type aheadType = getEntityType(ahead);
 
-	if ((type == Cave::Entity::Type::Boulder || type == Cave::Entity::Type::MagicBoulder
+	if ((Cave::Entity::isBoulder(type) || type == Cave::Entity::Type::MagicBoulder
 		|| type == Cave::Entity::Type::HotBoulder || type == Cave::Entity::Type::HotBoulderCracked
 		|| type == Cave::Entity::Type::GallopEgg
 		|| Cave::Entity::isMacowEgg(type)
@@ -300,7 +334,7 @@ bool Cave::Map::handleEntityLanding(const int& index, const int& ahead) {
 }
 
 bool Cave::Map::handleEntityLandingOnMagicWall(const int& index, const Cave::Entity::Type& type, const int& ahead, const Cave::Entity::Type& aheadType, const Cave::Entity::Direction& gravity) {
-	if (type != Cave::Entity::Type::Boulder && type != Cave::Entity::Type::MagicBoulder
+	if (!Cave::Entity::isBoulder(type) && type != Cave::Entity::Type::MagicBoulder
 		&& type != Cave::Entity::Type::GallopEgg && !Cave::Entity::isMacowEgg(type)
 		&& type != Cave::Entity::Type::Chrysalis
 		&& type != Cave::Entity::Type::Diamond) {
@@ -453,6 +487,36 @@ void Cave::Map::updateMacowEggCook(const int& index) {
 	}
 	if (restoreCoveredGate(index)) return;
 	setEntity(index, Cave::Entity::MacowEggCooked());
+}
+
+void Cave::Map::updateGenomEgg(const int& index) {
+	if (getEntityType(index) != Cave::Entity::Type::GenomEgg) return;
+	updateFallableEntity(index);
+	if (getEntityType(index) != Cave::Entity::Type::GenomEgg) return;
+	if (getEntityTransitioning(index)) return;
+
+	int& idle = caveEntities[index].extra;
+	if (idle > 0) {
+		idle--;
+		if (idle == 0) {
+			caveEntities[index].setAnimation(
+				Cave::Entity::Animation{ Cave::Entity::GenomEgg::hatchFrames(), 0 });
+			caveEntities[index].setAnimationFrame(0);
+			m_game->soundManager.play(Sound::Effect::EggHatch);
+		}
+		return;
+	}
+
+	caveEntities[index].updateAnimation();
+	if (caveEntities[index].animationLoopCompleted()
+		|| caveEntities[index].getAnimation().currentFrame
+			>= Cave::Entity::GenomEgg::FRAME_COUNT - 1) {
+		const int look = caveEntities[index].spawnCredit;
+		if (restoreCoveredGate(index)) return;
+		setEntity(index, Cave::Entity::Genom());
+		caveEntities[index].spawnCredit = look | Cave::Entity::Genom::LOOK_VALID;
+		Cave::Entity::Genom::resetBreed(caveEntities[index]);
+	}
 }
 
 void Cave::Map::updateCaterpillarChrysalize(const int& index) {

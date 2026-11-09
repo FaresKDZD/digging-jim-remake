@@ -1,4 +1,5 @@
 #include "Game/Game.h"
+#include "Utils/DpiAwareness.h"
 #include <string>
 #ifdef _WIN32
 #include <windows.h>
@@ -6,6 +7,10 @@
 
 int main(int argc, char* argv[])
 {
+#ifdef _WIN32
+    Utils::enableDpiAwareness();
+#endif
+
     std::string caveFile      = "";
     int         startCave     = 1;
     bool        editorMode    = false;

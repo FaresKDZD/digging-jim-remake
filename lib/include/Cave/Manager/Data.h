@@ -20,6 +20,18 @@ namespace Cave {
         int32_t packed = 0;
     };
 
+    /// @brief Per-Genom layer/hue look packed alongside cave tile data.
+    struct GenomRecord {
+        uint16_t index = 0;
+        int32_t packed = 0;
+    };
+
+    /// @brief Cell index of a hive-hunter-bubbled monster (packed unused, WELL-style chunk).
+    struct HiveBubbleRecord {
+        uint16_t index = 0;
+        int32_t packed = 0;
+    };
+
     /// @brief Per-singularity cosmic job limits stored alongside cave tile data.
     struct CosmicRecord {
         uint16_t index = 0;
@@ -53,6 +65,12 @@ namespace Cave {
          * @brief Id and link settings for each Portal in this cave.
          */
         std::vector<PortalRecord> portals;
+
+        /// @brief Sticky layer/hue look for each Genom / GenomEgg in this cave.
+        std::vector<GenomRecord> genoms;
+
+        /// @brief Monsters left in a hive hunter bubble (editor / save).
+        std::vector<HiveBubbleRecord> hiveBubbles;
 
         /// @brief Job limits for each Singularity in this cave.
         std::vector<CosmicRecord> cosmics;

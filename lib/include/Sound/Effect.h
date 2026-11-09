@@ -78,7 +78,10 @@ namespace Sound {
         Yahoo,
 
         /// @brief Jim completes a cave.
-        Yippee
+        Yippee,
+
+        /// @brief Looping Grouper alarm ambience.
+        Wawa
     };
 
 }

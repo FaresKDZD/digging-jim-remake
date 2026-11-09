@@ -1,4 +1,5 @@
 #include "Editor/Editor.h"
+#include "Utils/DpiAwareness.h"
 
 #include <exception>
 
@@ -8,6 +9,9 @@
 
 int main()
 {
+#ifdef _WIN32
+    Utils::enableDpiAwareness();
+#endif
     try {
         Editor editor;
         editor.run();

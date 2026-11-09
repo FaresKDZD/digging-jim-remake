@@ -145,8 +145,17 @@ public:
     /// @brief Toggle in-editor physics simulation. A second press restores the cave.
     void actionSimulate();
 
+    /// @brief Open the Simulate speed dropdown (Pause / 1x / 2x / 10x).
+    void actionOpenSimSpeedMenu();
+
     /// @brief True while in-editor Simulate is running.
     bool isSimulating() const { return m_simulating; }
+
+    /// @brief Simulation steps per frame while simulating (0 = paused).
+    int simSpeed() const { return m_simSpeed; }
+
+    /// @brief Set simulation speed: 0 pause, 1 normal, 2 double, 10 tenfold.
+    void setSimSpeed(int speed);
 
     // ----------------------------------------------------------------------------------
     // Undo
@@ -342,6 +351,12 @@ private:
     /// @brief True while in-editor Simulate is running.
     bool m_simulating      = false;
 
+    /// @brief Map updates per rendered frame while simulating (0 = paused).
+    int m_simSpeed = 1;
+
+    /// @brief Set by right-clicking Simulate while running; opens the speed popup.
+    bool m_openSimSpeedMenu = false;
+
     // ----------------------------------------------------------------------------------
     // Undo / redo state
     // ----------------------------------------------------------------------------------
@@ -375,7 +390,8 @@ private:
     void clearUndoHistory();
     void applyEditorSnapshot(const EditorSnapshot& snap, Cave::Map& map, Cave::File& loadedFile, int& currentCaveIndex);
     void startSimulate(Cave::Map& map);
-    void stopSimulate(Cave::Map& map, Cave::File& loadedFile, int& currentCaveIndex);
+    /// @param allowCancel When true, dialog includes Cancel which leaves Simulate running.
+    void stopSimulate(Cave::Map& map, Cave::File& loadedFile, int& currentCaveIndex, bool allowCancel = true);
     void drawCavesListWindow(int currentCaveIndex, Cave::File& loadedFile);
     void reorderCaves(Cave::File& loadedFile, int& currentCaveIndex, int from, int to);
 
@@ -397,6 +413,8 @@ private:
     std::vector<Cave::WellRecord> m_clipboardWells;
     std::vector<Cave::PortalRecord> m_clipboardPortals;
     std::vector<Cave::CosmicRecord> m_clipboardCosmics;
+    std::vector<Cave::GenomRecord> m_clipboardGenoms;
+    std::vector<Cave::HiveBubbleRecord> m_clipboardHiveBubbles;
     Cave::Properties m_clipboardProperties{};
 
     bool m_hasSelection = false;
@@ -405,6 +423,7 @@ private:
     std::vector<char> m_selectionClipboard;
     std::vector<int32_t> m_selectionWellPacked;
     std::vector<int32_t> m_selectionPortalPacked;
+    std::vector<int32_t> m_selectionGenomPacked;
 
     // ----------------------------------------------------------------------------------
     // Internal helpers
@@ -418,13 +437,12 @@ private:
     void handleShortcuts(const sf::Event::KeyPressed& e, HUD::Editor::Panel* panel);
 
     /**
-     * @brief Check all caves for missing start/exit doors and show a warning per issue.
+     * @brief Check all caves for missing start/exit doors and show one combined warning.
      *
      * Called after a successful save so the user is informed of any problems
      * without blocking the save itself.
      *
      * @param loadedFile The file whose caves will be checked.
-     * @param window     Owner window for the warning dialogs.
      */
     void checkSaveWarnings(const Cave::File& loadedFile);
 

@@ -27,16 +27,33 @@ bool Cave::Map::moveEntityTo(const int& sourceIndex, const int& destinationIndex
 
 	Cave::Entity::Animation sourceAnimation = caveEntities[sourceIndex].getAnimation();
 	Cave::Entity::Animation destinationAnimation = caveEntities[destinationIndex].getAnimation();
+	const Cave::Entity::Type sourceType = getEntityType(sourceIndex);
+	const int genomLook = ((sourceType == Cave::Entity::Type::Genom
+			|| sourceType == Cave::Entity::Type::GenomEgg)
+		&& Cave::Entity::Genom::hasLook(caveEntities[sourceIndex]))
+		? caveEntities[sourceIndex].spawnCredit : 0;
+
+	const bool moveBubble = isHiveBubbled(sourceIndex);
 
 	coverPassableGate(destinationIndex);
 	caveEntities[destinationIndex] = std::move(caveEntities[sourceIndex]);
 	if (!restoreCoveredGate(sourceIndex)) {
 		caveEntities[sourceIndex] = Cave::Entity::Space();
+		// Ghost look only on vacated Space — never stomp restored gate spawnCredit.
+		if (genomLook != 0)
+			caveEntities[sourceIndex].spawnCredit = genomLook;
+	}
+	else if (genomLook != 0) {
+		// Leaving an open gate: away-slide lives on the restored gate (same as other
+		// monsters). Stash look in homeIndex so the layered ghost can still draw.
+		caveEntities[sourceIndex].homeIndex = genomLook;
 	}
 
 	if (slideInc < 1) slideInc = 4;
 	caveEntities[sourceIndex].applyAwayTransition(direction, sourceAnimation, slideInc);
 	caveEntities[destinationIndex].applyIntoTransition(direction, destinationAnimation, slideInc);
+	if (moveBubble)
+		transferHiveBubble(sourceIndex, destinationIndex, direction);
 	if (vacateFallable
 		&& sourceIndex >= 0 && sourceIndex < static_cast<int>(m_fallableVacated.size()))
 		m_fallableVacated[static_cast<size_t>(sourceIndex)] = 1;
@@ -188,6 +205,12 @@ bool Cave::Map::pushEntityTo(const int& sourceIndex, const int& pushedIndex, con
 	Cave::Entity::Animation sourceAmination = caveEntities[sourceIndex].getAnimation();
 	Cave::Entity::Animation pushedAmination = caveEntities[pushedIndex].getAnimation();
 	Cave::Entity::Animation destinationAmination = caveEntities[destinationIndex].getAnimation();
+	// Layered egg tint must ghost on the push cell; raw previous shell alone leaves the tint behind.
+	const int eggLook = (getEntityType(pushedIndex) == Cave::Entity::Type::GenomEgg
+		&& Cave::Entity::Genom::hasLook(caveEntities[pushedIndex]))
+		? caveEntities[pushedIndex].spawnCredit : 0;
+
+	const bool pushBubble = isHiveBubbled(pushedIndex);
 
 	coverPassableGate(destinationIndex);
 	caveEntities[destinationIndex] = std::move(caveEntities[pushedIndex]);
@@ -199,6 +222,10 @@ bool Cave::Map::pushEntityTo(const int& sourceIndex, const int& pushedIndex, con
 	caveEntities[sourceIndex].applyAwayTransition(direction, sourceAmination);
 	caveEntities[pushedIndex].applyPushTransition(direction, pushedAmination);
 	caveEntities[destinationIndex].applyIntoTransition(direction, destinationAmination);
+	if (eggLook != 0)
+		caveEntities[pushedIndex].homeIndex = eggLook;
+	if (pushBubble)
+		transferHiveBubble(pushedIndex, destinationIndex, direction);
 
 	return true;
 }

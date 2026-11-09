@@ -1,4 +1,6 @@
 #include "Cave/Map/Map.h"
+#include "Game/Game.h"
+#include <algorithm>
 #include <cmath>
 
 sf::Vector2f Cave::Map::getCameraStartLocation() const {
@@ -24,22 +26,32 @@ sf::Vector2f Cave::Map::getCameraBounds() const {
 sf::Vector2f Cave::Map::updateCameraLocation(Camera& camera, const sf::Vector2f& offset) {
 
 	sf::Vector2f location = camera.getCenter();
+	const bool freeCam = m_game && m_game->isFreeCamera();
 
-	if (width <= 0 || !inBounds(m_jimIndex)) return location;
-	float targetX = static_cast<float>((m_jimIndex % width) * 32) + offset.x;
-	float targetY = static_cast<float>((m_jimIndex / width) * 32) + offset.y + 16.f;
-	const sf::IntRect jimRect = caveEntities[m_jimIndex].getCurrentPosition();
-	targetX += static_cast<float>(jimRect.position.x);
-	targetY += static_cast<float>(jimRect.position.y);
+	// After death, keep the view locked on Jim's last cell — unless free camera
+	// (C) is active, which must still pan via offset in Fail/End/Intro/Load.
+	if ((m_state == Cave::State::Fail || m_state == Cave::State::End) && !freeCam)
+		return location;
+
+	const int focus = inBounds(m_jimIndex) ? m_jimIndex
+		: (inBounds(m_startDoorIndex) ? m_startDoorIndex : OUT_OF_BOUNDS_INDEX);
+	if (width <= 0 || !inBounds(focus)) return location;
+
+	// Cell centre only — transition rects clip within the cell and do not track
+	// Jim's visual slide for right/down, so following them snaps tile-to-tile.
+	const float targetX = static_cast<float>((focus % width) * 32) + offset.x;
+	const float targetY = static_cast<float>((focus / width) * 32) + offset.y + 16.f;
 
 	bool snapped = false;
-	if (m_snapCameraToJim) {
+	// Free camera snaps so arrow pans work immediately during intro/death easing.
+	if (m_snapCameraToJim || freeCam) {
 		location.x = targetX;
 		location.y = targetY;
 		m_snapCameraToJim = false;
 		snapped = true;
 	}
 	else {
+		// Ease toward Jim for intro pan and during play.
 		const auto approach = [](float current, float target, float speed) {
 			const float delta = target - current;
 			if (std::fabs(delta) <= speed)

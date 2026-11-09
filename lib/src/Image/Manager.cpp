@@ -56,6 +56,19 @@ void Image::Manager::loadTexture(const Image::Texture& texture, const std::strin
         return;
     sf::Texture tex;
     if (!tex.loadFromFile(filename)) {
+        sf::Image image;
+        const bool imageOk = image.loadFromFile(filename);
+        const unsigned maxSize = sf::Texture::getMaximumSize();
+        if (imageOk && (image.getSize().x > maxSize || image.getSize().y > maxSize)) {
+            throw std::runtime_error(
+                "Unable to load texture: " + filename
+                + "\n\nImage is " + std::to_string(image.getSize().x) + "x"
+                + std::to_string(image.getSize().y)
+                + " but OpenGL max texture size is only " + std::to_string(maxSize)
+                + "x" + std::to_string(maxSize)
+                + ".\n\nThis usually means the GPU is on Microsoft Basic Display "
+                  "(no NVIDIA/AMD driver). Install your GPU drivers and try again.\n");
+        }
         throw std::runtime_error("Error: Unable to load texture: " + filename + "\n");
     }
     tex.setSmooth(false);

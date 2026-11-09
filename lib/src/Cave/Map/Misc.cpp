@@ -6,6 +6,9 @@ void Cave::Map::handleBoulderRoll(const int& index, const Cave::Entity::Directio
 	if ((direction == Cave::Entity::Direction::LEFT || direction == Cave::Entity::Direction::RIGHT) && getEntityType(index) == Cave::Entity::Type::Boulder) {
 		setEntity(index, Cave::Entity::Boulder());
 	}
+	if ((direction == Cave::Entity::Direction::LEFT || direction == Cave::Entity::Direction::RIGHT) && getEntityType(index) == Cave::Entity::Type::MossyBoulder) {
+		setEntity(index, Cave::Entity::MossyBoulder());
+	}
 	if ((direction == Cave::Entity::Direction::LEFT || direction == Cave::Entity::Direction::RIGHT) && getEntityType(index) == Cave::Entity::Type::MagicBoulder) {
 		setEntity(index, Cave::Entity::MagicBoulder());
 	}
@@ -257,6 +260,7 @@ void Cave::Map::detonateCells(const int& origin, const std::vector<int>& cells, 
 			caveEntities[explosionIndex].extra = 0;
 			caveEntities[explosionIndex].spawnCredit = 0;
 		}
+		clearMimicTurnOverlay(explosionIndex);
 
 		if (type == Cave::Entity::Type::Jim || playerPilotShip) {
 			m_game->sendSignal(GameSignal::CaveFail);

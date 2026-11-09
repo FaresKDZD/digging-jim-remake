@@ -223,6 +223,20 @@ namespace Cave::Entity {
             { "Macow", Type::Macow },
             { "Caterpillar", Type::Caterpillar },
             { "Butterfly", Type::Butterfly },
+            { "Jelly", Type::Jelly },
+            { "Mimic", Type::Mimic },
+            { "Shade", Type::Shade },
+            { "Grouper", Type::Grouper },
+            { "Genom", Type::Genom },
+            { "Compressor", Type::Compressor },
+            { "Hive Matriarch", Type::HiveMatriarch },
+            { "Hive Larva", Type::HiveLarva },
+            { "Hive Servant", Type::HiveServant },
+            { "Hive Collector", Type::HiveCollector },
+            { "Hive Hunter", Type::HiveHunter },
+            { "Hive Builder", Type::HiveBuilder },
+            { "Hive Guard", Type::HiveGuard },
+            { "Hive Digger", Type::HiveDigger },
         };
 
         static constexpr int VITUS_OPTION_COUNT =
