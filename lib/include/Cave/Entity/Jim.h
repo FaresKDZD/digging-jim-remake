@@ -9,6 +9,24 @@ namespace Cave::Entity {
      */
     class Jim : public Base {
     public:
+        /// @brief Magma dig overheat uses ~64 render frames per second (same as ruby/pyrobe timers).
+        static constexpr int MAGMA_HEAT_FPS = 64;
+        static constexpr int MAGMA_HEAT_MAX = MAGMA_HEAT_FPS * 6;       // 6s continuous dig → death
+        static constexpr int MAGMA_HEAT_STAGE1 = MAGMA_HEAT_FPS * 2;    // first 2s: no overlay
+        static constexpr int MAGMA_HEAT_STAGE2 = MAGMA_HEAT_FPS * 4;    // next 2s: fire frames 0-3
+        static constexpr int MAGMA_HEAT_COOL_RATE = 4;                  // cool in 1/4 of dig time
+        static constexpr int MAGMA_FIRE_FRAME_COUNT = 8;
+        static constexpr int MAGMA_FIRE_ANIM_DIV = 8;                  // overlay loop cadence
+
+        /// @brief Underwater breath overlay (10 frames).
+        /// Deplete: 2s→even, 0.125s→odd, then 0.125s on frame 10 before drown (10.625s total).
+        static constexpr int BREATH_FPS = MAGMA_HEAT_FPS;
+        static constexpr int BREATH_HOLD_LONG = BREATH_FPS * 2;         // 2s before 2,4,6,8,10
+        static constexpr int BREATH_HOLD_SHORT = BREATH_FPS / 8;        // 0.125s before 3,5,7,9 and on 10
+        static constexpr int BREATH_OVERLAY_COUNT = 10;
+        /// @brief Catch-breath refill lasts 0.2× the previous dive duration.
+        static constexpr float BREATH_REFILL_RATIO = 0.2f;
+
         Jim()
             : Base(Type::Jim, idleAnimation()) {
             addTrait(Trait::Crushable);
@@ -60,6 +78,16 @@ namespace Cave::Entity {
         /// @brief True if the tileset index belongs to a Jim sprite (idle/move/push).
         static bool isJimTexture(int tex) {
             return tex >= 168 && tex <= 203;
+        }
+
+        /// @brief True if the tileset index is a Jim push-left/right frame.
+        static bool isJimPushTexture(int tex) {
+            return tex >= 192 && tex <= 203;
+        }
+
+        /// @brief True if the tileset index is a Jim push-left frame.
+        static bool isJimPushLeftTexture(int tex) {
+            return tex >= 198 && tex <= 203;
         }
 
     private:

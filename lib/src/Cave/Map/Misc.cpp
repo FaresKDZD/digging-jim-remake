@@ -131,7 +131,7 @@ void Cave::Map::createSingularityExplosion(const int& origin) {
 			int previousIndex = getIndex(explosionIndex, caveEntities[explosionIndex].getPreviousDirection());
 			if (previousIndex != OUT_OF_BOUNDS_INDEX)
 				caveEntities[previousIndex].terminatePreviousTransition();
-			caveEntities[explosionIndex].terminateCurrentTransition();
+			caveEntities[explosionIndex].clearTransition();
 
 			if (absorbObsidianExplosion(explosionIndex))
 				continue;
@@ -236,7 +236,9 @@ void Cave::Map::detonateCells(const int& origin, const std::vector<int>& cells, 
 		if (previousIndex != OUT_OF_BOUNDS_INDEX) {
 			caveEntities[previousIndex].terminatePreviousTransition();
 		}
-		caveEntities[explosionIndex].terminateCurrentTransition();
+		// Drop into and away slides (terminateCurrent leaves away intact — water leave
+		// ghosts would otherwise transfer onto the explosion / covered water).
+		caveEntities[explosionIndex].clearTransition();
 
 		if (absorbObsidianExplosion(explosionIndex))
 			continue;
@@ -256,9 +258,10 @@ void Cave::Map::detonateCells(const int& origin, const std::vector<int>& cells, 
 		else if (caveGullExplosion)
 			setEntity(explosionIndex, Cave::Entity::CaveGullExplosion());
 		else {
-			setEntity(explosionIndex, Cave::Entity::Explosion());
+			// Check before setEntity covers water under the blast.
+			const bool underwater = isWaterCell(explosionIndex);
+			setEntity(explosionIndex, Cave::Entity::Explosion(underwater));
 			caveEntities[explosionIndex].extra = 0;
-			caveEntities[explosionIndex].spawnCredit = 0;
 		}
 		clearMimicTurnOverlay(explosionIndex);
 

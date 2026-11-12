@@ -63,6 +63,8 @@ HUD::Editor::Panel::Panel(::Editor* editor) : m_editor(editor), m_tileRenderer(&
 
     if (m_entities.count(Cave::Entity::Type::Genom))
         m_genomLook = m_entities[Cave::Entity::Type::Genom].spawnCredit;
+    if (m_entities.count(Cave::Entity::Type::Fish))
+        m_fishLook = m_entities[Cave::Entity::Type::Fish].spawnCredit;
 
     m_builderMenu.setSize(sf::Vector2f(PANEL_W, 496.f - PALETTE_H));
     m_builderMenu.setFillColor(sf::Color(128, 128, 128));
@@ -244,6 +246,10 @@ int HUD::Editor::Panel::miniTileIndex(Cave::Entity::Type type)
     case T::HiveDigger:       return 128;
     case T::HiveStorageWall:  return 129;
     case T::HiveLivingWall:   return 130;
+    case T::Water:            return 131;
+    case T::Fish:             return 132;
+    case T::Coral:            return 133;
+    case T::Parasite:         return 134;
     case T::Jimlin1:         return 67;
     case T::Jimlin2:         return 68;
     case T::Jimlin3:         return 69;
@@ -460,6 +466,27 @@ void HUD::Editor::Panel::draw(sf::RenderTarget& target, sf::RenderStates states)
     noShader.shader = nullptr;
 
     target.draw(m_background,  noShader);
+    // Opaque backing so translucent water / coral frames read clearly in the palette.
+    {
+        const sf::Vector2f panelPos = m_background.getPosition();
+        for (int y = m_scrollRow; y < m_scrollRow + VISIBLE_PALETTE_ROWS; ++y) {
+            for (int x = 0; x < 3; ++x) {
+                const Cave::Entity::Type slotType = getType(x, y);
+                if (slotType != Cave::Entity::Type::Water
+                    && slotType != Cave::Entity::Type::Coral
+                    && slotType != Cave::Entity::Type::Parasite)
+                    continue;
+                const int visY = y - m_scrollRow;
+                sf::RectangleShape bg(sf::Vector2f(32.f, 32.f));
+                bg.setFillColor(sf::Color::Black);
+                bg.setPosition({
+                    x * 34.f + 2.f + panelPos.x,
+                    visY * 34.f + 2.f + panelPos.y
+                });
+                target.draw(bg, noShader);
+            }
+        }
+    }
     m_tileRenderer.render(target, states);
     target.draw(m_selectedBox, noShader);
     if (m_sbBgTile)
@@ -843,6 +870,10 @@ bool HUD::Editor::Panel::isGenomSlot(const int& x, const int& y) const {
     return x == GenomSlotX && y == GenomSlotY;
 }
 
+bool HUD::Editor::Panel::isFishSlot(const int& x, const int& y) const {
+    return x == FishSlotX && y == FishSlotY;
+}
+
 void HUD::Editor::Panel::syncGenomPaletteEntity() {
     auto it = m_entities.find(Cave::Entity::Type::Genom);
     if (it == m_entities.end()) return;
@@ -895,6 +926,53 @@ int HUD::Editor::Panel::getGenomPaletteLook() const {
     return G::packLook(0, 255, 1, 0, 0, 0, 0, 0);
 }
 
+void HUD::Editor::Panel::syncFishPaletteEntity() {
+    auto it = m_entities.find(Cave::Entity::Type::Fish);
+    if (it == m_entities.end()) return;
+    if (m_fishRandomize)
+        it->second.spawnCredit = Cave::Entity::Fish::randomLook();
+    else {
+        if ((m_fishLook & Cave::Entity::Fish::LOOK_VALID) == 0)
+            m_fishLook = Cave::Entity::Fish::randomLook();
+        it->second.spawnCredit = m_fishLook;
+    }
+}
+
+void HUD::Editor::Panel::setFishRandomize(bool randomize) {
+    if (m_fishRandomize == randomize) return;
+    m_fishRandomize = randomize;
+    auto it = m_entities.find(Cave::Entity::Type::Fish);
+    if (it == m_entities.end()) return;
+    if (randomize) {
+        it->second.spawnCredit = Cave::Entity::Fish::randomLook();
+    }
+    else {
+        if ((it->second.spawnCredit & Cave::Entity::Fish::LOOK_VALID) != 0)
+            m_fishLook = it->second.spawnCredit;
+        if ((m_fishLook & Cave::Entity::Fish::LOOK_VALID) == 0)
+            m_fishLook = Cave::Entity::Fish::randomLook();
+        it->second.spawnCredit = m_fishLook;
+    }
+}
+
+void HUD::Editor::Panel::setFishLook(int look) {
+    using F = Cave::Entity::Fish;
+    m_fishLook = F::enforceLook(F::hue(look), F::satByte(look));
+    m_fishRandomize = false;
+    auto it = m_entities.find(Cave::Entity::Type::Fish);
+    if (it != m_entities.end())
+        it->second.spawnCredit = m_fishLook;
+}
+
+int HUD::Editor::Panel::getFishPaletteLook() const {
+    auto it = m_entities.find(Cave::Entity::Type::Fish);
+    if (it != m_entities.end() && (it->second.spawnCredit & Cave::Entity::Fish::LOOK_VALID) != 0)
+        return it->second.spawnCredit;
+    if ((m_fishLook & Cave::Entity::Fish::LOOK_VALID) != 0)
+        return m_fishLook;
+    return Cave::Entity::Fish::packLook(0, 255);
+}
+
 bool HUD::Editor::Panel::handleRightClick(sf::Vector2f vp, float panelX, float toolbarH) {
     float lx = vp.x - panelX;
     float ly = vp.y - toolbarH;
@@ -918,6 +996,7 @@ bool HUD::Editor::Panel::handleRightClick(sf::Vector2f vp, float panelX, float t
             || isJimlinSlot(px, row) || isGateSlot(px, row) || isJimlinBlockSlot(px, row)
             || isJimlinShipSlot(px, row)
             || isGenomSlot(px, row)
+            || isFishSlot(px, row)
             || isHiveMatriarchSlot(px, row)
             || isHiveWallSlot(px, row))
         {
@@ -965,7 +1044,7 @@ void HUD::Editor::Panel::handleScroll(float delta)
         setScrollRow(m_scrollRow + 1);
 }
 
-Cave::Entity::Type HUD::Editor::Panel::getType(const int& x, const int& y) {
+Cave::Entity::Type HUD::Editor::Panel::getType(const int& x, const int& y) const {
     int num = std::clamp(y, 0, TOTAL_PALETTE_ROWS - 1) * 3 + std::clamp(x, 0, 2);
     switch (num) {
     case 0:  return m_spaceSlotType;
@@ -1055,6 +1134,10 @@ Cave::Entity::Type HUD::Editor::Panel::getType(const int& x, const int& y) {
     case 84: return Cave::Entity::Type::Compressor;
     case 85: return m_hiveMatriarchType;
     case 86: return m_hiveWallType;
+    case 87: return Cave::Entity::Type::Water;
+    case 88: return Cave::Entity::Type::Fish;
+    case 89: return Cave::Entity::Type::Coral;
+    case 90: return Cave::Entity::Type::Parasite;
     default: return Cave::Entity::Type::NoType;
     }
 }
@@ -1199,6 +1282,16 @@ Cave::Entity::Base HUD::Editor::Panel::getNewEntity(Cave::Entity::Type type) {
     case Cave::Entity::Type::HiveDigger:       return Cave::Entity::HiveDigger();
     case Cave::Entity::Type::HiveStorageWall:  return Cave::Entity::HiveStorageWall();
     case Cave::Entity::Type::HiveLivingWall:   return Cave::Entity::HiveLivingWall();
+    case Cave::Entity::Type::Water:            return Cave::Entity::Water();
+    case Cave::Entity::Type::Coral:           return Cave::Entity::Coral();
+    case Cave::Entity::Type::CoralBud:        return Cave::Entity::CoralBud();
+    case Cave::Entity::Type::Parasite:        return Cave::Entity::Parasite();
+    case Cave::Entity::Type::Fish: {
+        Cave::Entity::Fish fish;
+        if (!m_fishRandomize && (m_fishLook & Cave::Entity::Fish::LOOK_VALID) != 0)
+            fish.spawnCredit = m_fishLook;
+        return fish;
+    }
     case Cave::Entity::Type::Singularity:
     case Cave::Entity::Type::Ostia:
     case Cave::Entity::Type::Murus:

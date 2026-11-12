@@ -70,6 +70,8 @@ namespace Cave::Entity {
         static constexpr int MODE_DEPOSIT = 8;
         static constexpr int MODE_HOME = 9;
         static constexpr int MODE_REST = 10;
+        /// @brief Low on breath — path to the nearest breathable tile.
+        static constexpr int MODE_BREATH_FLEE = 11;
 
         static constexpr int TICKS_PER_SEC = 8;
         static constexpr int DUTY_TICKS = 60 * TICKS_PER_SEC;

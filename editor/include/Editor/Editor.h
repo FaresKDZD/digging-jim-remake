@@ -415,6 +415,7 @@ private:
     std::vector<Cave::CosmicRecord> m_clipboardCosmics;
     std::vector<Cave::GenomRecord> m_clipboardGenoms;
     std::vector<Cave::HiveBubbleRecord> m_clipboardHiveBubbles;
+    std::vector<Cave::HiveBubbleRecord> m_clipboardWaterUnders;
     Cave::Properties m_clipboardProperties{};
 
     bool m_hasSelection = false;

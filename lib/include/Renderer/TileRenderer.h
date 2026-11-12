@@ -19,8 +19,14 @@ namespace Renderer {
         
         /**
          * @brief Prepare the texture for drawing by updating the positions and textures for each tile drawn.
+         * @param underlaySpaceForAlpha When true (tile layer), transparent sprites like Parasite
+         *        get a Space floor so editor grey RT does not show through. Cosmic overlays pass
+         *        false so Jim / whatever is underneath remains visible through alpha.
+         * @param jimEmptyFullSlide When true, Jim walking into Space uses a full-body slide
+         *        (no Space into-wedge). Needed while the transparent parasite overlay is up so
+         *        the wedge does not read as a black square through the overlay alpha.
          */
-        void updateTexture(const std::vector<Cave::Entity::Base>& entities, const sf::Vector2i& position, const sf::IntRect& gridRange, int gap = 0, sf::Color jimTint = sf::Color::White);
+        void updateTexture(const std::vector<Cave::Entity::Base>& entities, const sf::Vector2i& position, const sf::IntRect& gridRange, int gap = 0, sf::Color jimTint = sf::Color::White, bool underlaySpaceForAlpha = true, bool jimEmptyFullSlide = false);
         
         /**
          * @brief Prepare the locations of the loading tiles to be drawn,

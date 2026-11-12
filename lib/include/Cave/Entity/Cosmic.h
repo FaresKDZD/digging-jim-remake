@@ -237,6 +237,9 @@ namespace Cave::Entity {
             { "Hive Builder", Type::HiveBuilder },
             { "Hive Guard", Type::HiveGuard },
             { "Hive Digger", Type::HiveDigger },
+            { "Fish", Type::Fish },
+            { "Coral", Type::Coral },
+            { "Parasite", Type::Parasite },
         };
 
         static constexpr int VITUS_OPTION_COUNT =

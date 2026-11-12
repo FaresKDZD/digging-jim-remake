@@ -52,7 +52,7 @@ void Cave::Map::load() {
 	}
 }
 
-void Cave::Map::generateMap(const Cave::Properties* properties, const std::vector<char>& tileData, const std::vector<Cave::WellRecord>& wells, const std::vector<Cave::PortalRecord>& portals, const std::vector<Cave::CosmicRecord>& cosmics, const std::vector<Cave::GenomRecord>& genoms, const std::vector<Cave::HiveBubbleRecord>& hiveBubbles) {
+void Cave::Map::generateMap(const Cave::Properties* properties, const std::vector<char>& tileData, const std::vector<Cave::WellRecord>& wells, const std::vector<Cave::PortalRecord>& portals, const std::vector<Cave::CosmicRecord>& cosmics, const std::vector<Cave::GenomRecord>& genoms, const std::vector<Cave::HiveBubbleRecord>& hiveBubbles, const std::vector<Cave::HiveBubbleRecord>& waterUnders) {
 
 	// Reset start door location
 	m_startDoorIndex = OUT_OF_BOUNDS_INDEX;
@@ -71,6 +71,7 @@ void Cave::Map::generateMap(const Cave::Properties* properties, const std::vecto
 	caveEntities.resize(0);
 	m_loaded.resize(0);
 	m_coveredGate.assign(static_cast<size_t>(width * height), Cave::Entity::Base());
+	m_waterUnder.assign(static_cast<size_t>(width * height), 0);
 	std::vector<int> startDoors;
 	for (int index = 0; index < width * height; ++index) {
 		m_loaded.push_back(false);
@@ -142,6 +143,9 @@ void Cave::Map::generateMap(const Cave::Properties* properties, const std::vecto
 		case Cave::Entity::Type::Shade:
 			caveEntities[index].extra = Utils::randomInteger(0, Cave::Entity::Shade::PHASE_TICKS - 1);
 			break;
+		case Cave::Entity::Type::Coral:
+			caveEntities[index].extra = Utils::randomInteger(0, Cave::Entity::Coral::PRODUCE_TICKS - 1);
+			break;
 		case Cave::Entity::Type::Spinner:
 			caveEntities[index].targetIndex = Utils::randomInteger(1, Cave::Entity::Spinner::TURN_TICKS);
 			break;
@@ -169,9 +173,14 @@ void Cave::Map::generateMap(const Cave::Properties* properties, const std::vecto
 		const int index = static_cast<int>(genom.index);
 		if (!inBounds(index)) continue;
 		const Cave::Entity::Type type = getEntityType(index);
-		if (type != Cave::Entity::Type::Genom && type != Cave::Entity::Type::GenomEgg)
+		if (type == Cave::Entity::Type::Genom || type == Cave::Entity::Type::GenomEgg) {
+			caveEntities[index].spawnCredit = genom.packed | Cave::Entity::Genom::LOOK_VALID;
 			continue;
-		caveEntities[index].spawnCredit = genom.packed | Cave::Entity::Genom::LOOK_VALID;
+		}
+		if (type == Cave::Entity::Type::Fish) {
+			caveEntities[index].spawnCredit = genom.packed | Cave::Entity::Fish::LOOK_VALID;
+			caveEntities[index].extra = Cave::Entity::Fish::MODE_MOVE;
+		}
 	}
 
 	for (const auto& bubble : hiveBubbles) {
@@ -183,6 +192,25 @@ void Cave::Map::generateMap(const Cave::Properties* properties, const std::vecto
 		m_cosmicOver[static_cast<size_t>(index)].setAnimationFrame(B::FRAME_LAST);
 		caveEntities[index].removeTrait(Cave::Entity::Trait::Crushable);
 		caveEntities[index].addTrait(Cave::Entity::Trait::Slippery);
+	}
+
+	for (const auto& under : waterUnders) {
+		const int index = static_cast<int>(under.index);
+		if (!inBounds(index)) continue;
+		const Cave::Entity::Type top = getEntityType(index);
+		if (top == Cave::Entity::Type::Water || top == Cave::Entity::Type::NoType)
+			continue;
+		// Transient / sync leftovers often serialize as Space while still carrying
+		// a water-under record (e.g. mid water-explosion). Restore bare water.
+		if (top == Cave::Entity::Type::Space) {
+			caveEntities[static_cast<size_t>(index)] = Cave::Entity::Water();
+			continue;
+		}
+		// Solids are not water-loggable — drop stale covered-water records.
+		if (!isWaterLoggable(index))
+			continue;
+		m_coveredGate[static_cast<size_t>(index)] = Cave::Entity::Water();
+		m_waterUnder[static_cast<size_t>(index)] = 1;
 	}
 
 	m_cosmicSettings = Cave::Entity::Cosmic::Settings{};
@@ -213,9 +241,19 @@ void Cave::Map::generateMap(const Cave::Properties* properties, const std::vecto
 	m_fullTrapsCarried.clear();
 	m_jimInvincibleFrames = 0;
 	m_jimPyrobeFrames = 0;
+	m_jimParasiteFrames = 0;
+	m_jimParasiteOverlayFrame = -1;
+	m_jimMagmaHeat = 0;
+	m_jimMagmaForcedHeatFrames = 0;
+	m_jimMagmaFireDrawFrame = -1;
+	m_jimBreath = {};
+	m_jimlinBreath.clear();
+	m_nextJimlinBreathId = 1;
+	m_breathDraws.clear();
 	m_playerInvincible.fill(0);
 	m_playerPyrobe.fill(0);
 	m_playerPyrobeShootWait.fill(0);
+	m_playerParasite.fill(0);
 	m_jimGateComboHeld = false;
 
 	// Reset magic wall variables
@@ -644,30 +682,105 @@ void Cave::Map::placeEntity(const int& index, Cave::Entity::Base& entity) {
 		return;
 	}
 	const Cave::Entity::Type prev = getEntityType(index);
+	const Cave::Entity::Type placing = entity.getType();
+	// Painting water onto a loggable occupant (charger included) only layers water
+	// under it — do not tear down multi-tile structures first.
+	const bool layeringWater = placing == Cave::Entity::Type::Water
+		&& isWaterLoggable(caveEntities[index]);
 	int blockedPuffer = OUT_OF_BOUNDS_INDEX;
-	if (prev == Cave::Entity::Type::Charger) {
-		clearChargerBodies(index);
-	}
-	else if (prev == Cave::Entity::Type::ChargerBody) {
-		const int center = caveEntities[index].targetIndex;
-		if (inBounds(center) && getEntityType(center) == Cave::Entity::Type::Charger) {
-			clearChargerBodies(center);
-			caveEntities[center] = Cave::Entity::Space();
+	if (!layeringWater) {
+		if (prev == Cave::Entity::Type::Charger) {
+			clearChargerBodies(index);
+		}
+		else if (prev == Cave::Entity::Type::ChargerBody) {
+			const int center = caveEntities[index].targetIndex;
+			if (inBounds(center) && getEntityType(center) == Cave::Entity::Type::Charger) {
+				clearChargerBodies(center);
+				setEntity(center, Cave::Entity::Space());
+			}
+		}
+		else if (prev == Cave::Entity::Type::Puffer) {
+			clearPufferBodies(index);
+		}
+		else if (prev == Cave::Entity::Type::PufferBody) {
+			blockedPuffer = caveEntities[index].targetIndex;
+		}
+		else if (prev == Cave::Entity::Type::Worm) {
+			clearWorm(index, index);
+		}
+		else if (prev == Cave::Entity::Type::WormBody) {
+			clearWorm(index, index);
 		}
 	}
-	else if (prev == Cave::Entity::Type::Puffer) {
-		clearPufferBodies(index);
+
+	const bool hadCoveredWater =
+		(index < static_cast<int>(m_coveredGate.size())
+			&& m_coveredGate[static_cast<size_t>(index)].getType() == Cave::Entity::Type::Water)
+		|| (index < static_cast<int>(m_waterUnder.size())
+			&& m_waterUnder[static_cast<size_t>(index)] != 0);
+	// Structural clears may restore covered water as the top tile.
+	const Cave::Entity::Type now = getEntityType(index);
+
+	if (placing == Cave::Entity::Type::Space) {
+		if (hadCoveredWater) {
+			// Clear the occupant; leave bare water behind.
+			if (index < static_cast<int>(m_coveredGate.size()))
+				m_coveredGate[static_cast<size_t>(index)] = Cave::Entity::Base();
+			if (index < static_cast<int>(m_waterUnder.size()))
+				m_waterUnder[static_cast<size_t>(index)] = 0;
+			caveEntities[index] = Cave::Entity::Water();
+		}
+		else {
+			// Bare water (or anything else) is erased by Space.
+			if (index < static_cast<int>(m_coveredGate.size()))
+				m_coveredGate[static_cast<size_t>(index)] = Cave::Entity::Base();
+			if (index < static_cast<int>(m_waterUnder.size()))
+				m_waterUnder[static_cast<size_t>(index)] = 0;
+			caveEntities[index] = Cave::Entity::Space();
+		}
 	}
-	else if (prev == Cave::Entity::Type::PufferBody) {
-		blockedPuffer = caveEntities[index].targetIndex;
+	else if (placing == Cave::Entity::Type::Water) {
+		if (layeringWater
+			|| (now != Cave::Entity::Type::Space && now != Cave::Entity::Type::Water
+				&& now != Cave::Entity::Type::NoType
+				&& isWaterLoggable(caveEntities[index]))) {
+			// Layer water under a loggable occupant (monster, gem, Jim, charger…).
+			if (static_cast<int>(m_coveredGate.size()) != width * height)
+				m_coveredGate.assign(static_cast<size_t>(width * height), Cave::Entity::Base());
+			if (static_cast<int>(m_waterUnder.size()) != width * height)
+				m_waterUnder.assign(static_cast<size_t>(width * height), 0);
+			m_coveredGate[static_cast<size_t>(index)] = Cave::Entity::Water();
+			m_waterUnder[static_cast<size_t>(index)] = 1;
+		}
+		else {
+			// Bare cell or solid: water overwrites (solids are not water-loggable).
+			if (index < static_cast<int>(m_coveredGate.size()))
+				m_coveredGate[static_cast<size_t>(index)] = Cave::Entity::Base();
+			if (index < static_cast<int>(m_waterUnder.size()))
+				m_waterUnder[static_cast<size_t>(index)] = 0;
+			caveEntities[index] = Cave::Entity::Water();
+		}
 	}
-	else if (prev == Cave::Entity::Type::Worm) {
-		clearWorm(index, index);
+	else {
+		if (now == Cave::Entity::Type::Water || prev == Cave::Entity::Type::Water) {
+			if (isWaterLoggable(entity))
+				coverPassableGate(index);
+			else {
+				if (index < static_cast<int>(m_coveredGate.size()))
+					m_coveredGate[static_cast<size_t>(index)] = Cave::Entity::Base();
+				if (index < static_cast<int>(m_waterUnder.size()))
+					m_waterUnder[static_cast<size_t>(index)] = 0;
+			}
+		}
+		else if (!isWaterLoggable(entity) && hadCoveredWater) {
+			// Solid painted over a water-logged cell: drop the covered water.
+			if (index < static_cast<int>(m_coveredGate.size()))
+				m_coveredGate[static_cast<size_t>(index)] = Cave::Entity::Base();
+			if (index < static_cast<int>(m_waterUnder.size()))
+				m_waterUnder[static_cast<size_t>(index)] = 0;
+		}
+		caveEntities[index] = entity;
 	}
-	else if (prev == Cave::Entity::Type::WormBody) {
-		clearWorm(index, index);
-	}
-	caveEntities[index] = entity;
 
 	if (inBounds(blockedPuffer) && getEntityType(blockedPuffer) == Cave::Entity::Type::Puffer)
 		freezePufferIdle(blockedPuffer);
@@ -736,7 +849,8 @@ void Cave::Map::collectGenomRecords(std::vector<Cave::GenomRecord>& out) const {
 	out.clear();
 	for (int index = 0; index < width * height; ++index) {
 		const Cave::Entity::Type type = getEntityType(index);
-		if (type != Cave::Entity::Type::Genom && type != Cave::Entity::Type::GenomEgg)
+		if (type != Cave::Entity::Type::Genom && type != Cave::Entity::Type::GenomEgg
+			&& type != Cave::Entity::Type::Fish)
 			continue;
 		Cave::GenomRecord rec;
 		rec.index = static_cast<uint16_t>(index);
@@ -753,6 +867,72 @@ void Cave::Map::collectHiveBubbleRecords(std::vector<Cave::HiveBubbleRecord>& ou
 		Cave::HiveBubbleRecord rec;
 		rec.index = static_cast<uint16_t>(index);
 		out.push_back(rec);
+	}
+}
+
+void Cave::Map::collectWaterUnderRecords(std::vector<Cave::HiveBubbleRecord>& out) const {
+	out.clear();
+	if (static_cast<int>(m_coveredGate.size()) != width * height) return;
+	for (int index = 0; index < width * height; ++index) {
+		const bool coveredWater =
+			m_coveredGate[static_cast<size_t>(index)].getType() == Cave::Entity::Type::Water
+			|| (index < static_cast<int>(m_waterUnder.size())
+				&& m_waterUnder[static_cast<size_t>(index)] != 0);
+		if (!coveredWater) continue;
+		Cave::HiveBubbleRecord rec;
+		rec.index = static_cast<uint16_t>(index);
+		out.push_back(rec);
+	}
+}
+
+void Cave::Map::finalizeCoralBudsForEditor() {
+	using B = Cave::Entity::CoralBud;
+	ensureCosmicUnder();
+
+	// Mid water-boom from a bud must not wipe the cell to dry Space on keep.
+	for (int index = 0; index < width * height; ++index) {
+		if (getEntityType(index) != Cave::Entity::Type::Explosion) continue;
+		if (!Cave::Entity::Explosion::isUnderwater(caveEntities[index])
+			&& !isWaterCell(index))
+			continue;
+		setEntity(index, Cave::Entity::Space()); // restores covered water when present
+		if (getEntityType(index) == Cave::Entity::Type::Space)
+			setEntity(index, Cave::Entity::Water());
+	}
+
+	// Keep surface / mid-pop buds as settled rising buds (water stays under them).
+	for (int index = 0; index < width * height; ++index) {
+		if (getEntityType(index) != Cave::Entity::Type::CoralBud) continue;
+		caveEntities[index].clearTransition();
+		caveEntities[index].extra = 0;
+		B::setMode(caveEntities[index], B::MODE_RISE);
+		setEntityMoving(index, false);
+	}
+
+	// Under-coral overlays become free buds in the water above when possible.
+	for (int index = 0; index < width * height; ++index) {
+		Cave::Entity::Base& over = m_cosmicOver[static_cast<size_t>(index)];
+		if (over.getType() != Cave::Entity::Type::CoralBud) continue;
+
+		Cave::Entity::Base bud = std::move(over);
+		over = Cave::Entity::Base();
+
+		bud.clearTransition();
+		bud.extra = 0;
+		B::setMode(bud, B::MODE_RISE);
+
+		const int above = getIndex(index, Cave::Entity::Direction::UP);
+		if (coralBudCanEnter(above)) {
+			setEntity(above, std::move(bud));
+			setEntityMoving(above, false);
+			continue;
+		}
+		if (getEntityType(above) == Cave::Entity::Type::CoralBud) continue;
+		if (getEntityType(index) == Cave::Entity::Type::Water
+			|| (getEntityType(index) == Cave::Entity::Type::Space && isWaterCell(index))) {
+			setEntity(index, std::move(bud));
+			setEntityMoving(index, false);
+		}
 	}
 }
 
@@ -778,11 +958,47 @@ void Cave::Map::setEntity(const int& index, Cave::Entity::Base&& entity) {
 		return;
 	}
 	const Cave::Entity::Type oldType = getEntityType(index);
+	const Cave::Entity::Type newType = entity.getType();
+	const bool hadCoveredWater =
+		(index < static_cast<int>(m_coveredGate.size())
+			&& m_coveredGate[static_cast<size_t>(index)].getType() == Cave::Entity::Type::Water)
+		|| (index < static_cast<int>(m_waterUnder.size())
+			&& m_waterUnder[static_cast<size_t>(index)] != 0);
+	// Keep water under loggable occupants; solids overwrite water instead.
+	if (oldType == Cave::Entity::Type::Water && newType != Cave::Entity::Type::Water
+		&& newType != Cave::Entity::Type::Space) {
+		if (isWaterLoggable(entity))
+			coverPassableGate(index);
+		else {
+			if (index < static_cast<int>(m_coveredGate.size()))
+				m_coveredGate[static_cast<size_t>(index)] = Cave::Entity::Base();
+			if (index < static_cast<int>(m_waterUnder.size()))
+				m_waterUnder[static_cast<size_t>(index)] = 0;
+		}
+	}
+	if (newType == Cave::Entity::Type::Water) {
+		if (index < static_cast<int>(m_coveredGate.size()))
+			m_coveredGate[static_cast<size_t>(index)] = Cave::Entity::Base();
+		if (index < static_cast<int>(m_waterUnder.size()))
+			m_waterUnder[static_cast<size_t>(index)] = 0;
+	}
+	if (!isWaterLoggable(entity) && newType != Cave::Entity::Type::Water
+		&& newType != Cave::Entity::Type::Space
+		&& hadCoveredWater) {
+		if (index < static_cast<int>(m_coveredGate.size()))
+			m_coveredGate[static_cast<size_t>(index)] = Cave::Entity::Base();
+		if (index < static_cast<int>(m_waterUnder.size()))
+			m_waterUnder[static_cast<size_t>(index)] = 0;
+	}
 	const bool dug = Cave::Entity::isDirtLike(oldType)
-		&& !Cave::Entity::isDirtLike(entity.getType())
-		&& entity.getType() != Cave::Entity::Type::Amoeba;
+		&& !Cave::Entity::isDirtLike(newType)
+		&& newType != Cave::Entity::Type::Amoeba;
 	caveEntities[index].transferTransition(entity);
 	caveEntities[index] = entity;
+	// Vacating a cell restores covered water (explosions finish under water this way).
+	// Gates keep using restoreCoveredGate at their call sites.
+	if (getEntityType(index) == Cave::Entity::Type::Space)
+		restoreCoveredWater(index);
 	if (dug) notifyFusion5Stimulus(index);
 	if (hasTrait(Cave::Entity::Trait::Empty, index)
 		&& (Cave::Entity::isDirtLike(oldType) || oldType == Cave::Entity::Type::Explosion)

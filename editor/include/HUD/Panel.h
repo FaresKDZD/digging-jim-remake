@@ -70,6 +70,7 @@ namespace HUD::Editor {
         static constexpr int GenomSlotX = 1, GenomSlotY = 27;
         static constexpr int HiveMatriarchSlotX = 1, HiveMatriarchSlotY = 28;
         static constexpr int HiveWallSlotX = 2, HiveWallSlotY = 28;
+        static constexpr int FishSlotX = 1, FishSlotY = 29;
 
         /// @brief True if this palette cell is the shared Pegul slot.
         bool isPegulSlot(const int& x, const int& y) const;
@@ -155,6 +156,9 @@ namespace HUD::Editor {
         /// @brief True if this palette cell is the Genom slot.
         bool isGenomSlot(const int& x, const int& y) const;
 
+        /// @brief True if this palette cell is the Fish slot.
+        bool isFishSlot(const int& x, const int& y) const;
+
         /// @brief True if this palette cell is the shared Hive Matriarch/Larva slot.
         bool isHiveMatriarchSlot(const int& x, const int& y) const;
         Cave::Entity::Type getHiveMatriarchType() const { return m_hiveMatriarchType; }
@@ -176,6 +180,17 @@ namespace HUD::Editor {
         /// @brief Current look drawn on the Genom palette cell (custom or random sample).
         int getGenomPaletteLook() const;
 
+        /// @brief When true, each placed Fish gets a fresh randomLook().
+        bool getFishRandomize() const { return m_fishRandomize; }
+        void setFishRandomize(bool randomize);
+
+        /// @brief Packed look used when randomize is off (and shown on the palette icon).
+        int getFishLook() const { return m_fishLook; }
+        void setFishLook(int look);
+
+        /// @brief Current look drawn on the Fish palette cell (custom or random sample).
+        int getFishPaletteLook() const;
+
         /// @brief Right-click: if over a variant palette slot, select it and return true.
         bool handleRightClick(sf::Vector2f vp, float panelX, float toolbarH);
 
@@ -187,7 +202,7 @@ namespace HUD::Editor {
 
         /// @brief Map a palette grid position to the corresponding entity type.
         /// @param x Column (0–2). @param y Row (0–19).
-        Cave::Entity::Type getType(const int& x, const int& y);
+        Cave::Entity::Type getType(const int& x, const int& y) const;
 
         /// @brief Construct a fresh entity instance for the given type.
         Cave::Entity::Base getNewEntity(Cave::Entity::Type type);
@@ -331,12 +346,18 @@ namespace HUD::Editor {
 
         void syncGenomPaletteEntity();
 
+        /// @brief Fish palette: randomize-on-place vs fixed packed look.
+        bool                      m_fishRandomize = true;
+        int                       m_fishLook = 0;
+
+        void syncFishPaletteEntity();
+
         /// @brief Tick counter that drives palette entity animation.
         Utils::TickCounter        m_TickCounter  = Utils::TickCounter();
 
         /// @brief Current scroll row offset for the entity palette.
         int                       m_scrollRow    = 0;
-        static constexpr int      TOTAL_PALETTE_ROWS   = 29;
+        static constexpr int      TOTAL_PALETTE_ROWS   = 31;
         static constexpr int      VISIBLE_PALETTE_ROWS = 10;
         static constexpr int      MAX_SCROLL_ROW       = TOTAL_PALETTE_ROWS - VISIBLE_PALETTE_ROWS;
 

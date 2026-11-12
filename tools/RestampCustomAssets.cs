@@ -35,6 +35,10 @@ class RestampCustomAssets {
             StampButterflyOntoCurrent();
             return;
         }
+        if (args.Length > 0 && (args[0] == "--metamorph" || args[0] == "--caterpillar")) {
+            StampMetamorphOntoCurrent();
+            return;
+        }
         if (args.Length > 0 && args[0] == "--jelly") {
             StampJellyOntoCurrent();
             return;
@@ -99,8 +103,36 @@ class RestampCustomAssets {
             StampHiveHunterOntoCurrent();
             return;
         }
+        if (args.Length > 0 && args[0] == "--water") {
+            StampWaterOntoCurrent();
+            return;
+        }
+        if (args.Length > 0 && args[0] == "--water-explosion") {
+            StampWaterExplosionOntoCurrent();
+            return;
+        }
+        if (args.Length > 0 && args[0] == "--fish") {
+            StampFishOntoCurrent();
+            return;
+        }
         if (args.Length > 0 && args[0] == "--hive-walls") {
             StampHiveWallsOntoCurrent();
+            return;
+        }
+        if (args.Length > 0 && args[0] == "--gate") {
+            StampGateOntoCurrent();
+            return;
+        }
+        if (args.Length > 0 && args[0] == "--coral") {
+            StampCoralOntoCurrent();
+            return;
+        }
+        if (args.Length > 0 && args[0] == "--coral-bud") {
+            StampCoralBudOntoCurrent();
+            return;
+        }
+        if (args.Length > 0 && args[0] == "--parasite") {
+            StampParasiteOntoCurrent();
             return;
         }
 
@@ -509,6 +541,7 @@ class RestampCustomAssets {
             if (tiles.Height < needH)
                 throw new Exception("tiles too short; refuse expand. height=" + tiles.Height + " need=" + needH);
 
+            StampStrip(tiles, "caterpillar.png", 1500, 8);
             StampStrip(tiles, "caterpillar_chrysalize.png", 1508, 8);
             StampStrip(tiles, "butterfly_release.png", 1516, 8);
             StampStrip(tiles, "butterfly.png", 1524, 8);
@@ -524,6 +557,7 @@ class RestampCustomAssets {
         Console.WriteLine("Stamped=" + stamped + " skipped=" + skipped);
         foreach (var line in log) Console.WriteLine(line);
 
+        VerifyExact("caterpillar.png", 1500);
         VerifyExact("caterpillar_chrysalize.png", 1508);
         VerifyExact("butterfly_release.png", 1516);
         VerifyExact("butterfly.png", 1524);
@@ -814,7 +848,8 @@ class RestampCustomAssets {
         const int matriarchWall = 1862;
         const int nurseryWall = 1863;
         const int storageWall = 1940;
-        const int livingWall = 1945;
+        // After Parasite (2003–2010). Was 1945 — Water body owns that index.
+        const int livingWall = 2011;
         const int lastFrame = livingWall;
         int dirtBefore;
         using (Bitmap tiles = LoadPngExact(TilesPath)) {
@@ -900,6 +935,302 @@ class RestampCustomAssets {
 
         VerifyExact("hive_wall_storage.png", storageWall);
         VerifyExact("hive_hunter_bubble.png", bubble);
+        using (var tiles = LoadPngExact(TilesPath)) {
+            if (tiles.GetPixel(0, 0).ToArgb() != dirtBefore)
+                throw new Exception("DIRT PIXEL CHANGED - abort, sheet was re-encoded badly");
+        }
+        Console.WriteLine("VERIFY OK dirt untouched");
+        Console.WriteLine("DONE");
+    }
+
+    static void StampParasiteOntoCurrent() {
+        if (!File.Exists(TilesPath)) throw new Exception("Missing " + TilesPath);
+        // After CoralBud at 1996–2002.
+        const int parasiteBase = 2003;
+        const int lastFrame = parasiteBase + 7;
+        int dirtBefore;
+        using (Bitmap tiles = LoadPngExact(TilesPath)) {
+            dirtBefore = tiles.GetPixel(0, 0).ToArgb();
+            int needH = FrameBottom(lastFrame);
+            Bitmap work = tiles;
+            Bitmap expanded = null;
+            if (tiles.Height < needH) {
+                expanded = ExpandExact(tiles, SHEET_W_CONST(), needH);
+                work = expanded;
+                Console.WriteLine("Expanded tiles to " + work.Width + "x" + work.Height);
+            }
+
+            StampStrip(work, "parasite.png", parasiteBase, 8);
+
+            string outPath = TilesPath + ".restamped.png";
+            work.Save(outPath, ImageFormat.Png);
+            Console.WriteLine("Wrote " + outPath);
+            if (expanded != null) expanded.Dispose();
+        }
+
+        File.Copy(TilesPath + ".restamped.png", TilesPath, true);
+        File.Delete(TilesPath + ".restamped.png");
+        Console.WriteLine("Replaced " + TilesPath);
+
+        StampMiniIconFromCustom("parasite.png", 134);
+
+        Console.WriteLine("Stamped=" + stamped + " skipped=" + skipped);
+        foreach (var line in log) Console.WriteLine(line);
+
+        VerifyExact("parasite.png", parasiteBase);
+        using (var tiles = LoadPngExact(TilesPath)) {
+            if (tiles.GetPixel(0, 0).ToArgb() != dirtBefore)
+                throw new Exception("DIRT PIXEL CHANGED - abort, sheet was re-encoded badly");
+        }
+        Console.WriteLine("VERIFY OK dirt untouched");
+        Console.WriteLine("DONE");
+    }
+
+    static void StampCoralBudOntoCurrent() {
+        if (!File.Exists(TilesPath)) throw new Exception("Missing " + TilesPath);
+        // After Coral at 1988–1995.
+        const int budBase = 1996;
+        const int lastFrame = budBase + 6;
+        int dirtBefore;
+        using (Bitmap tiles = LoadPngExact(TilesPath)) {
+            dirtBefore = tiles.GetPixel(0, 0).ToArgb();
+            int needH = FrameBottom(lastFrame);
+            Bitmap work = tiles;
+            Bitmap expanded = null;
+            if (tiles.Height < needH) {
+                expanded = ExpandExact(tiles, SHEET_W_CONST(), needH);
+                work = expanded;
+                Console.WriteLine("Expanded tiles to " + work.Width + "x" + work.Height);
+            }
+
+            StampStrip(work, "coral_bud.png", budBase, 7);
+
+            string outPath = TilesPath + ".restamped.png";
+            work.Save(outPath, ImageFormat.Png);
+            Console.WriteLine("Wrote " + outPath);
+            if (expanded != null) expanded.Dispose();
+        }
+
+        File.Copy(TilesPath + ".restamped.png", TilesPath, true);
+        File.Delete(TilesPath + ".restamped.png");
+        Console.WriteLine("Replaced " + TilesPath);
+
+        Console.WriteLine("Stamped=" + stamped + " skipped=" + skipped);
+        foreach (var line in log) Console.WriteLine(line);
+
+        VerifyExact("coral_bud.png", budBase);
+        using (var tiles = LoadPngExact(TilesPath)) {
+            if (tiles.GetPixel(0, 0).ToArgb() != dirtBefore)
+                throw new Exception("DIRT PIXEL CHANGED - abort, sheet was re-encoded badly");
+        }
+        Console.WriteLine("VERIFY OK dirt untouched");
+        Console.WriteLine("DONE");
+    }
+
+    static void StampCoralOntoCurrent() {
+        if (!File.Exists(TilesPath)) throw new Exception("Missing " + TilesPath);
+        // After water_explosion at 1984–1987.
+        const int coralBase = 1988;
+        const int lastFrame = coralBase + 7;
+        int dirtBefore;
+        using (Bitmap tiles = LoadPngExact(TilesPath)) {
+            dirtBefore = tiles.GetPixel(0, 0).ToArgb();
+            int needH = FrameBottom(lastFrame);
+            Bitmap work = tiles;
+            Bitmap expanded = null;
+            if (tiles.Height < needH) {
+                expanded = ExpandExact(tiles, SHEET_W_CONST(), needH);
+                work = expanded;
+                Console.WriteLine("Expanded tiles to " + work.Width + "x" + work.Height);
+            }
+
+            StampStrip(work, "coral.png", coralBase, 8);
+
+            string outPath = TilesPath + ".restamped.png";
+            work.Save(outPath, ImageFormat.Png);
+            Console.WriteLine("Wrote " + outPath);
+            if (expanded != null) expanded.Dispose();
+        }
+
+        File.Copy(TilesPath + ".restamped.png", TilesPath, true);
+        File.Delete(TilesPath + ".restamped.png");
+        Console.WriteLine("Replaced " + TilesPath);
+
+        StampMiniIconFromCustom("coral.png", 133);
+
+        Console.WriteLine("Stamped=" + stamped + " skipped=" + skipped);
+        foreach (var line in log) Console.WriteLine(line);
+
+        VerifyExact("coral.png", coralBase);
+        using (var tiles = LoadPngExact(TilesPath)) {
+            if (tiles.GetPixel(0, 0).ToArgb() != dirtBefore)
+                throw new Exception("DIRT PIXEL CHANGED - abort, sheet was re-encoded badly");
+        }
+        Console.WriteLine("VERIFY OK dirt untouched");
+        Console.WriteLine("DONE");
+    }
+
+    static void StampGateOntoCurrent() {
+        if (!File.Exists(TilesPath)) throw new Exception("Missing " + TilesPath);
+        const int gateBase = 872;
+        const int privateBase = 1154;
+        int dirtBefore;
+        using (Bitmap tiles = LoadPngExact(TilesPath)) {
+            dirtBefore = tiles.GetPixel(0, 0).ToArgb();
+            StampStrip(tiles, "gate.png", gateBase, 4);
+            StampStrip(tiles, "private_gate.png", privateBase, 4);
+
+            string outPath = TilesPath + ".restamped.png";
+            tiles.Save(outPath, ImageFormat.Png);
+            Console.WriteLine("Wrote " + outPath);
+        }
+
+        File.Copy(TilesPath + ".restamped.png", TilesPath, true);
+        File.Delete(TilesPath + ".restamped.png");
+        Console.WriteLine("Replaced " + TilesPath);
+
+        StampMiniIconFromCustom("gate.png", 63);
+        StampMiniIconFromCustom("private_gate.png", 73);
+
+        Console.WriteLine("Stamped=" + stamped + " skipped=" + skipped);
+        foreach (var line in log) Console.WriteLine(line);
+
+        VerifyExact("gate.png", gateBase);
+        VerifyExact("private_gate.png", privateBase);
+        using (var tiles = LoadPngExact(TilesPath)) {
+            if (tiles.GetPixel(0, 0).ToArgb() != dirtBefore)
+                throw new Exception("DIRT PIXEL CHANGED - abort, sheet was re-encoded badly");
+        }
+        Console.WriteLine("VERIFY OK dirt untouched");
+        Console.WriteLine("DONE");
+    }
+
+    static void StampWaterOntoCurrent() {
+        if (!File.Exists(TilesPath)) throw new Exception("Missing " + TilesPath);
+        const int body = 1945;
+        const int surface = 1946;
+        const int lastFrame = surface + 7;
+        int dirtBefore;
+        using (Bitmap tiles = LoadPngExact(TilesPath)) {
+            dirtBefore = tiles.GetPixel(0, 0).ToArgb();
+            int needH = FrameBottom(lastFrame);
+            Bitmap work = tiles;
+            Bitmap expanded = null;
+            if (tiles.Height < needH) {
+                expanded = ExpandExact(tiles, SHEET_W_CONST(), needH);
+                work = expanded;
+                Console.WriteLine("Expanded tiles to " + work.Width + "x" + work.Height);
+            }
+
+            StampFrame(work, "water.png", 0, 0, body);
+            StampStrip(work, "water_surface.png", surface, 8);
+
+            string outPath = TilesPath + ".restamped.png";
+            work.Save(outPath, ImageFormat.Png);
+            Console.WriteLine("Wrote " + outPath);
+            if (expanded != null) expanded.Dispose();
+        }
+
+        File.Copy(TilesPath + ".restamped.png", TilesPath, true);
+        File.Delete(TilesPath + ".restamped.png");
+        Console.WriteLine("Replaced " + TilesPath);
+
+        StampMiniIconFromCustom("water_surface.png", 131);
+
+        Console.WriteLine("Stamped=" + stamped + " skipped=" + skipped);
+        foreach (var line in log) Console.WriteLine(line);
+
+        VerifyExact("water.png", body);
+        VerifyExact("water_surface.png", surface);
+        using (var tiles = LoadPngExact(TilesPath)) {
+            if (tiles.GetPixel(0, 0).ToArgb() != dirtBefore)
+                throw new Exception("DIRT PIXEL CHANGED - abort, sheet was re-encoded badly");
+        }
+        Console.WriteLine("VERIFY OK dirt untouched");
+        Console.WriteLine("DONE");
+    }
+
+    static void StampWaterExplosionOntoCurrent() {
+        if (!File.Exists(TilesPath)) throw new Exception("Missing " + TilesPath);
+        const int waterBoom = 1984;
+        const int lastFrame = waterBoom + 3;
+        int dirtBefore;
+        using (Bitmap tiles = LoadPngExact(TilesPath)) {
+            dirtBefore = tiles.GetPixel(0, 0).ToArgb();
+            int needH = FrameBottom(lastFrame);
+            Bitmap work = tiles;
+            Bitmap expanded = null;
+            if (tiles.Height < needH) {
+                expanded = ExpandExact(tiles, SHEET_W_CONST(), needH);
+                work = expanded;
+                Console.WriteLine("Expanded tiles to " + work.Width + "x" + work.Height);
+            }
+
+            StampStrip(work, "water_explosion.png", waterBoom, 4);
+
+            string outPath = TilesPath + ".restamped.png";
+            work.Save(outPath, ImageFormat.Png);
+            Console.WriteLine("Wrote " + outPath);
+            if (expanded != null) expanded.Dispose();
+        }
+
+        File.Copy(TilesPath + ".restamped.png", TilesPath, true);
+        File.Delete(TilesPath + ".restamped.png");
+        Console.WriteLine("Replaced " + TilesPath);
+
+        Console.WriteLine("Stamped=" + stamped + " skipped=" + skipped);
+        foreach (var line in log) Console.WriteLine(line);
+
+        VerifyExact("water_explosion.png", waterBoom);
+        using (var tiles = LoadPngExact(TilesPath)) {
+            if (tiles.GetPixel(0, 0).ToArgb() != dirtBefore)
+                throw new Exception("DIRT PIXEL CHANGED - abort, sheet was re-encoded badly");
+        }
+        Console.WriteLine("VERIFY OK dirt untouched");
+        Console.WriteLine("DONE");
+    }
+
+    static void StampFishOntoCurrent() {
+        if (!File.Exists(TilesPath)) throw new Exception("Missing " + TilesPath);
+        const int moveR = 1954;
+        const int moveL = 1962;
+        const int turnL = 1970;
+        const int turnR = 1977;
+        const int lastFrame = turnR + 6;
+        int dirtBefore;
+        using (Bitmap tiles = LoadPngExact(TilesPath)) {
+            dirtBefore = tiles.GetPixel(0, 0).ToArgb();
+            int needH = FrameBottom(lastFrame);
+            Bitmap work = tiles;
+            Bitmap expanded = null;
+            if (tiles.Height < needH) {
+                expanded = ExpandExact(tiles, SHEET_W_CONST(), needH);
+                work = expanded;
+                Console.WriteLine("Expanded tiles to " + work.Width + "x" + work.Height);
+            }
+
+            StampStrip(work, "fish_move_right.png", moveR, 8);
+            StampStripFlipped(work, "fish_move_right.png", moveL, 8);
+            StampStrip(work, "fish_turn_left.png", turnL, 7);
+            StampStripFlipped(work, "fish_turn_left.png", turnR, 7);
+
+            string outPath = TilesPath + ".restamped.png";
+            work.Save(outPath, ImageFormat.Png);
+            Console.WriteLine("Wrote " + outPath);
+            if (expanded != null) expanded.Dispose();
+        }
+
+        File.Copy(TilesPath + ".restamped.png", TilesPath, true);
+        File.Delete(TilesPath + ".restamped.png");
+        Console.WriteLine("Replaced " + TilesPath);
+
+        StampMiniIconFromCustom("fish_move_right.png", 132);
+
+        Console.WriteLine("Stamped=" + stamped + " skipped=" + skipped);
+        foreach (var line in log) Console.WriteLine(line);
+
+        VerifyExact("fish_move_right.png", moveR);
+        VerifyExact("fish_turn_left.png", turnL);
         using (var tiles = LoadPngExact(TilesPath)) {
             if (tiles.GetPixel(0, 0).ToArgb() != dirtBefore)
                 throw new Exception("DIRT PIXEL CHANGED - abort, sheet was re-encoded badly");

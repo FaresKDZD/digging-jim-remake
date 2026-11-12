@@ -9,6 +9,10 @@ void Image::Manager::loadAllImages() {
     loadTexture(Image::Texture::CaveLoadingTiles, "./assets/textures/Cave/loading_tiles.png");
     loadTexture(Image::Texture::CaveNumbers, "./assets/textures/Cave/numbers.png");
     loadTexture(Image::Texture::CaveTiles, "./assets/textures/Cave/tiles.png");
+    loadTexture(Image::Texture::CaveFireOverlay, "./assets/textures/Cave/fire_overlay.png");
+    loadTexture(Image::Texture::CaveBreathOverlay, "./assets/textures/Cave/breath_overlay.png");
+    loadTexture(Image::Texture::CaveParasiteOverlay, "./assets/textures/Cave/parasite_overlay.png");
+    loadTexture(Image::Texture::CaveParasiteOverlayRight, "./assets/textures/Cave/parasite_overlay_right.png");
     loadTexture(Image::Texture::GameCompleted, "./assets/textures/Game/completed.png");
     loadTexture(Image::Texture::GameFont, "./assets/textures/Game/font.png");
     loadTexture(Image::Texture::GameOver, "./assets/textures/Game/over.png");

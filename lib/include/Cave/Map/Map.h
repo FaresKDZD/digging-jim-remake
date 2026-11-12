@@ -110,7 +110,7 @@ namespace Cave {
          * @param properties Pointer to the cave properties (width, height, timings, etc.).
          * @param tileData Vector of raw tile identifiers used to populate cave entities.
          */
-        void generateMap(const Cave::Properties* properties, const std::vector<char>& tileData, const std::vector<Cave::WellRecord>& wells = {}, const std::vector<Cave::PortalRecord>& portals = {}, const std::vector<Cave::CosmicRecord>& cosmics = {}, const std::vector<Cave::GenomRecord>& genoms = {}, const std::vector<Cave::HiveBubbleRecord>& hiveBubbles = {});
+        void generateMap(const Cave::Properties* properties, const std::vector<char>& tileData, const std::vector<Cave::WellRecord>& wells = {}, const std::vector<Cave::PortalRecord>& portals = {}, const std::vector<Cave::CosmicRecord>& cosmics = {}, const std::vector<Cave::GenomRecord>& genoms = {}, const std::vector<Cave::HiveBubbleRecord>& hiveBubbles = {}, const std::vector<Cave::HiveBubbleRecord>& waterUnders = {});
 
         /**
          * @brief Updates the cave state and its entities.
@@ -153,8 +153,20 @@ namespace Cave {
         /// @brief Write cells that currently have a hive hunter bubble overlay.
         void collectHiveBubbleRecords(std::vector<Cave::HiveBubbleRecord>& out) const;
 
+        /// @brief Write cells that currently have water covered under another entity.
+        void collectWaterUnderRecords(std::vector<Cave::HiveBubbleRecord>& out) const;
+
+        /// @brief Settle CoralBud overlays / pop state before editor cave sync.
+        void finalizeCoralBudsForEditor();
+
         /// @brief True if this cell has a hive hunter bubble over a monster.
         bool isHiveBubbled(const int& cell) const;
+
+        /// @brief True if this cell is water or has water covered under an occupant.
+        bool isWaterCell(const int& index) const;
+        /// @brief True if this occupant can sit on covered water (not a solid).
+        bool isWaterLoggable(const Cave::Entity::Base& entity) const;
+        bool isWaterLoggable(const int& index) const;
 
         Cave::Entity::Cosmic::Settings& cosmicSettings() { return m_cosmicSettings; }
         const Cave::Entity::Cosmic::Settings& cosmicSettings() const { return m_cosmicSettings; }
@@ -266,6 +278,8 @@ namespace Cave {
         /// @brief Shift-held editor cursor: solid probe that blocks walk/fall and can push.
         void setEditorProbe(int index);
         void clearEditorProbe();
+        /// @brief Editor sim helper: toggle Gate / PrivateGate under the cursor open/closed.
+        bool editorOpenGate(const int& index);
         int editorProbeIndex() const { return m_editorProbeIndex; }
         bool isEditorProbe(int index) const {
             return m_editorProbeIndex != OUT_OF_BOUNDS_INDEX && m_editorProbeIndex == index;
@@ -291,6 +305,20 @@ namespace Cave {
         bool isJimInvincible(const int& index) const;
         bool isJimPyrobe() const;
         bool isJimPyrobe(const int& index) const;
+        /// @brief True while the local player's Jim is parasite-infested (overlay / view filter).
+        bool isLocalJimParasiteInfested() const { return m_jimParasiteFrames > 0; }
+        /// @brief True if any water overlays are queued for the current visible frame.
+        bool hasWaterOverlays() const { return !m_waterDraws.empty(); }
+        /// @brief Draw opaque white quads at water cell positions (for a screen-space wave mask).
+        void drawWaterMask(sf::RenderTarget& target) const;
+        /// @brief Draw water tile sprites only (for edge-gap fill during the water wave pass).
+        void drawWaterOverlays(sf::RenderTarget& target, sf::RenderStates states) const;
+        /// @brief True during spawn / death-cover / respawn loading-tile animation.
+        bool hasLoadingOverlays() const {
+            return m_state == Cave::State::Load || m_state == Cave::State::End;
+        }
+        /// @brief Draw load/end loading tiles (call after cave post-FX so they are not waved).
+        void drawLoadingOverlays(sf::RenderTarget& target) const;
         bool isJimHazardImmune() const;
         bool isJimHazardImmune(const int& index) const;
 
@@ -874,6 +902,36 @@ namespace Cave {
         bool tryJimlinDodgeStep(const int& index, const Cave::Entity::Direction& direction);
         bool tryJimlinDodgeCrush(const int& index);
         void killPlayerAt(const int& index);
+        /// @brief Mark that Jim is digging magma this moment (traverse or collect-dig).
+        void noteJimMagmaDig();
+        /// @brief Advance magma overheat / cool each render frame; kills at max heat.
+        void updateJimMagmaOverheat();
+        /// @brief Fire overlay frame for current heat, or -1 if none.
+        int jimMagmaFireOverlayFrame() const;
+        /// @brief True if a creature can breathe at this cell (air, surface water, gate, ship).
+        bool isJimBreathable(const int& index) const;
+        /// @brief Advance Jim + Jimlin underwater breath / refill; drowns at max.
+        void updateJimBreath();
+        /// @brief Breath overlay frame for Jim 0..9, or -1 if hidden.
+        int jimBreathOverlayFrame() const;
+        /// @brief True if this Jimlin has about 2s of breath left (9th overlay frame).
+        bool jimlinBreathCritical(const int& index) const;
+        /// @brief Nearest reachable breathable cell for a drowning Jimlin.
+        int pickJimlinBreathableGoal(const int& index) const;
+        /// @brief Per-creature breath meter (moves with stuckTicks id for Jimlins).
+        struct BreathMeter {
+            int spent = 0;
+            int lastDive = 0;
+            int timer = 0;
+            int refillTotal = 0;
+            int refillElapsed = 0;
+            int refillStartFrame = 0;
+            int drawFrame = -1;
+        };
+        BreathMeter& breathMeterForJimlin(const int& index);
+        const BreathMeter* breathMeterForJimlinConst(const int& index) const;
+        /// @brief Advance one breath meter. Returns true if the creature drowned.
+        bool advanceBreathMeter(BreathMeter& meter, bool breathable);
         Cave::Entity::Direction findPathForJimlin(const int& index, int goal, bool inShip, bool throughClosedPrivate = true) const;
         int findJimlinReachable(const int& index, bool diamonds, bool ships, bool pushables, int range) const;
         int pickJimlinWanderCell(const int& index) const;
@@ -1084,6 +1142,10 @@ namespace Cave {
         bool isMonsterWalkable(const int& index) const;
         void coverPassableGate(const int& index);
         bool restoreCoveredGate(const int& index);
+        bool restoreCoveredWater(const int& index);
+        bool restoreCoveredPassable(const int& index);
+        bool isWaterSurface(const int& index) const;
+        int waterDrawFrame(const int& index) const;
         void openPrivateGates();
         void beginPrivateGateOpen(Cave::Entity::Base& gate);
         void beginPrivateGateClose(Cave::Entity::Base& gate);
@@ -1125,6 +1187,28 @@ namespace Cave {
         void updateButterflyRelease(const int& index);
         void updateButterfly(const int& index);
         void updateJelly(const int& index);
+        void updateParasite(const int& index);
+        void updateParasiteChaseHalfTick();
+        void updateParasiteOverlays();
+        bool tryParasiteMount(const int& index, const int& jim);
+        bool tryParasiteDetach(const int& jim);
+        /// @brief Chase/flee step at 2x speed; can enter Jim's vacating cell mid-slide.
+        bool tryParasiteChaseStep(const int& index, Cave::Entity::Direction dir, int jim);
+        /// @brief Keep a seated/mounting parasite glued to Jim when he steps.
+        void transferParasiteOver(const int& from, const int& to);
+        bool parasiteCanDetectJim(const int& index, const int& jim);
+        bool isJimParasiteInfested(const int& index) const;
+        void infestJimWithParasite(const int& jim);
+        void clearJimParasiteInfestation(const int& jim);
+        void updateJimParasiteInfestation();
+        void updateFish(const int& index);
+        void updateCoral(const int& index);
+        void updateCoralBud(const int& index);
+        void updateCoralBudOverlays();
+        bool tryProduceCoralBud(const int& coralIndex);
+        bool tryEjectCoralBud(const int& coralIndex);
+        bool coralBudCanEnter(const int& cell) const;
+        void popCoralBudAt(const int& index);
         void updateGenom(const int& index);
         int findGenomBreedPartner(const int& index);
         bool isGenomEggNest(const int& cell) const;
@@ -2240,12 +2324,51 @@ namespace Cave {
         /// @brief Remaining frames of ruby invincibility.
         int m_jimInvincibleFrames = 0;
         int m_jimPyrobeFrames = 0;
+        /// @brief Remaining frames of parasite infestation (inverted controls + overlay).
+        int m_jimParasiteFrames = 0;
+        int m_jimParasiteOverlayFrame = -1;
+
+        /// @brief Magma dig overheat (0..Jim::MAGMA_HEAT_MAX). Cools at 4× when not digging magma.
+        int m_jimMagmaHeat = 0;
+        /// @brief Forced heating frames after a collect-dig that destroys magma without a slide.
+        int m_jimMagmaForcedHeatFrames = 0;
+        /// @brief World-space draw pos/frame for the fire overlay (-1 frame = hidden).
+        int m_jimMagmaFireDrawFrame = -1;
+        sf::Vector2f m_jimMagmaFireDrawPos{ 0.f, 0.f };
+
+        /// @brief Jim's underwater breath meter.
+        BreathMeter m_jimBreath;
+        /// @brief Jimlin breath meters keyed by stuckTicks id.
+        std::unordered_map<int, BreathMeter> m_jimlinBreath;
+        int m_nextJimlinBreathId = 1;
+
+        /// @brief Water / breath / gate overlays drawn above tiles/cosmic (world px + tile frame).
+        struct WaterDraw {
+            float x = 0.f;
+            float y = 0.f;
+            int frame = 0;
+            /// @brief Sub-rect within the cell / frame (defaults = full 32×32).
+            int ox = 0, oy = 0, ow = 32, oh = 32;
+            int tox = 0, toy = 0, tow = 32, toh = 32;
+        };
+        std::vector<WaterDraw> m_waterDraws;
+        std::vector<WaterDraw> m_breathDraws;
+        /// @brief Gates drawn above water and above occupants standing on open gates.
+        std::vector<WaterDraw> m_gateDraws;
+        /// @brief CoralBud under transparent coral (Space → bud → coral → water).
+        std::vector<WaterDraw> m_coralBudDraws;
+        /// @brief Free CoralBud above Space / under water (no tile into-wedge).
+        std::vector<WaterDraw> m_coralBudFreeDraws;
+        /// @brief Coral restamped above Space / under-bud (before water overlay).
+        std::vector<WaterDraw> m_coralDraws;
 
         /// @brief Space and a direction into a gate were both held on the previous Jim tick.
         bool m_jimGateComboHeld = false;
 
-        /// @brief Open gates hidden under an occupant, indexed like caveEntities.
+        /// @brief Open gates / water hidden under an occupant, indexed like caveEntities.
         std::vector<Cave::Entity::Base> m_coveredGate;
+        /// @brief Water remains under a covered open gate after the gate itself is covered.
+        std::vector<char> m_waterUnder;
         std::vector<Cave::Entity::Base> m_cosmicUnder;
         std::vector<Cave::Entity::Base> m_cosmicOver;
         bool m_cosmicGenesis = false;
@@ -2433,6 +2556,7 @@ namespace Cave {
         std::array<int, Net::MaxPlayers> m_playerInvincible{};
         std::array<int, Net::MaxPlayers> m_playerPyrobe{};
         std::array<int, Net::MaxPlayers> m_playerPyrobeShootWait{};
+        std::array<int, Net::MaxPlayers> m_playerParasite{};
         std::array<int, Net::MaxPlayers> m_playerHollow{};
         std::array<int, Net::MaxPlayers> m_playerBombs{};
         std::array<bool, Net::MaxPlayers> m_playerGateCombo{};

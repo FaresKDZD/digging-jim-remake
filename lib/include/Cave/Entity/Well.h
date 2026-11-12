@@ -98,6 +98,9 @@ namespace Cave::Entity {
             case Type::HiveBuilder:
             case Type::HiveGuard:
             case Type::HiveDigger:
+            case Type::Fish:
+            case Type::Coral:
+            case Type::Parasite:
                 return true;
             default:
                 return false;
@@ -162,6 +165,9 @@ namespace Cave::Entity {
             { "Hive Builder", Type::HiveBuilder },
             { "Hive Guard", Type::HiveGuard },
             { "Hive Digger", Type::HiveDigger },
+            { "Fish", Type::Fish },
+            { "Coral", Type::Coral },
+            { "Parasite", Type::Parasite },
         };
 
     private:

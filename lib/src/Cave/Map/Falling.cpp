@@ -124,16 +124,23 @@ bool Cave::Map::handleEntityLanding(const int& index, const int& ahead) {
 	}
 
 	// Bubbled packages soft-land: they fall and settle but never crush.
+	// Dry fish also soft-land on anything except Jim — sit on top, no kill.
+	// Coral / compressor never crush on impact (Jim, Jimlin, or monsters).
 	const bool bubbledSoft = isHiveBubbled(index);
+	const bool fishSoft = getEntityType(index) == Cave::Entity::Type::Fish
+		&& !Cave::Entity::isPlayer(getEntityType(ahead));
+	const bool coralSoft = getEntityType(index) == Cave::Entity::Type::Coral;
+	const bool compressorSoft = getEntityType(index) == Cave::Entity::Type::Compressor;
+	const bool softLand = bubbledSoft || fishSoft || coralSoft || compressorSoft;
 
-	if (!bubbledSoft
+	if (!softLand
 		&& !caveEntities[index].isFullyInTile()
 		&& (hasTrait(Cave::Entity::Trait::Crushable, ahead)
 			|| Cave::Entity::isPlayer(getEntityType(ahead)))) {
 		return true;
 	}
 
-	if (!bubbledSoft
+	if (!softLand
 		&& Cave::Entity::isJimlin(getEntityType(ahead)) && tryJimlinDodgeCrush(ahead)) {
 		const Cave::Entity::Direction gravity = (getEntityType(index) == Cave::Entity::Type::MagicBoulder)
 			? Cave::Entity::Direction::UP
@@ -146,7 +153,7 @@ bool Cave::Map::handleEntityLanding(const int& index, const int& ahead) {
 		}
 	}
 
-	if (!bubbledSoft
+	if (!softLand
 		&& (hasTrait(Cave::Entity::Trait::Crushable, ahead)
 			|| Cave::Entity::isPlayer(getEntityType(ahead)))
 		&& !caveEntities[ahead].isFullyInTile()) {
@@ -223,8 +230,8 @@ bool Cave::Map::handleEntityLanding(const int& index, const int& ahead) {
 		crackHotBoulder(ahead);
 
 	if (hasTrait(Cave::Entity::Trait::Crushable, ahead)) {
-		// Bubbled hive packages settle without crushing whatever they land on.
-		if (bubbledSoft) {
+		// Bubbled hive packages / dry fish settle without crushing whatever they land on.
+		if (softLand) {
 			m_game->soundManager.play(Sound::Effect::Land);
 			return false;
 		}

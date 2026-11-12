@@ -51,11 +51,8 @@ vec3 hsl2rgb(vec3 c) {
     return rgb + vec3(m);
 }
 
-void main()
-{
-    vec4 texColor = texture2D(texture, gl_TexCoord[0].xy);
-
-    vec3 hsl = rgb2hsl(texColor.rgb);
+vec3 applyCaveFilter(vec3 rgb) {
+    vec3 hsl = rgb2hsl(rgb);
 
     float hueLinear = mod(2.0 / 3.0 - hsl.x + 1.0, 1.0) * tint.x * 2.0;
     float lumLinear = hsl.z + (1.0 - hsl.z + hsl.y) * (tint.z - 0.5) / 3.0;
@@ -65,25 +62,30 @@ void main()
     hsl.y = min(hsl.y * tint.y * 2.0, 1.0);
     hsl.z = min(max(lumLinear, 0.0), lumLimit);
 
-    // Cave HSL on the sprite first so Jim still matches the level filter.
-    vec3 filtered = hsl2rgb(hsl);
+    return hsl2rgb(hsl);
+}
 
-    // Jim pyrobe / ruby buff (alpha in (0, 0.5)): multiply by the raw pulse
-    // colour after filtering — tint stays true, Jim stays level-coloured.
-    // Multiply also keeps Jim's black tile background black.
-    // Genom highlight-preserve uses a==0 (handled below).
-    if (gl_Color.a > 0.001 && gl_Color.a < 0.5) {
-        gl_FragColor = vec4(filtered * gl_Color.rgb, texColor.a);
-        return;
-    }
+void main()
+{
+    vec4 texColor = texture2D(texture, gl_TexCoord[0].xy);
+    vec3 src = texColor.rgb;
 
-    // Normal / Genom: cave-filtered sprite, then vertex multiply.
-    // Alpha < 0.5 (Genom wings/eyes a==0): protect whites/lights from the tint.
-    vec3 multiplied = filtered * gl_Color.rgb;
+    // Vertex colour first (Fish / Genom hue layers, Jim buffs), then cave filter
+    // so coloured layers still shift with the level tint. Greyscale sprites with
+    // white multiply are unchanged: filter(tex) == filter(tex * 1).
+    vec3 coloured = src * gl_Color.rgb;
+
+    // Alpha < 0.5 (Fish spriteTint / Genom wings-eyes-mouth): protect light pixels
+    // from the multiply tint before the cave filter runs.
     if (gl_Color.a < 0.5) {
-        float lum = max(filtered.r, max(filtered.g, filtered.b));
+        float lum = max(src.r, max(src.g, src.b));
         float tintAmt = 1.0 - smoothstep(0.55, 0.92, lum);
-        multiplied = mix(filtered, multiplied, tintAmt);
+        coloured = mix(src, coloured, tintAmt);
     }
-    gl_FragColor = vec4(multiplied, texColor.a);
+
+    // Jim pyrobe / ruby buff used alpha in (0, 0.5) historically; keep multiply
+    // semantics for that band (already applied above) then cave-filter the result.
+    vec3 outc = applyCaveFilter(coloured);
+
+    gl_FragColor = vec4(outc, texColor.a);
 }

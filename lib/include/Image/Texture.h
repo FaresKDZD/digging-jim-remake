@@ -22,6 +22,19 @@ namespace Image {
         /// @brief Ccave tileset texture for rendering cave entities.
         CaveTiles,
 
+        /// @brief Transparent fire overlay strip (8×32) for Jim magma overheat.
+        CaveFireOverlay,
+
+        /// @brief Breath meter overlay strip (10×32) for Jim underwater drowning.
+        CaveBreathOverlay,
+
+        /// @brief Parasite infestation overlay strip (8×32) drawn over Jim when idle.
+        CaveParasiteOverlay,
+
+        /// @brief Parasite infestation overlay strip (8×32) for Jim moving/pushing right
+        ///        (horizontally mirrored for left).
+        CaveParasiteOverlayRight,
+
         /// @brief Sprite displayed when the game has been successfully completed.
         GameCompleted,
 

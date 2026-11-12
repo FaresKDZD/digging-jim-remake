@@ -1,7 +1,11 @@
 #include "Cave/Map/Map.h"
+#include "Cave/Entity/Jim.h"
+#include "Cave/Entity/Water.h"
+#include "Image/Texture.h"
 #include <algorithm>
 #include <cmath>
 #include <string>
+#include <utility>
 
 std::vector<int> Cave::Map::preUpdateCaveEntities() {
 	if (!editorIdle())
@@ -13,10 +17,13 @@ std::vector<int> Cave::Map::preUpdateCaveEntities() {
 	}
 	if (m_TickCounter.onTick()) {
 		updateTrapOpenOverlays();
+		updateCoralBudOverlays();
 		updateMimicTurnOverlays();
 		updateMimicMorphTimers();
 		updateHiveHunterBubbleOverlays();
 	}
+	// Mount/detach handoff every frame so the overlay swap has no empty gap.
+	updateParasiteOverlays();
 
 	std::vector<int> indicies;
 	for (int index = 0; index < width * height; ++index) {
@@ -413,6 +420,10 @@ void Cave::Map::initEntityUpdateMaps() {
 	m_entityUpdateMap[Cave::Entity::Type::ButterflyRelease] = [this](int i) { updateButterflyRelease(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Butterfly] = [this](int i) { updateButterfly(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Jelly] = [this](int i) { updateJelly(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Parasite] = [this](int i) { updateParasite(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Fish] = [this](int i) { updateFish(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Coral] = [this](int i) { updateCoral(i); };
+	m_entityUpdateMap[Cave::Entity::Type::CoralBud] = [this](int i) { updateCoralBud(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Genom] = [this](int i) { updateGenom(i); };
 	m_entityUpdateMap[Cave::Entity::Type::GenomEgg] = [this](int i) { updateGenomEgg(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Mimic] = [this](int i) { updateMimic(i); };
@@ -597,8 +608,10 @@ void Cave::Map::update(Camera camera) {
 			updateOverlayCosmics();
 			advanceCosmicGenesis();
 		}
-		if ((globalCounter % 4) == 0)
+		if ((globalCounter % 4) == 0) {
 			updatePyramChaseHalfTick();
+			updateParasiteChaseHalfTick();
+		}
 	}
 
 	if (m_state == Cave::State::Play && m_jimInvincibleFrames > 0) {
@@ -607,6 +620,9 @@ void Cave::Map::update(Camera camera) {
 	if (m_state == Cave::State::Play && m_jimPyrobeFrames > 0) {
 		m_jimPyrobeFrames--;
 	}
+	updateJimMagmaOverheat();
+	updateJimBreath();
+	updateJimParasiteInfestation();
 	if (m_state == Cave::State::Play) {
 		for (int i = 0; i < Net::MaxPlayers; ++i) {
 			if (m_playerInvincible[static_cast<size_t>(i)] > 0)
@@ -675,13 +691,242 @@ void Cave::Map::updateVisibleTiles(Camera camera) {
 			sf::IntRect({ min_x, min_y }, { max_x - min_x, max_y - min_y }));
 	}
 
+	m_waterDraws.clear();
+	m_gateDraws.clear();
+	m_coralBudDraws.clear();
+	m_coralBudFreeDraws.clear();
+	m_coralDraws.clear();
+	ensureCosmicUnder();
+	auto isCoralFrame = [](int tex) {
+		using C = Cave::Entity::Coral;
+		return tex >= C::FRAME_BASE && tex < C::FRAME_BASE + C::FRAME_COUNT;
+	};
+	auto isCoralBudFrame = [](int tex) {
+		using B = Cave::Entity::CoralBud;
+		return tex >= B::FRAME_BASE && tex < B::FRAME_BASE + B::FRAME_COUNT;
+	};
+	// Cropped restamp so coral/bud slides stay inside their cell (no black full-tile
+	// covering Jim while he pushes). Away ghosts use previous; live tiles use current.
+	auto pushCropped = [](std::vector<WaterDraw>& out, float cellX, float cellY, int tex,
+		const sf::IntRect& ep, const sf::IntRect& tp) {
+		if (tex == Cave::Entity::NO_TEXTURE_INDEX) return;
+		if (ep.size.x <= 0 || ep.size.y <= 0) return;
+		WaterDraw d;
+		d.x = cellX;
+		d.y = cellY;
+		d.frame = tex;
+		d.ox = ep.position.x;
+		d.oy = ep.position.y;
+		d.ow = ep.size.x;
+		d.oh = ep.size.y;
+		d.tox = tp.position.x;
+		d.toy = tp.position.y;
+		d.tow = tp.size.x;
+		d.toh = tp.size.y;
+		out.push_back(d);
+	};
+	auto pushFull = [](std::vector<WaterDraw>& out, float cellX, float cellY, int tex) {
+		if (tex == Cave::Entity::NO_TEXTURE_INDEX) return;
+		out.push_back(WaterDraw{ cellX, cellY, tex });
+	};
+	// Free buds use a full-tile slide (not into-crops) — bud frames have opaque black
+	// backgrounds, so wedge crops leave a black seam when leaving coral / rising.
+	auto slidePos = [](int cx, int cy, const Cave::Entity::Base& ent) {
+		float px = static_cast<float>(cx * 32);
+		float py = static_cast<float>(cy * 32);
+		if (!ent.isTransitioning()) return std::pair<float, float>{ px, py };
+		const int disp = ent.getTransitionDisplacement();
+		switch (ent.getTransitionDirection()) {
+		case Cave::Entity::Direction::RIGHT: px = static_cast<float>(cx * 32 + disp - 32); break;
+		case Cave::Entity::Direction::LEFT:  px = static_cast<float>(cx * 32 + 32 - disp); break;
+		case Cave::Entity::Direction::DOWN:  py = static_cast<float>(cy * 32 + disp - 32); break;
+		case Cave::Entity::Direction::UP:    py = static_cast<float>(cy * 32 + 32 - disp); break;
+		default: break;
+		}
+		return std::pair<float, float>{ px, py };
+	};
 	for (int y = min_y; y < max_y; ++y) {
 		for (int x = min_x; x < max_x; ++x) {
-			entities.push_back(caveEntities[y * width + x]);
+			const int index = y * width + x;
+			const Cave::Entity::Base& cell = caveEntities[static_cast<size_t>(index)];
+			const bool cellIsGate = cell.getType() == Cave::Entity::Type::Gate
+				|| cell.getType() == Cave::Entity::Type::PrivateGate;
+			const bool cellIsCoral = cell.getType() == Cave::Entity::Type::Coral;
+			const bool cellIsCoralBud = cell.getType() == Cave::Entity::Type::CoralBud;
+			const bool wet = isWaterCell(index);
+			const bool coralBudUnder = cellIsCoral
+				&& index < static_cast<int>(m_cosmicOver.size())
+				&& m_cosmicOver[static_cast<size_t>(index)].getType()
+					== Cave::Entity::Type::CoralBud;
+			// Only vacated floor cells are coral/bud ghosts. Jim's push transition keeps
+			// coral as previous — that must NOT strip Jim out of the tile layer.
+			const bool coralFloor = cell.getType() == Cave::Entity::Type::Space
+				|| cell.getType() == Cave::Entity::Type::Water
+				|| cellIsGate;
+			const bool coralAwayGhost =
+				!cellIsCoral
+				&& coralFloor
+				&& (cell.isAwayTransition() || cell.isPushTransition())
+				&& isCoralFrame(cell.getPreviousTextureIndex());
+			const bool coralBudAwayGhost =
+				!cellIsCoralBud
+				&& coralFloor
+				&& (cell.isAwayTransition() || cell.isPushTransition())
+				&& isCoralBudFrame(cell.getPreviousTextureIndex());
+			// Coral stack: Space → [bud] → coral → water (coral restamped, including falls).
+			// Free buds: Space floor + restamp under water (no Space into-wedge black seam).
+			// Never draw water textures in the tile layer (avoids surface-frame slide wedges).
+			// Away-slides keep the leaving entity ghost on a Space current; overlay paints water.
+			// Gates always leave the tile layer and restamp after water so transparent
+			// open frames show Space / water / occupants behind them.
+			const float cellX = static_cast<float>(x * 32);
+			const float cellY = static_cast<float>(y * 32);
+			const int prevTex = cell.getPreviousTextureIndex();
+			// Compressor suck already draws prey under the open mouth in TileRenderer —
+			// never restamp coral/bud on top of that stack.
+			using Comp = Cave::Entity::Compressor;
+			const bool compressorSucking = cell.getType() == Cave::Entity::Type::Compressor
+				&& cell.isIntoTransition()
+				&& Comp::mode(cell) == Comp::MODE_SUCKING;
+			const bool pusherCoralPrev = !compressorSucking
+				&& (cell.isPushTransition() || cell.isIntoTransition())
+				&& (isCoralFrame(prevTex) || isCoralBudFrame(prevTex));
+			if (cellIsCoral || coralAwayGhost || cellIsCoralBud || coralBudAwayGhost) {
+				entities.push_back(Cave::Entity::Space());
+			}
+			else if (pusherCoralPrev) {
+				// Keep Jim/occupant, but drop opaque coral/bud previous from the tile
+				// layer (black sprite bg would cover him). Leaving half rides the overlay.
+				if (isCoralFrame(prevTex))
+					pushCropped(m_coralDraws, cellX, cellY, prevTex,
+						cell.getPreviousPosition(), cell.getPreviousTextureCoords());
+				else
+					pushCropped(m_coralBudFreeDraws, cellX, cellY, prevTex,
+						cell.getPreviousPosition(), cell.getPreviousTextureCoords());
+				Cave::Entity::Base visual = cell;
+				const int disp = cell.getTransitionDisplacement();
+				Cave::Entity::Animation floor = Cave::Entity::Space().getAnimation();
+				visual.applyTransitionAmination(floor);
+				visual.setTransitionDisplacement(disp);
+				entities.push_back(std::move(visual));
+			}
+			else if (cell.getType() == Cave::Entity::Type::Water || cellIsGate) {
+				Cave::Entity::Base visual = Cave::Entity::Space();
+				if (cell.isAwayTransition() && !coralBudAwayGhost) {
+					auto prev = cell.copyAwayAnimation(cell.getTransitionDirection());
+					if (prev) {
+						Cave::Entity::Animation anim = *prev;
+						visual.applyAwayTransition(cell.getTransitionDirection(), anim);
+						visual.setTransitionDisplacement(cell.getTransitionDisplacement());
+					}
+					// Carry Genom/Fish look onto the Space stand-in so tinted/layered
+					// away ghosts keep their colour under the water overlay.
+					if ((cell.spawnCredit & Cave::Entity::Genom::LOOK_VALID) != 0)
+						visual.spawnCredit = cell.spawnCredit;
+					else if (cell.homeIndex != -1
+						&& (cell.homeIndex & Cave::Entity::Genom::LOOK_VALID) != 0)
+						visual.spawnCredit = cell.homeIndex;
+				}
+				// Restored open-gate away ghosts stash look in homeIndex — Space
+				// stand-ins read Genom/Fish look from spawnCredit.
+				if (cellIsGate && cell.homeIndex != -1
+					&& (cell.homeIndex & Cave::Entity::Genom::LOOK_VALID) != 0)
+					visual.spawnCredit = cell.homeIndex;
+				entities.push_back(std::move(visual));
+			}
+			else
+				entities.push_back(cell);
+			if (wet) {
+				m_waterDraws.push_back(WaterDraw{
+					static_cast<float>(x * 32),
+					static_cast<float>(y * 32),
+					waterDrawFrame(index)
+				});
+			}
+			if (cellIsCoral && coralBudUnder) {
+				const Cave::Entity::Base& bud = m_cosmicOver[static_cast<size_t>(index)];
+				const int budTex = bud.getCurrentTextureIndex();
+				pushFull(m_coralBudDraws, cellX, cellY, budTex);
+			}
+			if (cellIsCoral) {
+				const int tex = cell.getCurrentTextureIndex();
+				if (cell.isTransitioning())
+					pushCropped(m_coralDraws, cellX, cellY, tex,
+						cell.getCurrentPosition(), cell.getCurrentTextureCoords());
+				else
+					pushFull(m_coralDraws, cellX, cellY, tex);
+			}
+			else if (coralAwayGhost) {
+				// Cropped to this cell only — safe while a compressor below sucks the
+				// into-half under its mouth (TileRenderer). Skipping this made coral vanish.
+				pushCropped(m_coralDraws, cellX, cellY, cell.getPreviousTextureIndex(),
+					cell.getPreviousPosition(), cell.getPreviousTextureCoords());
+			}
+			if (cellIsCoralBud) {
+				const int tex = cell.getCurrentTextureIndex();
+				if (tex != Cave::Entity::NO_TEXTURE_INDEX) {
+					if (cell.isTransitioning()) {
+						const auto pos = slidePos(x, y, cell);
+						pushFull(m_coralBudFreeDraws, pos.first, pos.second, tex);
+					}
+					else {
+						pushFull(m_coralBudFreeDraws, cellX, cellY, tex);
+					}
+				}
+			}
+			else if (coralBudAwayGhost) {
+				// Normal rise: dest CoralBud full-slide covers both cells.
+				// Compressor suck: dest is the mouth — restamp the seat away-half here.
+				const int below = getIndex(index, Cave::Entity::Direction::DOWN);
+				const bool suckedByCompressor = inBounds(below)
+					&& getEntityType(below) == Cave::Entity::Type::Compressor
+					&& caveEntities[below].isIntoTransition()
+					&& Comp::mode(caveEntities[below]) == Comp::MODE_SUCKING;
+				if (suckedByCompressor)
+					pushCropped(m_coralBudFreeDraws, cellX, cellY, cell.getPreviousTextureIndex(),
+						cell.getPreviousPosition(), cell.getPreviousTextureCoords());
+			}
+			// Restamp gate above Space/water, or above an occupant covering an open gate.
+			if (cellIsGate) {
+				const int tex = cell.getCurrentTextureIndex();
+				if (tex != Cave::Entity::NO_TEXTURE_INDEX) {
+					m_gateDraws.push_back(WaterDraw{
+						static_cast<float>(x * 32),
+						static_cast<float>(y * 32),
+						tex
+					});
+				}
+			}
+			else if (index < static_cast<int>(m_coveredGate.size())) {
+				const Cave::Entity::Base& covered = m_coveredGate[static_cast<size_t>(index)];
+				const Cave::Entity::Type ct = covered.getType();
+				if (ct == Cave::Entity::Type::Gate || ct == Cave::Entity::Type::PrivateGate) {
+					const int tex = covered.getCurrentTextureIndex();
+					if (tex != Cave::Entity::NO_TEXTURE_INDEX) {
+						m_gateDraws.push_back(WaterDraw{
+							static_cast<float>(x * 32),
+							static_cast<float>(y * 32),
+							tex
+						});
+					}
+				}
+			}
+		}
+	}
+	// While any Jim is parasite-infested, full-slide him into empty so the Space
+	// into-wedge cannot show through the transparent overlay as a black square.
+	bool jimParasiteFullSlide = m_jimParasiteOverlayFrame >= 0;
+	if (!jimParasiteFullSlide) {
+		for (int p = 0; p < Net::MaxPlayers; ++p) {
+			if (m_playerParasite[static_cast<size_t>(p)] > 0) {
+				jimParasiteFullSlide = true;
+				break;
+			}
 		}
 	}
 	m_tileRenderer.updateTexture(entities, { 0, 0 },
-		sf::IntRect({ min_x, min_y }, { max_x - min_x, max_y - min_y }), 0, jimTint);
+		sf::IntRect({ min_x, min_y }, { max_x - min_x, max_y - min_y }), 0, jimTint, true,
+		jimParasiteFullSlide);
 
 	std::vector<Cave::Entity::Base> cosmics;
 	ensureCosmicUnder();
@@ -703,6 +948,23 @@ void Cave::Map::updateVisibleTiles(Camera camera) {
 						over.applyAwayTransition(dir, spaceAnim);
 					else if (cell.isPushTransition())
 						over.applyPushTransition(dir, spaceAnim);
+					over.setTransitionDisplacement(disp);
+				}
+				// Parasite on Jim: glue to his slide with NO Space previous — Space as
+				// previous paints a black tile over the player while he moves.
+				else if (over.getType() == Cave::Entity::Type::Parasite
+					&& cell.isTransitioning()
+					&& Cave::Entity::isHuntTarget(cell.getType())) {
+					Cave::Entity::Animation noPrev;
+					noPrev.frames.push_back(Cave::Entity::NO_TEXTURE_INDEX);
+					const Cave::Entity::Direction dir = cell.getTransitionDirection();
+					const int disp = cell.getTransitionDisplacement();
+					if (cell.isIntoTransition())
+						over.applyIntoTransition(dir, noPrev);
+					else if (cell.isAwayTransition())
+						over.applyAwayTransition(dir, noPrev);
+					else if (cell.isPushTransition())
+						over.applyPushTransition(dir, noPrev);
 					over.setTransitionDisplacement(disp);
 				}
 				// Leaving half of a fall/push still draws the prey on this cell while
@@ -744,13 +1006,17 @@ void Cave::Map::updateVisibleTiles(Camera camera) {
 							== Cave::Entity::Direction::DOWN)
 						haulerSpitCover = true;
 				}
-				if (haulerSpitCover)
+				// CoralBud under Coral is drawn in the tile layer + coral restamp.
+				const bool coralBudUnderCoral = over.getType() == Cave::Entity::Type::CoralBud
+					&& cell.getType() == Cave::Entity::Type::Coral;
+				if (haulerSpitCover || coralBudUnderCoral)
 					cosmics.push_back(Cave::Entity::Base());
 				else if (Cave::Entity::Cosmic::isWanderer(over.getType())
 					|| over.isTransitioning()
 					|| over.getType() == Cave::Entity::Type::TrapOpen
 					|| over.getType() == Cave::Entity::Type::MimicTurn
-					|| over.getType() == Cave::Entity::Type::HiveHunterBubble)
+					|| over.getType() == Cave::Entity::Type::HiveHunterBubble
+					|| over.getType() == Cave::Entity::Type::Parasite)
 					cosmics.push_back(std::move(over));
 				else
 					cosmics.push_back(Cave::Entity::Base());
@@ -759,13 +1025,23 @@ void Cave::Map::updateVisibleTiles(Camera camera) {
 				cosmics.push_back(Cave::Entity::Base());
 		}
 	}
+	// No Space underlay — transparent cosmic parasites must show Jim underneath.
 	m_cosmicRenderer.updateTexture(cosmics, { 0, 0 },
-		sf::IntRect({ min_x, min_y }, { max_x - min_x, max_y - min_y }), 0);
+		sf::IntRect({ min_x, min_y }, { max_x - min_x, max_y - min_y }), 0, sf::Color::White, false);
 
 	m_showInvincibleText = false;
 	m_showPyrobeText = false;
-	if (m_jimIndex != OUT_OF_BOUNDS_INDEX && getEntityType(m_jimIndex) == Cave::Entity::Type::Jim
-		&& m_state != Cave::State::Load && m_state != Cave::State::End) {
+	if (m_jimIndex == OUT_OF_BOUNDS_INDEX
+		|| m_state == Cave::State::Load || m_state == Cave::State::End) {
+		m_jimMagmaFireDrawFrame = -1;
+		if (m_state == Cave::State::Load || m_state == Cave::State::End)
+			m_breathDraws.clear();
+	}
+	const bool jimOrShip = m_jimIndex != OUT_OF_BOUNDS_INDEX
+		&& (getEntityType(m_jimIndex) == Cave::Entity::Type::Jim
+			|| Cave::Entity::isJimlinShip(getEntityType(m_jimIndex))
+			|| Cave::Entity::isJimlinShipVariant(getEntityType(m_jimIndex)));
+	if (jimOrShip && m_state != Cave::State::Load && m_state != Cave::State::End) {
 		// World-space top-left of Jim's full sprite (not the clipped into-wedge rect,
 		// which crawled across the tile during slides and dragged the buff text).
 		const int jx = m_jimIndex % width;
@@ -783,6 +1059,11 @@ void Cave::Map::updateVisibleTiles(Camera camera) {
 			default: break;
 			}
 		}
+		m_jimMagmaFireDrawPos = {
+			static_cast<float>(jimPx),
+			static_cast<float>(jimPy)
+		};
+
 		const bool showRuby = isJimInvincible();
 		const bool showPyrobe = isJimPyrobe();
 		if (showRuby) {
@@ -832,14 +1113,226 @@ void Cave::Map::updateVisibleTiles(Camera camera) {
 	}
 }
 
+void Cave::Map::drawWaterMask(sf::RenderTarget& target) const {
+	if (m_waterDraws.empty()) return;
+	sf::RectangleShape cell({ 32.f, 32.f });
+	cell.setFillColor(sf::Color::White);
+	using W = Cave::Entity::Water;
+	for (const WaterDraw& w : m_waterDraws) {
+		// Surface strip stays still — only body water gets the side-to-side wave.
+		if (w.frame >= W::SURFACE_BASE && w.frame < W::SURFACE_BASE + W::SURFACE_COUNT)
+			continue;
+		cell.setPosition({ w.x, w.y });
+		target.draw(cell);
+	}
+}
+
+void Cave::Map::drawWaterOverlays(sf::RenderTarget& target, sf::RenderStates states) const {
+	if (m_waterDraws.empty()) return;
+	try {
+		const sf::Texture& tiles =
+			m_game->imageManager.getTexture(Image::Texture::CaveTiles);
+		const int cols = static_cast<int>(tiles.getSize().x) / 32;
+		for (const WaterDraw& w : m_waterDraws) {
+			if (w.frame < 0 || cols <= 0) continue;
+			const int tx = w.frame % cols;
+			const int ty = w.frame / cols;
+			sf::Sprite water(tiles,
+				sf::IntRect(sf::Vector2i(tx * 32, ty * 32), sf::Vector2i(32, 32)));
+			water.setPosition({ w.x, w.y });
+			target.draw(water, states);
+		}
+	}
+	catch (...) {
+	}
+}
+
+void Cave::Map::drawLoadingOverlays(sf::RenderTarget& target) const {
+	if (m_state != Cave::State::Load && m_state != Cave::State::End) return;
+	sf::RenderStates noShader;
+	noShader.shader = nullptr;
+	m_loadingTileRenderer.render(target, noShader);
+}
+
 void Cave::Map::draw(sf::RenderTarget& target, sf::RenderStates states) const {
 	m_tileRenderer.render(target, states);
+	// Coral / bud above Space, under cosmic overlays (hunter bubble, TrapOpen) and water:
+	//   Space → [under-bud | free/moving bud] → coral → bubble/trap → water
+	// Free buds draw under coral so eject slides don't paint over the coral.
+	if (!m_coralBudDraws.empty() || !m_coralDraws.empty() || !m_coralBudFreeDraws.empty()) {
+		try {
+			const sf::Texture& tiles =
+				m_game->imageManager.getTexture(Image::Texture::CaveTiles);
+			const int cols = static_cast<int>(tiles.getSize().x) / 32;
+			auto drawOverlay = [&](const WaterDraw& d) {
+				if (d.frame < 0 || cols <= 0 || d.ow <= 0 || d.oh <= 0) return;
+				const int tx = d.frame % cols;
+				const int ty = d.frame / cols;
+				sf::Sprite spr(tiles,
+					sf::IntRect(
+						sf::Vector2i(tx * 32 + d.tox, ty * 32 + d.toy),
+						sf::Vector2i(d.tow, d.toh)));
+				spr.setPosition({ d.x + static_cast<float>(d.ox), d.y + static_cast<float>(d.oy) });
+				target.draw(spr, states);
+			};
+			for (const WaterDraw& b : m_coralBudDraws)
+				drawOverlay(b);
+			for (const WaterDraw& b : m_coralBudFreeDraws)
+				drawOverlay(b);
+			for (const WaterDraw& c : m_coralDraws)
+				drawOverlay(c);
+		}
+		catch (...) {
+		}
+	}
 	m_cosmicRenderer.render(target, states);
 	sf::RenderStates noShaderStates = states;
 	noShaderStates.shader = nullptr;
-	if (m_state == Cave::State::Load || m_state == Cave::State::End) {
-		m_loadingTileRenderer.render(target, noShaderStates);
+	// Magma overheat: Jim-masked multiply red (only opaque player pixels), then fire on top.
+	if (m_jimMagmaHeat >= Cave::Entity::Jim::MAGMA_HEAT_STAGE1
+		&& inBounds(m_jimIndex)
+		&& getEntityType(m_jimIndex) == Cave::Entity::Type::Jim) {
+		const int tex = caveEntities[m_jimIndex].getCurrentTextureIndex();
+		if (tex != Cave::Entity::NO_TEXTURE_INDEX
+			&& Cave::Entity::Jim::isJimTexture(tex)) {
+			try {
+				const sf::Texture& tiles =
+					m_game->imageManager.getTexture(Image::Texture::CaveTiles);
+				const int cols = static_cast<int>(tiles.getSize().x) / 32;
+				const int tx = (cols > 0) ? (tex % cols) : 0;
+				const int ty = (cols > 0) ? (tex / cols) : 0;
+				// Result = Src*Dst*SrcA + Dst*(1-SrcA): multiply Jim, leave background alone.
+				const sf::BlendMode jimMultiply(
+					sf::BlendMode::Factor::DstColor,
+					sf::BlendMode::Factor::OneMinusSrcAlpha,
+					sf::BlendMode::Equation::Add,
+					sf::BlendMode::Factor::Zero,
+					sf::BlendMode::Factor::One,
+					sf::BlendMode::Equation::Add);
+				const sf::Color mulColor =
+					(m_jimMagmaHeat >= Cave::Entity::Jim::MAGMA_HEAT_STAGE2)
+					? sf::Color(255, 40, 24)
+					: sf::Color(255, 150, 130);
+				sf::Sprite redWash(tiles,
+					sf::IntRect(sf::Vector2i(tx * 32, ty * 32), sf::Vector2i(32, 32)));
+				redWash.setPosition(m_jimMagmaFireDrawPos);
+				redWash.setColor(mulColor);
+				sf::RenderStates mulStates = noShaderStates;
+				mulStates.blendMode = jimMultiply;
+				target.draw(redWash, mulStates);
+			}
+			catch (...) {
+			}
+		}
 	}
+	if (m_jimMagmaFireDrawFrame >= 0
+		&& m_jimMagmaFireDrawFrame < Cave::Entity::Jim::MAGMA_FIRE_FRAME_COUNT) {
+		try {
+			const sf::Texture& fireTex =
+				m_game->imageManager.getTexture(Image::Texture::CaveFireOverlay);
+			const int fy = m_jimMagmaFireDrawFrame * 32;
+			sf::Sprite fire(fireTex,
+				sf::IntRect(sf::Vector2i(0, fy), sf::Vector2i(32, 32)));
+			fire.setPosition(m_jimMagmaFireDrawPos);
+			target.draw(fire, noShaderStates);
+		}
+		catch (...) {
+			// Overlay texture missing — skip without breaking the frame.
+		}
+	}
+	if (m_jimParasiteOverlayFrame >= 0
+		&& m_jimParasiteOverlayFrame < Cave::Entity::Parasite::OVERLAY_FRAMES) {
+		try {
+			const Cave::Entity::Base* jimEnt = nullptr;
+			if (inBounds(m_jimIndex) && getEntityType(m_jimIndex) == Cave::Entity::Type::Jim)
+				jimEnt = &caveEntities[m_jimIndex];
+			// Idle strip when settled idle. Right strip for into/push slides and for the
+			// settled push pose (frames 192–203) while shoving left/right.
+			bool useRightStrip = false;
+			bool faceLeft = false;
+			if (jimEnt) {
+				const int jimTex = jimEnt->getCurrentTextureIndex();
+				const bool pushPose = Cave::Entity::Jim::isJimPushTexture(jimTex);
+				const bool sliding = jimEnt->isTransitioning()
+					&& (jimEnt->isIntoTransition() || jimEnt->isPushTransition());
+				if (sliding || pushPose) {
+					useRightStrip = true;
+					if (sliding) {
+						const Cave::Entity::Direction d = jimEnt->getTransitionDirection();
+						if (d == Cave::Entity::Direction::LEFT)
+							faceLeft = true;
+						else if (d == Cave::Entity::Direction::RIGHT)
+							faceLeft = false;
+						else
+							faceLeft = (getEntityFacing(m_jimIndex) == Cave::Entity::Facing::LEFT);
+					}
+					else {
+						faceLeft = Cave::Entity::Jim::isJimPushLeftTexture(jimTex)
+							|| getEntityFacing(m_jimIndex) == Cave::Entity::Facing::LEFT;
+					}
+				}
+			}
+			const Image::Texture texId = useRightStrip
+				? Image::Texture::CaveParasiteOverlayRight
+				: Image::Texture::CaveParasiteOverlay;
+			const sf::Texture& parasiteTex = m_game->imageManager.getTexture(texId);
+			const int fy = m_jimParasiteOverlayFrame * 32;
+			sf::Sprite parasite(parasiteTex,
+				sf::IntRect(sf::Vector2i(0, fy), sf::Vector2i(32, 32)));
+			if (faceLeft) {
+				parasite.setScale({ -1.f, 1.f });
+				parasite.setPosition({
+					m_jimMagmaFireDrawPos.x + 32.f,
+					m_jimMagmaFireDrawPos.y
+				});
+			}
+			else {
+				parasite.setPosition(m_jimMagmaFireDrawPos);
+			}
+			target.draw(parasite, noShaderStates);
+		}
+		catch (...) {
+		}
+	}
+	if (!m_breathDraws.empty()) {
+		try {
+			const sf::Texture& breathTex =
+				m_game->imageManager.getTexture(Image::Texture::CaveBreathOverlay);
+			for (const WaterDraw& b : m_breathDraws) {
+				if (b.frame < 0 || b.frame >= Cave::Entity::Jim::BREATH_OVERLAY_COUNT)
+					continue;
+				sf::Sprite breath(breathTex,
+					sf::IntRect(sf::Vector2i(0, b.frame * 32), sf::Vector2i(32, 32)));
+				breath.setPosition({ b.x, b.y });
+				target.draw(breath, noShaderStates);
+			}
+		}
+		catch (...) {
+		}
+	}
+	// Water above coral / buds / player / monsters / cosmic overlays.
+	drawWaterOverlays(target, states);
+	// Restamp gates above Space/water/occupants so transparent frames show through.
+	if (!m_gateDraws.empty()) {
+		try {
+			const sf::Texture& tiles =
+				m_game->imageManager.getTexture(Image::Texture::CaveTiles);
+			const int cols = static_cast<int>(tiles.getSize().x) / 32;
+			for (const WaterDraw& g : m_gateDraws) {
+				if (g.frame < 0 || cols <= 0) continue;
+				const int tx = g.frame % cols;
+				const int ty = g.frame / cols;
+				sf::Sprite gate(tiles,
+					sf::IntRect(sf::Vector2i(tx * 32, ty * 32), sf::Vector2i(32, 32)));
+				gate.setPosition({ g.x, g.y });
+				target.draw(gate, states);
+			}
+		}
+		catch (...) {
+		}
+	}
+	// Load/end (spawn, death cover, respawn) tiles are drawn by Game after cave
+	// post-FX so water/parasite waves do not distort them.
 	if (m_showInvincibleText) {
 		m_invincibleText.render(target, noShaderStates);
 	}

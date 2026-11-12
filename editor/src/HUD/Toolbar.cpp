@@ -60,6 +60,7 @@ static bool customEditorPopupOpen()
     return ImGui::IsPopupOpen("##well_props")
         || ImGui::IsPopupOpen("##portal_props")
         || ImGui::IsPopupOpen("##genom_props")
+        || ImGui::IsPopupOpen("##fish_props")
         || ImGui::IsPopupOpen("##tools_ctx")
         || ImGui::IsPopupOpen("##caves_list_ctx");
 }
@@ -318,6 +319,10 @@ void HUD::Editor::Toolbar::drawToolItems(HUD::Editor::Panel* editorPanel)
     tool("Compressor",               "",  0, 28, Cave::Entity::Type::Compressor);
     tool("Hive Matriarch",           "",  HUD::Editor::Panel::HiveMatriarchSlotX, HUD::Editor::Panel::HiveMatriarchSlotY, Cave::Entity::Type::HiveMatriarch);
     tool("Hive Wall",                "",  HUD::Editor::Panel::HiveWallSlotX, HUD::Editor::Panel::HiveWallSlotY, Cave::Entity::Type::HiveWall);
+    tool("Water",                    "",  0, 29, Cave::Entity::Type::Water);
+    tool("Fish",                     "",  HUD::Editor::Panel::FishSlotX, HUD::Editor::Panel::FishSlotY, Cave::Entity::Type::Fish);
+    tool("Coral",                    "",  2, 29, Cave::Entity::Type::Coral);
+    tool("Parasite",                 "",  0, 30, Cave::Entity::Type::Parasite);
 }
 
 void HUD::Editor::Toolbar::drawToolsMenu(HUD::Editor::Panel* editorPanel)

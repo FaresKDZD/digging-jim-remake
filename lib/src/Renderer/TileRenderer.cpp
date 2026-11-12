@@ -4,7 +4,9 @@
 #include <vector>
 #include "Renderer/TileRenderer.h"
 #include "Cave/Entity/Base.h"
+#include "Cave/Entity/Caterpillar.h"
 #include "Cave/Entity/Compressor.h"
+#include "Cave/Entity/Fish.h"
 #include "Cave/Entity/Genom.h"
 #include "Cave/Entity/GenomEgg.h"
 #include "Cave/Entity/HiveLarva.h"
@@ -12,6 +14,7 @@
 #include "Cave/Entity/HiveHunterBubble.h"
 #include "Cave/Entity/HiveWorker.h"
 #include "Cave/Entity/Jim.h"
+#include "Cave/Entity/Parasite.h"
 #include "Cave/Entity/Space.h"
 #include "Cave/Entity/Spinner.h"
 #include "Cave/Entity/Type.h"
@@ -64,7 +67,7 @@ bool Renderer::TileRenderer::load(const Image::Texture& texture, const sf::Vecto
     return true;
 }
 
-void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>& entities, const sf::Vector2i& position, const sf::IntRect& gridRange, int gap, sf::Color jimTint) {
+void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>& entities, const sf::Vector2i& position, const sf::IntRect& gridRange, int gap, sf::Color jimTint, bool underlaySpaceForAlpha, bool jimEmptyFullSlide) {
     struct WormSlide {
         float px = 0.f;
         float py = 0.f;
@@ -152,7 +155,25 @@ void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>
             // (that made the pyrobe/ruby pulse crawl across the tile ahead of Jim).
             // Buff tints use alpha==1 so tint.frag skips the cave colour filter.
             const bool hasJimBuff = jimTint.a == 1;
+            // Fish look may live on the Fish itself, or on a vacated Space/gate ghost
+            // (spawnCredit / homeIndex) so the away-slide crop keeps the same tint.
+            const int fishLookPacked = [&]() -> int {
+                // Living Fish, or vacated Space ghost with look stashed in spawnCredit.
+                if (Cave::Entity::Fish::hasLook(entity))
+                    return entity.spawnCredit;
+                // Leaving an open gate: look stashed in homeIndex (same as Genom).
+                if (entity.homeIndex != -1
+                    && (entity.homeIndex & Cave::Entity::Fish::LOOK_VALID) != 0)
+                    return entity.homeIndex;
+                return 0;
+            }();
+            const bool isFishColored = fishLookPacked != 0;
+            const sf::Color fishTint = isFishColored
+                ? Cave::Entity::Fish::spriteTint(fishLookPacked) : sf::Color::White;
             auto tintForTex = [&](int tex) -> sf::Color {
+                if (isFishColored && tex != Cave::Entity::NO_TEXTURE_INDEX
+                    && Cave::Entity::Fish::isFishTexture(tex))
+                    return fishTint;
                 if (!hasJimBuff) return sf::Color::White;
                 if (tex != Cave::Entity::NO_TEXTURE_INDEX
                     && Cave::Entity::Jim::isJimTexture(tex))
@@ -187,12 +208,15 @@ void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>
                 const sf::IntRect moveTp = entity.getCurrentTextureCoords();
                 const bool preyIsCompressor = prevTex >= Cave::Entity::Compressor::IDLE_BASE
                     && prevTex < Cave::Entity::Compressor::OPEN_BASE + Cave::Entity::Compressor::OPEN_COUNT;
+                const bool preyIsParasite = prevTex >= Cave::Entity::Parasite::FRAME_BASE
+                    && prevTex < Cave::Entity::Parasite::FRAME_BASE + Cave::Entity::Parasite::FRAME_COUNT;
                 if (rideLook != 0 && Cave::Entity::Genom::isGenomTexture(prevTex)) {
                     const int frame = Cave::Entity::Genom::frameFromBgTexture(prevTex);
                     pushGenomLayers(entity, rideLook, frame, baseX, baseY, moveEp, moveTp, index);
                 }
-                else if (preyIsCompressor) {
-                    // Full-tile prey compressor under the mouth (avoids black crop seams).
+                else if (preyIsCompressor || preyIsParasite) {
+                    // Full-tile prey under the mouth (avoids black crop seams; parasite
+                    // also uses full-tile slides when walking so the suck matches).
                     const int disp = entity.getTransitionDisplacement();
                     float ox = 0.f, oy = 0.f;
                     switch (entity.getTransitionDirection()) {
@@ -255,7 +279,8 @@ void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>
             }
 
             // Full-tile slides avoid crop seams through opaque black sprite backgrounds
-            // (Spinner / Compressor) and keep Worm bodies whole while moving.
+            // (Spinner / Compressor) and keep Worm / Caterpillar bodies whole while moving.
+            // Caterpillar is especially seam-prone at SLIDE_INC=2 (half speed).
             // Skip when a hive hauler is spitting the package — that path needs the
             // collectorDropInto body+bubble stack (compressor intoSlide would steal it).
             auto haulerAwayAtEarly = [&](int ni, Cave::Entity::Direction awayDir) -> bool {
@@ -286,22 +311,90 @@ void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>
                 && prevTex < Cave::Entity::Spinner::FRAME_BASE + Cave::Entity::Spinner::FRAME_COUNT;
             const bool compressorFrame = prevTex >= Cave::Entity::Compressor::IDLE_BASE
                 && prevTex < Cave::Entity::Compressor::OPEN_BASE + Cave::Entity::Compressor::OPEN_COUNT;
+            const bool parasiteFrame = prevTex >= Cave::Entity::Parasite::FRAME_BASE
+                && prevTex < Cave::Entity::Parasite::FRAME_BASE + Cave::Entity::Parasite::FRAME_COUNT;
+            const bool caterpillarFrame = prevTex >= Cave::Entity::Caterpillar::FRAME_BASE
+                && prevTex < Cave::Entity::Caterpillar::FRAME_BASE
+                    + Cave::Entity::Caterpillar::FRAME_COUNT;
+            // Empty-tile caterpillar into: full-body slide (avoids half-speed crop seams).
+            // Eating a cooked egg keeps the normal into crop so the egg phases under it
+            // like Predator sliding onto prey.
+            const bool caterpillarEmptyInto = entity.isIntoTransition()
+                && entity.getType() == Cave::Entity::Type::Caterpillar
+                && prevTex == Cave::Entity::Space::TEXTURE_INDEX;
+            // Infested Jim into Space: full-body slide so the Space into-wedge cannot show
+            // through the transparent parasite overlay as a black square.
+            const bool jimEmptyInto = jimEmptyFullSlide
+                && entity.isIntoTransition()
+                && entity.getType() == Cave::Entity::Type::Jim
+                && (prevTex == Cave::Entity::Space::TEXTURE_INDEX
+                    || prevTex == Cave::Entity::NO_TEXTURE_INDEX);
+            const bool jimFrame = Cave::Entity::Jim::isJimTexture(prevTex);
+            // Vacated cell during empty full-slide: floor only (into draws the body).
+            // During an eat, leave the cropped away ghost so the phase-onto matches Predator.
+            if (entity.isAwayTransition()
+                && entity.getType() == Cave::Entity::Type::Space
+                && (caterpillarFrame || (jimEmptyFullSlide && jimFrame))) {
+                const auto td = entity.getTransitionDirection();
+                const int viewW = gridRange.size.x;
+                int intoNeighbor = -1;
+                if (td == Cave::Entity::Direction::RIGHT) intoNeighbor = index + 1;
+                else if (td == Cave::Entity::Direction::LEFT) intoNeighbor = index - 1;
+                else if (td == Cave::Entity::Direction::DOWN) intoNeighbor = index + viewW;
+                else if (td == Cave::Entity::Direction::UP) intoNeighbor = index - viewW;
+                bool emptyFullSlide = false;
+                if (intoNeighbor >= 0 && intoNeighbor < cellCount) {
+                    const auto& intoEnt = entities[static_cast<size_t>(intoNeighbor)];
+                    const int intoPrev = intoEnt.getPreviousTextureIndex();
+                    emptyFullSlide = (intoEnt.getType() == Cave::Entity::Type::Caterpillar
+                            && intoEnt.isIntoTransition()
+                            && intoPrev == Cave::Entity::Space::TEXTURE_INDEX)
+                        || (jimEmptyFullSlide
+                            && intoEnt.getType() == Cave::Entity::Type::Jim
+                            && intoEnt.isIntoTransition()
+                            && (intoPrev == Cave::Entity::Space::TEXTURE_INDEX
+                                || intoPrev == Cave::Entity::NO_TEXTURE_INDEX));
+                }
+                if (emptyFullSlide) {
+                    const int floorIndex = Cave::Entity::Space::TEXTURE_INDEX;
+                    const sf::Vector2i floorCoords = { floorIndex % m_tilesetCols, floorIndex / m_tilesetCols };
+                    writeTileQuad(tri,
+                        baseX, baseY, baseX + (float)m_tilesize.x, baseY + (float)m_tilesize.y,
+                        (float)(floorCoords.x * (int)m_tilesize.x), (float)(floorCoords.y * (int)m_tilesize.y),
+                        (float)((floorCoords.x + 1) * (int)m_tilesize.x), (float)((floorCoords.y + 1) * (int)m_tilesize.y),
+                        sf::Color::White);
+                    clearTileVerts(&m_vertices[index * 12 + 6], 6);
+                    index++;
+                    continue;
+                }
+            }
             const bool intoSlide = entity.isIntoTransition()
                 && !haulerSpittingOnto
                 && (Cave::Entity::isWorm(entity.getType())
+                    || caterpillarEmptyInto
+                    || jimEmptyInto
                     || entity.getType() == Cave::Entity::Type::Spinner
-                    || entity.getType() == Cave::Entity::Type::Compressor);
+                    || entity.getType() == Cave::Entity::Type::Compressor
+                    || entity.getType() == Cave::Entity::Type::Parasite);
             const bool awaySlide = entity.isAwayTransition()
                 && entity.getType() == Cave::Entity::Type::Space
-                && (spinnerFrame || compressorFrame);
+                && (spinnerFrame || compressorFrame || parasiteFrame);
             if (intoSlide || awaySlide) {
-                const int floorIndex = Cave::Entity::Space::TEXTURE_INDEX;
-                const sf::Vector2i floorCoords = { floorIndex % m_tilesetCols, floorIndex / m_tilesetCols };
-                writeTileQuad(tri,
-                    baseX, baseY, baseX + (float)m_tilesize.x, baseY + (float)m_tilesize.y,
-                    (float)(floorCoords.x * (int)m_tilesize.x), (float)(floorCoords.y * (int)m_tilesize.y),
-                    (float)((floorCoords.x + 1) * (int)m_tilesize.x), (float)((floorCoords.y + 1) * (int)m_tilesize.y),
-                    sf::Color::White);
+                // Cosmic parasite over Jim: no Space floor — let the player show through alpha.
+                const bool parasiteAlphaOver = !underlaySpaceForAlpha
+                    && (entity.getType() == Cave::Entity::Type::Parasite || parasiteFrame);
+                if (parasiteAlphaOver) {
+                    clearTileVerts(tri, 6);
+                }
+                else {
+                    const int floorIndex = Cave::Entity::Space::TEXTURE_INDEX;
+                    const sf::Vector2i floorCoords = { floorIndex % m_tilesetCols, floorIndex / m_tilesetCols };
+                    writeTileQuad(tri,
+                        baseX, baseY, baseX + (float)m_tilesize.x, baseY + (float)m_tilesize.y,
+                        (float)(floorCoords.x * (int)m_tilesize.x), (float)(floorCoords.y * (int)m_tilesize.y),
+                        (float)((floorCoords.x + 1) * (int)m_tilesize.x), (float)((floorCoords.y + 1) * (int)m_tilesize.y),
+                        sf::Color::White);
+                }
                 clearTileVerts(&m_vertices[index * 12 + 6], 6);
 
                 const int disp = entity.getTransitionDisplacement();
@@ -327,9 +420,9 @@ void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>
                     default: break;
                     }
                 }
-                if (awaySlide && compressorFrame) {
-                    // Compressor away must stay under later tiles (receiving mouth below),
-                    // unlike Spinner/Worm which intentionally draw above everything.
+                if (awaySlide && (compressorFrame || parasiteFrame)) {
+                    // Compressor/parasite leave-slide must stay under later tiles (the
+                    // receiving mouth below). Worm/Spinner intentionally draw above.
                     const sf::Vector2i textureCoords = { slideTex % m_tilesetCols, slideTex / m_tilesetCols };
                     const float tw = (float)m_tilesize.x;
                     const float th = (float)m_tilesize.y;
@@ -348,6 +441,44 @@ void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>
                 }
                 else if (wormSlideCount < 96) {
                     wormSlides[wormSlideCount++] = { baseX + ox, baseY + oy, slideTex, tint };
+                }
+                index++;
+                continue;
+            }
+
+            // Transparent parasite body on the tile layer: Space floor so editor grey RT
+            // does not read through. Cosmic pass skips the floor so Jim shows through.
+            if (entity.getType() == Cave::Entity::Type::Parasite) {
+                if (underlaySpaceForAlpha) {
+                    const int floorIndex = Cave::Entity::Space::TEXTURE_INDEX;
+                    const sf::Vector2i floorCoords = { floorIndex % m_tilesetCols, floorIndex / m_tilesetCols };
+                    writeTileQuad(tri,
+                        baseX, baseY, baseX + (float)m_tilesize.x, baseY + (float)m_tilesize.y,
+                        (float)(floorCoords.x * (int)m_tilesize.x), (float)(floorCoords.y * (int)m_tilesize.y),
+                        (float)((floorCoords.x + 1) * (int)m_tilesize.x), (float)((floorCoords.y + 1) * (int)m_tilesize.y),
+                        sf::Color::White);
+                }
+                else {
+                    clearTileVerts(tri, 6);
+                }
+                clearTileVerts(&m_vertices[index * 12 + 6], 6);
+                const int bodyTex = entity.getCurrentTextureIndex();
+                if (bodyTex != Cave::Entity::NO_TEXTURE_INDEX) {
+                    const sf::Vector2i textureCoords = { bodyTex % m_tilesetCols, bodyTex / m_tilesetCols };
+                    const sf::IntRect ep = entity.getCurrentPosition();
+                    const sf::IntRect tp = entity.getCurrentTextureCoords();
+                    OverlayQuad q;
+                    q.px1 = baseX + (float)ep.position.x;
+                    q.py1 = baseY + (float)ep.position.y;
+                    q.px2 = baseX + (float)ep.position.x + (float)ep.size.x;
+                    q.py2 = baseY + (float)ep.position.y + (float)ep.size.y;
+                    q.tx1 = (float)(textureCoords.x * (int)m_tilesize.x + tp.position.x);
+                    q.ty1 = (float)(textureCoords.y * (int)m_tilesize.y + tp.position.y);
+                    q.tx2 = (float)(textureCoords.x * (int)m_tilesize.x + tp.position.x + tp.size.x);
+                    q.ty2 = (float)(textureCoords.y * (int)m_tilesize.y + tp.position.y + tp.size.y);
+                    q.tint = sf::Color::White;
+                    q.cellIndex = index;
+                    overlays.push_back(q);
                 }
                 index++;
                 continue;

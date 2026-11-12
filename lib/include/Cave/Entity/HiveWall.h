@@ -91,7 +91,8 @@ namespace Cave::Entity {
      */
     class HiveLivingWall : public Base {
     public:
-        static constexpr int FRAME = 1945;
+        // After Parasite (2003-2010). Was 1945; Water::BODY_FRAME owns that slot.
+        static constexpr int FRAME = 2011;
 
         HiveLivingWall()
             : Base(Type::HiveLivingWall, FRAME) {

@@ -15,8 +15,10 @@
 #include <chrono>
 
 #include <algorithm>
+#include <cmath>
 #include <iostream>
 #include <filesystem>
+#include "Utils/Counter.h"
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -637,6 +639,28 @@ void Game::mainGameLoop() {
         }
     }
 
+    // Cave post FX ping-pong RT (parasite color blend / water wave).
+    sf::RenderTexture parasiteColorRt(sf::Vector2u(SCREEN_WIDTH, SCREEN_HEIGHT));
+    parasiteColorRt.setSmooth(false);
+    sf::RenderTexture waterMaskRt(sf::Vector2u(SCREEN_WIDTH, SCREEN_HEIGHT));
+    waterMaskRt.setSmooth(false);
+
+    sf::Shader colorBlendShader;
+    bool colorBlendOk = colorBlendShader.loadFromFile(
+        "./assets/shaders/color_blend.frag", sf::Shader::Type::Fragment);
+    if (colorBlendOk) {
+        colorBlendShader.setUniform("blendColor", sf::Glsl::Vec3(
+            97.f / 255.f, 59.f / 255.f, 106.f / 255.f)); // #613b6a
+        colorBlendShader.setUniform("tint", sf::Glsl::Vec3{ 0.5f, 0.5f, 0.5f });
+        colorBlendShader.setUniform("time", 0.f);
+    }
+
+    sf::Shader waterWaveShader;
+    bool waterWaveOk = waterWaveShader.loadFromFile(
+        "./assets/shaders/water_wave.frag", sf::Shader::Type::Fragment);
+    if (waterWaveOk)
+        waterWaveShader.setUniform("time", 0.f);
+
     // View that maps the virtual screen (640x480) to fill the entire window.
     auto makeWindowView = [&]() -> sf::View {
         return sf::View(sf::FloatRect(sf::Vector2f(0.f, 0.f),
@@ -865,10 +889,72 @@ void Game::mainGameLoop() {
             logicAccum = 0.f;
 
         // ---- Render latest logic state (may run more often than 64 Hz) ----
+        const bool parasiteView = caveActive && map.isLocalJimParasiteInfested();
         rt.setView(camera.view());
         rt.clear(sf::Color::Black);
 
-        if (caveActive) rt.draw(map, shaderManager.currentShader());
+        if (caveActive) {
+            rt.draw(map, shaderManager.currentShader());
+
+            const sf::View screenView(sf::FloatRect(
+                { 0.f, 0.f },
+                { static_cast<float>(SCREEN_WIDTH), static_cast<float>(SCREEN_HEIGHT) }));
+            const float fxTime = static_cast<float>(globalCounter) * 0.14f;
+            const bool wantWaterWave = waterWaveOk && map.hasWaterOverlays();
+
+            // Horizontal wave on water-covered tiles only (cave preview, before HUD).
+            if (wantWaterWave) {
+                waterMaskRt.setView(camera.view());
+                waterMaskRt.clear(sf::Color::Black);
+                map.drawWaterMask(waterMaskRt);
+                waterMaskRt.display();
+
+                waterWaveShader.setUniform("time", fxTime);
+                waterWaveShader.setUniform("waterMask", waterMaskRt.getTexture());
+
+                rt.display();
+                parasiteColorRt.setView(screenView);
+                parasiteColorRt.clear(sf::Color::Black);
+                parasiteColorRt.draw(sf::Sprite(rt.getTexture()), &waterWaveShader);
+                parasiteColorRt.display();
+
+                rt.setView(screenView);
+                rt.clear(sf::Color::Black);
+                rt.draw(sf::Sprite(parasiteColorRt.getTexture()));
+            }
+
+            // Color blend + wave wobble only on the cave preview (not HUD / pause / menus).
+            if (parasiteView && colorBlendOk) {
+                const bool fixed = getGameOptions().fixedColours;
+                colorBlendShader.setUniform("tint", fixed
+                    ? sf::Glsl::Vec3{ 0.5f, 0.5f, 0.5f }
+                    : sf::Glsl::Vec3{
+                        static_cast<float>(std::clamp(getHue(), 0, 200)) / 200.f,
+                        static_cast<float>(std::clamp(getSat(), 0, 200)) / 200.f,
+                        static_cast<float>(std::clamp(getLum(), 0, 200)) / 200.f,
+                    });
+                colorBlendShader.setUniform("time", fxTime);
+
+                rt.display();
+                parasiteColorRt.setView(screenView);
+                parasiteColorRt.clear(sf::Color::Black);
+                parasiteColorRt.draw(sf::Sprite(rt.getTexture()), &colorBlendShader);
+                parasiteColorRt.display();
+
+                rt.setView(screenView);
+                rt.clear(sf::Color::Black);
+                rt.draw(sf::Sprite(parasiteColorRt.getTexture()));
+            }
+
+            // Spawn / death / respawn loading tiles stay sharp above cave post-FX.
+            if (map.hasLoadingOverlays()) {
+                rt.setView(camera.view());
+                map.drawLoadingOverlays(rt);
+            }
+        }
+
+        // HUD / overlays on the stable camera view.
+        rt.setView(camera.view());
 
         if (m_freeCamera) {
             sf::Vector2f markerPos = camera.getCenter();

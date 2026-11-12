@@ -26,34 +26,65 @@ bool Cave::Map::moveEntityTo(const int& sourceIndex, const int& destinationIndex
 	const bool dug = Cave::Entity::isDirtLike(getEntityType(destinationIndex));
 
 	Cave::Entity::Animation sourceAnimation = caveEntities[sourceIndex].getAnimation();
-	Cave::Entity::Animation destinationAnimation = caveEntities[destinationIndex].getAnimation();
+	// Water draws only via overlay — never crop surface frames into the slide wedge.
+	Cave::Entity::Animation destinationAnimation =
+		(getEntityType(destinationIndex) == Cave::Entity::Type::Water)
+		? Cave::Entity::Space().getAnimation()
+		: caveEntities[destinationIndex].getAnimation();
 	const Cave::Entity::Type sourceType = getEntityType(sourceIndex);
 	const int genomLook = ((sourceType == Cave::Entity::Type::Genom
 			|| sourceType == Cave::Entity::Type::GenomEgg)
 		&& Cave::Entity::Genom::hasLook(caveEntities[sourceIndex]))
 		? caveEntities[sourceIndex].spawnCredit : 0;
+	const int fishLook = (sourceType == Cave::Entity::Type::Fish
+		&& Cave::Entity::Fish::hasLook(caveEntities[sourceIndex]))
+		? caveEntities[sourceIndex].spawnCredit : 0;
+	const int ghostLook = genomLook != 0 ? genomLook : fishLook;
 
 	const bool moveBubble = isHiveBubbled(sourceIndex);
 
-	coverPassableGate(destinationIndex);
+	const bool destWasWater = getEntityType(destinationIndex) == Cave::Entity::Type::Water;
+	const bool moverLoggable = isWaterLoggable(caveEntities[sourceIndex]);
+	if (destWasWater && moverLoggable)
+		coverPassableGate(destinationIndex);
+	else if (destWasWater && !moverLoggable) {
+		if (destinationIndex < static_cast<int>(m_coveredGate.size()))
+			m_coveredGate[static_cast<size_t>(destinationIndex)] = Cave::Entity::Base();
+		if (destinationIndex < static_cast<int>(m_waterUnder.size()))
+			m_waterUnder[static_cast<size_t>(destinationIndex)] = 0;
+	}
+	else if (!destWasWater)
+		coverPassableGate(destinationIndex);
 	caveEntities[destinationIndex] = std::move(caveEntities[sourceIndex]);
-	if (!restoreCoveredGate(sourceIndex)) {
+	if (!restoreCoveredPassable(sourceIndex)) {
 		caveEntities[sourceIndex] = Cave::Entity::Space();
 		// Ghost look only on vacated Space — never stomp restored gate spawnCredit.
-		if (genomLook != 0)
-			caveEntities[sourceIndex].spawnCredit = genomLook;
+		if (ghostLook != 0)
+			caveEntities[sourceIndex].spawnCredit = ghostLook;
 	}
-	else if (genomLook != 0) {
+	else if (ghostLook != 0) {
 		// Leaving an open gate: away-slide lives on the restored gate (same as other
-		// monsters). Stash look in homeIndex so the layered ghost can still draw.
-		caveEntities[sourceIndex].homeIndex = genomLook;
+		// monsters). Stash look in homeIndex so the layered / tinted ghost can still draw.
+		// Water uses spawnCredit (unused for mode) — Update rebuilds a Space visual and
+		// copies spawnCredit so Fish/Genom tint follows under the water overlay.
+		if (getEntityType(sourceIndex) == Cave::Entity::Type::Water)
+			caveEntities[sourceIndex].spawnCredit = ghostLook;
+		else
+			caveEntities[sourceIndex].homeIndex = ghostLook;
 	}
+	if (getEntityType(sourceIndex) == Cave::Entity::Type::Water)
+		caveEntities[sourceIndex].setAnimation(Cave::Entity::Space().getAnimation());
 
 	if (slideInc < 1) slideInc = 4;
 	caveEntities[sourceIndex].applyAwayTransition(direction, sourceAnimation, slideInc);
 	caveEntities[destinationIndex].applyIntoTransition(direction, destinationAnimation, slideInc);
 	if (moveBubble)
 		transferHiveBubble(sourceIndex, destinationIndex, direction);
+	// Parasite seated on Jim (detach / rare mount leftover) must follow him — never
+	// leave a Space-backed cosmic body on the vacated cell over his slide.
+	if (sourceType == Cave::Entity::Type::Jim
+		|| Cave::Entity::isHuntTarget(sourceType))
+		transferParasiteOver(sourceIndex, destinationIndex);
 	if (vacateFallable
 		&& sourceIndex >= 0 && sourceIndex < static_cast<int>(m_fallableVacated.size()))
 		m_fallableVacated[static_cast<size_t>(sourceIndex)] = 1;
@@ -163,7 +194,7 @@ bool Cave::Map::warpEntity(const int& sourceIndex, const Cave::Entity::Direction
 
 	coverPassableGate(destinationIndex);
 	caveEntities[destinationIndex] = std::move(caveEntities[sourceIndex]);
-	if (!restoreCoveredGate(sourceIndex)) {
+	if (!restoreCoveredPassable(sourceIndex)) {
 		caveEntities[sourceIndex] = Cave::Entity::Space();
 	}
 
@@ -204,7 +235,12 @@ bool Cave::Map::pushEntityTo(const int& sourceIndex, const int& pushedIndex, con
 
 	Cave::Entity::Animation sourceAmination = caveEntities[sourceIndex].getAnimation();
 	Cave::Entity::Animation pushedAmination = caveEntities[pushedIndex].getAnimation();
-	Cave::Entity::Animation destinationAmination = caveEntities[destinationIndex].getAnimation();
+	Cave::Entity::Animation destinationAmination =
+		(getEntityType(destinationIndex) == Cave::Entity::Type::Water)
+		? Cave::Entity::Space().getAnimation()
+		: caveEntities[destinationIndex].getAnimation();
+	if (getEntityType(pushedIndex) == Cave::Entity::Type::Water)
+		pushedAmination = Cave::Entity::Space().getAnimation();
 	// Layered egg tint must ghost on the push cell; raw previous shell alone leaves the tint behind.
 	const int eggLook = (getEntityType(pushedIndex) == Cave::Entity::Type::GenomEgg
 		&& Cave::Entity::Genom::hasLook(caveEntities[pushedIndex]))
@@ -215,9 +251,11 @@ bool Cave::Map::pushEntityTo(const int& sourceIndex, const int& pushedIndex, con
 	coverPassableGate(destinationIndex);
 	caveEntities[destinationIndex] = std::move(caveEntities[pushedIndex]);
 	caveEntities[pushedIndex] = std::move(caveEntities[sourceIndex]);
-	if (!restoreCoveredGate(sourceIndex)) {
+	if (!restoreCoveredPassable(sourceIndex)) {
 		caveEntities[sourceIndex] = Cave::Entity::Space();
 	}
+	if (getEntityType(sourceIndex) == Cave::Entity::Type::Water)
+		caveEntities[sourceIndex].setAnimation(Cave::Entity::Space().getAnimation());
 
 	caveEntities[sourceIndex].applyAwayTransition(direction, sourceAmination);
 	caveEntities[pushedIndex].applyPushTransition(direction, pushedAmination);

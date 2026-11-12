@@ -1,4 +1,7 @@
 #include "Cave/Map/Map.h"
+#include "Cave/Entity/Jim.h"
+#include "Cave/Entity/Magma.h"
+#include <algorithm>
 
 void Cave::Map::killPlayerAt(const int& index) {
 	if (!inBounds(index)) return;
@@ -7,11 +10,284 @@ void Cave::Map::killPlayerAt(const int& index) {
 		m_playerInvincible[static_cast<size_t>(pid)] = 0;
 		m_playerPyrobe[static_cast<size_t>(pid)] = 0;
 		m_playerPyrobeShootWait[static_cast<size_t>(pid)] = 0;
+		m_playerParasite[static_cast<size_t>(pid)] = 0;
 	}
 	m_jimInvincibleFrames = 0;
 	m_jimPyrobeFrames = 0;
+	m_jimParasiteFrames = 0;
+	m_jimParasiteOverlayFrame = -1;
+	m_jimMagmaHeat = 0;
+	m_jimMagmaForcedHeatFrames = 0;
+	m_jimMagmaFireDrawFrame = -1;
+	m_jimBreath = {};
+	ensureCosmicUnder();
+	if (index >= 0 && index < static_cast<int>(m_cosmicOver.size())
+		&& m_cosmicOver[static_cast<size_t>(index)].getType() == Cave::Entity::Type::Parasite)
+		m_cosmicOver[static_cast<size_t>(index)] = Cave::Entity::Base();
 	caveEntities[index].removeTrait(Cave::Entity::Trait::Indestructible);
 	createExplosion(index);
+}
+
+void Cave::Map::noteJimMagmaDig() {
+	using J = Cave::Entity::Jim;
+	// Collect-dig has no into-slide — keep heating for one dig-tick (~8 frames).
+	m_jimMagmaForcedHeatFrames = std::max(m_jimMagmaForcedHeatFrames, J::MAGMA_FIRE_ANIM_DIV);
+}
+
+int Cave::Map::jimMagmaFireOverlayFrame() const {
+	using J = Cave::Entity::Jim;
+	if (m_jimMagmaHeat < J::MAGMA_HEAT_STAGE1)
+		return -1;
+	const int anim = (static_cast<int>(globalCounter) / J::MAGMA_FIRE_ANIM_DIV) % 4;
+	if (m_jimMagmaHeat < J::MAGMA_HEAT_STAGE2)
+		return anim;           // frames 0-3
+	return 4 + anim;           // frames 4-7
+}
+
+void Cave::Map::updateJimMagmaOverheat() {
+	using J = Cave::Entity::Jim;
+	using M = Cave::Entity::Magma;
+
+	if (m_state != Cave::State::Play || editorIdle()) {
+		m_jimMagmaHeat = 0;
+		m_jimMagmaForcedHeatFrames = 0;
+		m_jimMagmaFireDrawFrame = -1;
+		return;
+	}
+
+	bool heating = false;
+	if (m_jimMagmaForcedHeatFrames > 0) {
+		heating = true;
+		m_jimMagmaForcedHeatFrames--;
+	}
+
+	const int jim = m_jimIndex;
+	if (inBounds(jim) && getEntityType(jim) == Cave::Entity::Type::Jim
+		&& !Cave::Entity::isActiveJimlinShip(getEntityType(jim))) {
+		// Entering / standing in water dumps magma heat instantly.
+		if (isWaterCell(jim)) {
+			m_jimMagmaHeat = 0;
+			m_jimMagmaForcedHeatFrames = 0;
+			m_jimMagmaFireDrawFrame = -1;
+			return;
+		}
+		const auto& ent = caveEntities[jim];
+		if (ent.isIntoTransition()) {
+			const int prev = ent.getPreviousTextureIndex();
+			if (prev >= M::FRAME_BASE && prev < M::FRAME_BASE + M::FRAME_COUNT)
+				heating = true;
+		}
+	}
+	else {
+		// No Jim to kill — just cool leftover heat.
+		if (m_jimMagmaHeat > 0)
+			m_jimMagmaHeat = std::max(0, m_jimMagmaHeat - J::MAGMA_HEAT_COOL_RATE);
+		m_jimMagmaFireDrawFrame = -1;
+		return;
+	}
+
+	if (heating)
+		m_jimMagmaHeat = std::min(J::MAGMA_HEAT_MAX, m_jimMagmaHeat + 1);
+	else if (m_jimMagmaHeat > 0)
+		m_jimMagmaHeat = std::max(0, m_jimMagmaHeat - J::MAGMA_HEAT_COOL_RATE);
+
+	m_jimMagmaFireDrawFrame = jimMagmaFireOverlayFrame();
+
+	if (m_jimMagmaHeat >= J::MAGMA_HEAT_MAX) {
+		killPlayerAt(jim);
+		return;
+	}
+}
+
+bool Cave::Map::isJimBreathable(const int& index) const {
+	if (!inBounds(index)) return true;
+	const Cave::Entity::Type type = getEntityType(index);
+	if (Cave::Entity::isJimlinShip(type) || Cave::Entity::isJimlinShipVariant(type))
+		return true;
+	// Open gates only grant air when dry; waterlogged gates use normal water rules.
+	const bool wet = isWaterCell(index);
+	if (!wet) {
+		if (isPassableGate(index)) return true;
+		if (index < static_cast<int>(m_coveredGate.size())) {
+			const Cave::Entity::Type covered = m_coveredGate[static_cast<size_t>(index)].getType();
+			if (covered == Cave::Entity::Type::Gate || covered == Cave::Entity::Type::PrivateGate)
+				return true;
+		}
+	}
+	if (isWaterSurface(index)) return true;
+	if (wet) return false;
+	return true;
+}
+
+int Cave::Map::jimBreathOverlayFrame() const {
+	return m_jimBreath.drawFrame;
+}
+
+Cave::Map::BreathMeter& Cave::Map::breathMeterForJimlin(const int& index) {
+	int& id = caveEntities[index].stuckTicks;
+	if (id <= 0)
+		id = m_nextJimlinBreathId++;
+	return m_jimlinBreath[id];
+}
+
+const Cave::Map::BreathMeter* Cave::Map::breathMeterForJimlinConst(const int& index) const {
+	const int id = caveEntities[index].stuckTicks;
+	if (id <= 0) return nullptr;
+	const auto it = m_jimlinBreath.find(id);
+	if (it == m_jimlinBreath.end()) return nullptr;
+	return &it->second;
+}
+
+bool Cave::Map::jimlinBreathCritical(const int& index) const {
+	const BreathMeter* meter = breathMeterForJimlinConst(index);
+	if (!meter) return false;
+	// 9th strip frame: final 2s hold before the 10th / drown.
+	return meter->drawFrame >= Cave::Entity::Jim::BREATH_OVERLAY_COUNT - 2;
+}
+
+bool Cave::Map::advanceBreathMeter(BreathMeter& meter, bool breathable) {
+	using J = Cave::Entity::Jim;
+
+	auto holdAfterFrame = [](int frame) {
+		if (frame < 0) return J::BREATH_HOLD_LONG;
+		return (frame % 2 == 1) ? J::BREATH_HOLD_SHORT : J::BREATH_HOLD_LONG;
+	};
+	auto snapRefillFrame = [](int frame) {
+		if (frame < 0) return 0;
+		if (frame % 2 != 0) frame--;
+		return frame < 0 ? 0 : frame;
+	};
+	auto refillFrameAt = [&](int startFrame, int elapsed, int total) {
+		if (total <= 0 || startFrame <= 0) return 0;
+		const int start = snapRefillFrame(startFrame);
+		if (start <= 0) return 0;
+		const float t = std::min(1.f, static_cast<float>(elapsed) / static_cast<float>(total));
+		const float raw = static_cast<float>(start) * (1.f - t);
+		return snapRefillFrame(static_cast<int>(raw + 0.0001f));
+	};
+
+	if (!breathable) {
+		if (meter.refillTotal > 0) {
+			meter.drawFrame = refillFrameAt(meter.refillStartFrame,
+				meter.refillElapsed, meter.refillTotal);
+			meter.timer = holdAfterFrame(meter.drawFrame);
+			meter.refillTotal = 0;
+			meter.refillElapsed = 0;
+			meter.refillStartFrame = 0;
+		}
+		else if (meter.drawFrame < 0) {
+			meter.drawFrame = 0;
+			meter.timer = J::BREATH_HOLD_LONG;
+			meter.spent = 0;
+		}
+
+		meter.spent++;
+		if (meter.timer > 0)
+			meter.timer--;
+
+		if (meter.timer <= 0) {
+			// Already on the 10th frame after its final 0.125s hold — drown.
+			if (meter.drawFrame >= J::BREATH_OVERLAY_COUNT - 1)
+				return true;
+			meter.drawFrame++;
+			// Landed on frame 10: hold the short beat, then drown (total 10.625s).
+			if (meter.drawFrame >= J::BREATH_OVERLAY_COUNT - 1)
+				meter.timer = J::BREATH_HOLD_SHORT;
+			else
+				meter.timer = holdAfterFrame(meter.drawFrame);
+		}
+		return false;
+	}
+
+	if (meter.spent > 0 && meter.refillTotal <= 0 && meter.drawFrame > 0) {
+		meter.lastDive = meter.spent;
+		meter.refillStartFrame = snapRefillFrame(meter.drawFrame);
+		meter.refillTotal = std::max(1,
+			static_cast<int>(static_cast<float>(meter.lastDive) * J::BREATH_REFILL_RATIO + 0.5f));
+		meter.refillElapsed = 0;
+		meter.timer = 0;
+	}
+
+	if (meter.refillTotal > 0) {
+		meter.refillElapsed++;
+		const int frame = refillFrameAt(meter.refillStartFrame,
+			meter.refillElapsed, meter.refillTotal);
+		meter.drawFrame = frame;
+		if (meter.refillElapsed >= meter.refillTotal || frame <= 0)
+			meter = {};
+		return false;
+	}
+
+	meter = {};
+	return false;
+}
+
+void Cave::Map::updateJimBreath() {
+	m_breathDraws.clear();
+
+	if (editorIdle()) {
+		m_jimBreath = {};
+		return;
+	}
+
+	// Pause / ESC menu: keep the current meter and keep drawing it; do not advance or clear.
+	const bool frozen = m_state != Cave::State::Play;
+
+	auto pushBreathDraw = [this](int cell, int frame) {
+		if (frame < 0 || !inBounds(cell)) return;
+		const int cx = cell % width;
+		const int cy = cell / width;
+		int px = cx * 32;
+		int py = cy * 32;
+		const auto& ent = caveEntities[cell];
+		if (ent.isTransitioning()) {
+			const int disp = ent.getTransitionDisplacement();
+			switch (ent.getTransitionDirection()) {
+			case Cave::Entity::Direction::RIGHT: px = cx * 32 + disp - 32; break;
+			case Cave::Entity::Direction::LEFT:  px = cx * 32 + 32 - disp; break;
+			case Cave::Entity::Direction::DOWN:  py = cy * 32 + disp - 32; break;
+			case Cave::Entity::Direction::UP:    py = cy * 32 + 32 - disp; break;
+			default: break;
+			}
+		}
+		m_breathDraws.push_back(WaterDraw{
+			static_cast<float>(px), static_cast<float>(py), frame });
+	};
+
+	const int jim = m_jimIndex;
+	if (inBounds(jim) && (Cave::Entity::isPlayer(getEntityType(jim))
+		|| Cave::Entity::isJimlinShip(getEntityType(jim))
+		|| Cave::Entity::isJimlinShipVariant(getEntityType(jim)))) {
+		// Ruby invincibility cancels drowning and clears the breath overlay.
+		if (isJimInvincible(jim)) {
+			m_jimBreath = {};
+		}
+		else if (!frozen && advanceBreathMeter(m_jimBreath, isJimBreathable(jim))) {
+			killPlayerAt(jim);
+			return;
+		}
+		pushBreathDraw(jim, m_jimBreath.drawFrame);
+	}
+	else if (!frozen) {
+		m_jimBreath = {};
+	}
+
+	const int cellCount = width * height;
+	for (int i = 0; i < cellCount; ++i) {
+		const Cave::Entity::Type type = getEntityType(i);
+		const bool jimlin = Cave::Entity::isJimlin(type);
+		const bool ship = Cave::Entity::isActiveJimlinShip(type);
+		if (!jimlin && !ship) continue;
+		// Jim piloting a ship already uses m_jimBreath above.
+		if (ship && i == jim) continue;
+
+		BreathMeter& meter = breathMeterForJimlin(i);
+		if (!frozen && advanceBreathMeter(meter, isJimBreathable(i))) {
+			createExplosion(i);
+			continue;
+		}
+		pushBreathDraw(i, meter.drawFrame);
+	}
 }
 
 void Cave::Map::updateJim(const int& index) {
@@ -42,6 +318,16 @@ void Cave::Map::updateJim(const int& index) {
 		moveDir = Cave::Entity::Direction::RIGHT;
 	else if (in.left)
 		moveDir = Cave::Entity::Direction::LEFT;
+
+	if (isJimParasiteInfested(index) && moveDir != Cave::Entity::Direction::NO_DIRECTION) {
+		switch (moveDir) {
+		case Cave::Entity::Direction::UP:    moveDir = Cave::Entity::Direction::DOWN; break;
+		case Cave::Entity::Direction::DOWN:  moveDir = Cave::Entity::Direction::UP; break;
+		case Cave::Entity::Direction::LEFT:  moveDir = Cave::Entity::Direction::RIGHT; break;
+		case Cave::Entity::Direction::RIGHT: moveDir = Cave::Entity::Direction::LEFT; break;
+		default: break;
+		}
+	}
 
 	if (isJimPyrobe(index) && collect && moveDir != Cave::Entity::Direction::NO_DIRECTION) {
 		const int inFront = getIndex(index, moveDir);
@@ -275,6 +561,7 @@ bool Cave::Map::handleJimTraverse(const int& index, const int& inFront, const bo
 	}
 	setJimMoveAmination(index);
 	bool digging = Cave::Entity::isDirtLike(getEntityType(inFront));
+	const bool diggingMagma = getEntityType(inFront) == Cave::Entity::Type::Magma;
 	const bool intoFire = getEntityType(inFront) == Cave::Entity::Type::Fire;
 	if (collectMode) {
 		if (!getEntityTransitioning(inFront)) {
@@ -326,6 +613,8 @@ bool Cave::Map::handleJimTraverse(const int& index, const int& inFront, const bo
 			}
 			else if (digging) {
 				m_traversingDirt = true;
+				if (diggingMagma)
+					noteJimMagmaDig();
 			}
 			else if (m_timeBombsCarried > 0 && hasTrait(Cave::Entity::Trait::Empty, inFront)) {
 				m_timeBombsCarried--;
@@ -379,6 +668,10 @@ bool Cave::Map::handleJimTraverse(const int& index, const int& inFront, const bo
 					payload.look));
 				m_game->soundManager.play(Sound::Effect::Drop);
 				notifyFusion5Stimulus(inFront);
+				return true;
+			}
+			// Spacebar collect digs dirt / clears empties — never erase bare water.
+			else if (getEntityType(inFront) == Cave::Entity::Type::Water) {
 				return true;
 			}
 			setEntity(inFront, Cave::Entity::Space());
@@ -436,6 +729,7 @@ bool Cave::Map::handleJimTraverse(const int& index, const int& inFront, const bo
 		}
 		else if (digging) {
 			m_traversingDirt = true;
+			// Into-slide onto magma heats every render frame via updateJimMagmaOverheat.
 		}
 		if (intoFire && !isJimHazardImmune(inFront))
 			killPlayerAt(inFront);
@@ -513,6 +807,8 @@ bool Cave::Map::handleJimPush(const int& index, const int& inFront, const bool& 
 		return false;
 	}
 	m_game->inputSystem.increasePushTimer();
+	// Push pose (and parasite right-overlay) while shoving / waiting on the push timer.
+	setJimPushAmination(index);
 	const unsigned int pushInterval = Cave::Entity::isActiveJimlinShip(getEntityType(index)) ? 2u : 8u;
 	const bool canPush = m_game->isMultiplayer() || m_game->inputSystem.registerPush(pushInterval);
 	if (canPush && pushEntity(index, direction)) {
@@ -522,7 +818,7 @@ bool Cave::Map::handleJimPush(const int& index, const int& inFront, const bool& 
 		notifyFusion5Stimulus(inFront);
 		return true;
 	}
-	return false;
+	return true;
 }
 
 bool Cave::Map::handleJimUseGate(const int& index, const int& inFront, const bool& collectMode) {

@@ -918,6 +918,41 @@ int Cave::Map::nearestJimlinThreat(const int& index) const {
 	return best;
 }
 
+int Cave::Map::pickJimlinBreathableGoal(const int& index) const {
+	const int cellCount = static_cast<int>(caveEntities.size());
+	if (index < 0 || index >= cellCount) return OUT_OF_BOUNDS_INDEX;
+	if (isJimBreathable(index)) return index;
+
+	const bool inShip = jimlinInShip(index);
+	const bool throughPrivate = !inShip && jimlinLook(index) == Cave::Entity::Type::JimlinKing;
+
+	jimlinSearchBegin();
+	jimlinSearchVisit(index, index, Cave::Entity::Direction::NO_DIRECTION);
+	m_jimlinBfsQueue.push_back(index);
+
+	while (m_jimlinBfsQueueHead < m_jimlinBfsQueue.size()) {
+		const int current = m_jimlinBfsQueue[m_jimlinBfsQueueHead++];
+		for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+			const int hop = findBlobPipeExit(current, dir);
+			if (hop != OUT_OF_BOUNDS_INDEX && !jimlinSearchSeen(hop)
+				&& canJimlinWalk(hop, index, inShip, throughPrivate)) {
+				jimlinSearchVisit(hop, current, dir);
+				if (isJimBreathable(hop)) return hop;
+				m_jimlinBfsQueue.push_back(hop);
+			}
+
+			const int next = getIndex(current, dir);
+			if (next == OUT_OF_BOUNDS_INDEX) continue;
+			if (jimlinSearchSeen(next)) continue;
+			if (!canJimlinWalk(next, index, inShip, throughPrivate)) continue;
+			jimlinSearchVisit(next, current, dir);
+			if (isJimBreathable(next)) return next;
+			m_jimlinBfsQueue.push_back(next);
+		}
+	}
+	return OUT_OF_BOUNDS_INDEX;
+}
+
 int Cave::Map::pickJimlinFleeGoal(const int& index, const int& threat) const {
 	const int cellCount = static_cast<int>(caveEntities.size());
 	if (index < 0 || index >= cellCount || !inBounds(threat)) return OUT_OF_BOUNDS_INDEX;
@@ -1333,6 +1368,7 @@ bool Cave::Map::tryJimlinBoardShip(const int& index, const int& ship) {
 	const int goal = caveEntities[index].targetIndex;
 	const int home = caveEntities[index].homeIndex;
 	const int duty = caveEntities[index].dutyTicks;
+	const int breathId = caveEntities[index].stuckTicks;
 	const Cave::Entity::Facing facing = getEntityFacing(index);
 	const Cave::Entity::Direction direction = getEntityDirection(index);
 
@@ -1347,6 +1383,7 @@ bool Cave::Map::tryJimlinBoardShip(const int& index, const int& ship) {
 	caveEntities[ship].targetIndex = goal;
 	caveEntities[ship].homeIndex = home;
 	caveEntities[ship].dutyTicks = duty;
+	caveEntities[ship].stuckTicks = breathId;
 	caveEntities[ship].facing = facing;
 	caveEntities[ship].direction = direction;
 	setJimlinMode(ship, Cave::Entity::Jimlin::MODE_SHIP_RIDE);
@@ -1371,6 +1408,7 @@ bool Cave::Map::tryJimlinExitShip(const int& index, const Cave::Entity::Directio
 	const int goal = caveEntities[index].targetIndex;
 	const int home = caveEntities[index].homeIndex;
 	const int duty = caveEntities[index].dutyTicks;
+	const int breathId = caveEntities[index].stuckTicks;
 	const Cave::Entity::Facing facing = getEntityFacing(index);
 	const Cave::Entity::Direction dir = getEntityDirection(index);
 
@@ -1383,6 +1421,7 @@ bool Cave::Map::tryJimlinExitShip(const int& index, const Cave::Entity::Directio
 	caveEntities[dest].targetIndex = goal;
 	caveEntities[dest].homeIndex = home;
 	caveEntities[dest].dutyTicks = duty;
+	caveEntities[dest].stuckTicks = breathId;
 	caveEntities[dest].facing = facing;
 	caveEntities[dest].direction = dir;
 	if (duty >= Cave::Entity::Jimlin::DUTY_TICKS && jimlinReadyToGoHome(dest))
@@ -1538,8 +1577,29 @@ void Cave::Map::updateJimlin(const int& index) {
 	if (caveEntities[index].homeIndex < 0)
 		caveEntities[index].homeIndex = index;
 
+	// Low breath: abandon other jobs and flee to the nearest breathable tile.
+	if (!jimlinInShip(index)
+		&& jimlinMode(index) != Cave::Entity::Jimlin::MODE_SHIP_LAND
+		&& jimlinBreathCritical(index)) {
+		if (jimlinMode(index) != Cave::Entity::Jimlin::MODE_BREATH_FLEE) {
+			setJimlinMode(index, Cave::Entity::Jimlin::MODE_BREATH_FLEE);
+			caveEntities[index].targetIndex = pickJimlinBreathableGoal(index);
+		}
+	}
+	else if (jimlinMode(index) == Cave::Entity::Jimlin::MODE_BREATH_FLEE) {
+		if (isJimBreathable(index) || !jimlinBreathCritical(index)) {
+			if (jimlinReadyToGoHome(index))
+				jimlinBeginHome(index);
+			else
+				jimlinBeginIdle(index);
+			return;
+		}
+	}
+
 	const int threat = nearestJimlinThreat(index);
-	if (threat != OUT_OF_BOUNDS_INDEX && jimlinMode(index) != Cave::Entity::Jimlin::MODE_SHIP_LAND) {
+	if (jimlinMode(index) != Cave::Entity::Jimlin::MODE_BREATH_FLEE
+		&& threat != OUT_OF_BOUNDS_INDEX
+		&& jimlinMode(index) != Cave::Entity::Jimlin::MODE_SHIP_LAND) {
 		if (jimlinMode(index) != Cave::Entity::Jimlin::MODE_FLEE) {
 			setJimlinMode(index, Cave::Entity::Jimlin::MODE_FLEE);
 			caveEntities[index].targetIndex = pickJimlinFleeGoal(index, threat);
@@ -1564,7 +1624,8 @@ void Cave::Map::updateJimlin(const int& index) {
 	const bool onTick = Utils::TickCounter::onTick();
 	if (mode != Cave::Entity::Jimlin::MODE_HOME
 		&& mode != Cave::Entity::Jimlin::MODE_REST
-		&& mode != Cave::Entity::Jimlin::MODE_FLEE) {
+		&& mode != Cave::Entity::Jimlin::MODE_FLEE
+		&& mode != Cave::Entity::Jimlin::MODE_BREATH_FLEE) {
 		if (caveEntities[index].dutyTicks < Cave::Entity::Jimlin::DUTY_TICKS)
 			++caveEntities[index].dutyTicks;
 		if (onTick && caveEntities[index].dutyTicks >= Cave::Entity::Jimlin::DUTY_TICKS) {
@@ -1693,6 +1754,32 @@ void Cave::Map::updateJimlin(const int& index) {
 		setEntityMoving(index, false);
 		if (timer >= Cave::Entity::Jimlin::IDLE_TICKS)
 			jimlinPickAction(index);
+		return;
+	}
+
+	if (mode == Cave::Entity::Jimlin::MODE_BREATH_FLEE) {
+		if (isJimBreathable(index)) {
+			if (jimlinReadyToGoHome(index))
+				jimlinBeginHome(index);
+			else
+				jimlinBeginIdle(index);
+			return;
+		}
+		int goal = caveEntities[index].targetIndex;
+		if (!inBounds(goal) || goal == index || !isJimBreathable(goal))
+			goal = pickJimlinBreathableGoal(index);
+		caveEntities[index].targetIndex = goal;
+		if (!inBounds(goal) || goal == index) {
+			setJimlinAnimation(index, false, false);
+			return;
+		}
+		if (tryJimlinKingOpenIfNeeded(index, goal))
+			return;
+		const Cave::Entity::Direction dir = findPathForJimlin(index, goal, false);
+		if (dir != Cave::Entity::Direction::NO_DIRECTION)
+			tryJimlinStep(index, dir, false);
+		else
+			setJimlinAnimation(index, false, false);
 		return;
 	}
 

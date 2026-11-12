@@ -137,6 +137,11 @@ Cave::Entity::Base Cave::Data::getTileEntity(const char& tile) {
 	case 135: return Cave::Entity::HiveDigger();
 	case 136: return Cave::Entity::HiveStorageWall();
 	case 137: return Cave::Entity::HiveLivingWall();
+	case 138: return Cave::Entity::Water();
+	case 139: return Cave::Entity::Fish();
+	case 140: return Cave::Entity::Coral();
+	case 141: return Cave::Entity::CoralBud();
+	case 142: return Cave::Entity::Parasite();
 	default:
 		return Cave::Entity::Space();
 	}

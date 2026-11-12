@@ -1,4 +1,5 @@
 #include "Cave/Map/Map.h"
+#include "Cave/Entity/Jim.h"
 #include "Utils/Counter.h"
 #include "Utils/Random.h"
 #include <algorithm>
@@ -917,7 +918,7 @@ bool Cave::Map::warpFusion1ThroughWall(const int& index, const int& dest) {
 
 	coverPassableGate(dest);
 	Cave::Entity::Base mover = std::move(caveEntities[index]);
-	if (!restoreCoveredGate(index)) {
+	if (!restoreCoveredPassable(index)) {
 		caveEntities[index] = Cave::Entity::Space();
 	}
 	caveEntities[dest] = std::move(mover);
@@ -2386,6 +2387,215 @@ void Cave::Map::updateButterfly(const int& index) {
 	tryWallFollowEmpty(index, true);
 }
 
+void Cave::Map::updateFish(const int& index) {
+	using F = Cave::Entity::Fish;
+	int& mode = caveEntities[index].extra;
+
+	// Out of water: no swim AI — fall / slip like a boulder.
+	if (!isWaterCell(index)) {
+		if (mode == F::MODE_TURN) {
+			mode = F::MODE_MOVE;
+			Cave::Entity::Direction facing = getEntityDirection(index);
+			if (facing != Cave::Entity::Direction::LEFT
+				&& facing != Cave::Entity::Direction::RIGHT) {
+				facing = Cave::Entity::Direction::RIGHT;
+			}
+			setEntityDirection(index, facing);
+			setEntityAnimation(index, F::moveAnimation(facing));
+		}
+		if (editorIdle()) {
+			updateEntityAnimation(index);
+			return;
+		}
+		if (handleEnemyDeath(index)) return;
+		updateFallableEntity(index);
+		return;
+	}
+
+	// Entered water while falling: settle, then resume swimming.
+	if (getEntityFalling(index) || caveEntities[index].fallPending
+		|| caveEntities[index].airborne) {
+		setEntityFalling(index, false);
+		caveEntities[index].fallPending = false;
+		caveEntities[index].airborne = false;
+		setEntityMoving(index, false);
+	}
+
+	if (mode == F::MODE_TURN) {
+		if (editorIdle()) {
+			updateEntityAnimation(index);
+			return;
+		}
+		if (handleEnemyDeath(index)) return;
+		if (getEntityTransitioning(index)) return;
+		updateEntityAnimation(index);
+		if (caveEntities[index].animationLoopCompleted()
+			|| caveEntities[index].getAnimation().currentFrame >= F::TURN_COUNT - 1) {
+			const Cave::Entity::Direction facing = getEntityDirection(index);
+			const Cave::Entity::Direction next = Cave::Entity::oppositeDirection(facing);
+			setEntityDirection(index, next);
+			mode = F::MODE_MOVE;
+			setEntityAnimation(index, F::moveAnimation(next));
+		}
+		setEntityMoving(index, false);
+		return;
+	}
+
+	if (handleEnemyBasicUpdate(index)) return;
+
+	Cave::Entity::Direction dir = getEntityDirection(index);
+	if (dir != Cave::Entity::Direction::LEFT && dir != Cave::Entity::Direction::RIGHT) {
+		dir = Utils::randomInteger(0, 1) == 0
+			? Cave::Entity::Direction::LEFT : Cave::Entity::Direction::RIGHT;
+		setEntityDirection(index, dir);
+		setEntityAnimation(index, F::moveAnimation(dir));
+	}
+
+	const int ahead = getIndex(index, dir);
+	if (isWaterCell(ahead) && tryMoveEnemy(index, Cave::Entity::Trait::Empty, dir))
+		return;
+
+	mode = F::MODE_TURN;
+	setEntityAnimation(index, F::turnAnimation(dir));
+	caveEntities[index].setAnimationFrame(0);
+	setEntityMoving(index, false);
+}
+
+bool Cave::Map::coralBudCanEnter(const int& cell) const {
+	if (!inBounds(cell)) return false;
+	// Rise only through bare water — anything else is an obstacle / surface exit.
+	return getEntityType(cell) == Cave::Entity::Type::Water;
+}
+
+void Cave::Map::popCoralBudAt(const int& index) {
+	if (!inBounds(index)) return;
+	setEntity(index, Cave::Entity::Explosion(true));
+	caveEntities[index].extra = 0;
+}
+
+bool Cave::Map::tryProduceCoralBud(const int& coralIndex) {
+	if (getEntityType(coralIndex) != Cave::Entity::Type::Coral) return false;
+	if (!isWaterCell(coralIndex)) return false;
+	const int above = getIndex(coralIndex, Cave::Entity::Direction::UP);
+	// Only bare water above — never spawn into / through an occupant.
+	if (!coralBudCanEnter(above)) return false;
+	ensureCosmicUnder();
+	Cave::Entity::Base& over = m_cosmicOver[static_cast<size_t>(coralIndex)];
+	if (over.getType() != Cave::Entity::Type::NoType
+		&& over.getType() != Cave::Entity::Type::Space)
+		return false;
+	over = Cave::Entity::CoralBud();
+	return true;
+}
+
+bool Cave::Map::tryEjectCoralBud(const int& coralIndex) {
+	ensureCosmicUnder();
+	if (coralIndex < 0 || coralIndex >= static_cast<int>(m_cosmicOver.size()))
+		return false;
+	Cave::Entity::Base& over = m_cosmicOver[static_cast<size_t>(coralIndex)];
+	if (over.getType() != Cave::Entity::Type::CoralBud) return false;
+	if (over.isTransitioning()) return false;
+
+	using B = Cave::Entity::CoralBud;
+	if (B::mode(over) == B::MODE_POP) {
+		if (over.extra > 0)
+			over.extra--;
+		if (over.extra <= 0) {
+			const int above = getIndex(coralIndex, Cave::Entity::Direction::UP);
+			over = Cave::Entity::Base();
+			// Boom only in bare water — never replace an occupant sitting on the coral.
+			if (coralBudCanEnter(above))
+				popCoralBudAt(above);
+		}
+		return true;
+	}
+
+	const int above = getIndex(coralIndex, Cave::Entity::Direction::UP);
+	if (!coralBudCanEnter(above)) {
+		// Occupied or blocked — discard the bud; do not explode whatever is above.
+		over = Cave::Entity::Base();
+		return true;
+	}
+
+	Cave::Entity::Base bud = std::move(over);
+	over = Cave::Entity::Base();
+	setEntity(above, std::move(bud));
+	Cave::Entity::Animation spaceAnim = Cave::Entity::Space().getAnimation();
+	caveEntities[above].applyIntoTransition(Cave::Entity::Direction::UP, spaceAnim);
+	setEntityMoving(above, true);
+	return true;
+}
+
+void Cave::Map::updateCoralBudOverlays() {
+	ensureCosmicUnder();
+	for (int i = 0; i < width * height; ++i) {
+		Cave::Entity::Base& over = m_cosmicOver[static_cast<size_t>(i)];
+		if (over.getType() != Cave::Entity::Type::CoralBud) continue;
+		over.updateAnimation();
+		if (getEntityType(i) != Cave::Entity::Type::Coral) {
+			// Coral left — drop the bud into the cell if it is bare water.
+			Cave::Entity::Base bud = std::move(over);
+			over = Cave::Entity::Base();
+			if (coralBudCanEnter(i))
+				setEntity(i, std::move(bud));
+			continue;
+		}
+		tryEjectCoralBud(i);
+	}
+}
+
+void Cave::Map::updateCoral(const int& index) {
+	using C = Cave::Entity::Coral;
+	updateFallableEntity(index);
+	if (editorIdle()) return;
+	if (getEntityType(index) != Cave::Entity::Type::Coral) return;
+
+	if (!isWaterCell(index)
+		|| !coralBudCanEnter(getIndex(index, Cave::Entity::Direction::UP))) {
+		caveEntities[index].extra = C::PRODUCE_TICKS;
+		return;
+	}
+
+	int& timer = caveEntities[index].extra;
+	if (timer > 0) {
+		timer--;
+		return;
+	}
+	tryProduceCoralBud(index);
+	timer = C::PRODUCE_TICKS;
+}
+
+void Cave::Map::updateCoralBud(const int& index) {
+	using B = Cave::Entity::CoralBud;
+	if (getEntityType(index) != Cave::Entity::Type::CoralBud) return;
+	updateEntityAnimation(index);
+	if (editorIdle()) return;
+	if (handleEnemyDeath(index)) return;
+	if (getEntityTransitioning(index)) return;
+
+	auto& bud = caveEntities[index];
+	if (B::mode(bud) == B::MODE_POP) {
+		if (bud.extra > 0)
+			bud.extra--;
+		if (bud.extra <= 0)
+			popCoralBudAt(index);
+		return;
+	}
+
+	const bool atSurface = isWaterSurface(index);
+	const int above = getIndex(index, Cave::Entity::Direction::UP);
+	const bool blocked = !coralBudCanEnter(above);
+	if (atSurface || blocked) {
+		B::beginPop(bud);
+		return;
+	}
+
+	if (moveEntity(index, Cave::Entity::Direction::UP))
+		setEntityMoving(index, true);
+	else
+		B::beginPop(bud);
+}
+
 void Cave::Map::ensureEmptyPathScratch(int cellCount) const {
 	if (cellCount <= 0) return;
 	if (static_cast<int>(m_emptyPathVisit.size()) == cellCount
@@ -2552,6 +2762,335 @@ Cave::Entity::Direction Cave::Map::findPathThroughEmpty(const int& index, const 
 void Cave::Map::updateJelly(const int& index) {
 	if (handleEnemyBasicUpdate(index)) return;
 	wanderTowardRandomEmpty(index, Cave::Entity::Jelly::HOLD_TICKS);
+}
+
+bool Cave::Map::isJimParasiteInfested(const int& index) const {
+	if (!inBounds(index) || getEntityType(index) != Cave::Entity::Type::Jim)
+		return false;
+	const int pid = caveEntities[index].spawnCredit;
+	if (pid >= 0 && pid < Net::MaxPlayers)
+		return m_playerParasite[static_cast<size_t>(pid)] > 0;
+	return m_jimParasiteFrames > 0;
+}
+
+void Cave::Map::infestJimWithParasite(const int& jim) {
+	if (!inBounds(jim) || getEntityType(jim) != Cave::Entity::Type::Jim)
+		return;
+	using P = Cave::Entity::Parasite;
+	const int pid = caveEntities[jim].spawnCredit;
+	if (pid >= 0 && pid < Net::MaxPlayers)
+		m_playerParasite[static_cast<size_t>(pid)] = P::INFEST_FRAMES;
+	m_jimParasiteFrames = P::INFEST_FRAMES;
+}
+
+void Cave::Map::clearJimParasiteInfestation(const int& jim) {
+	if (inBounds(jim) && getEntityType(jim) == Cave::Entity::Type::Jim) {
+		const int pid = caveEntities[jim].spawnCredit;
+		if (pid >= 0 && pid < Net::MaxPlayers)
+			m_playerParasite[static_cast<size_t>(pid)] = 0;
+	}
+	m_jimParasiteFrames = 0;
+	m_jimParasiteOverlayFrame = -1;
+}
+
+bool Cave::Map::parasiteCanDetectJim(const int& index, const int& jim) {
+	using P = Cave::Entity::Parasite;
+	if (!inBounds(index) || !inBounds(jim)) return false;
+	if (getEntityType(jim) != Cave::Entity::Type::Jim) return false;
+	if (isJimParasiteInfested(jim)) return false;
+	const int dx = (index % width) - (jim % width);
+	const int dy = (index / width) - (jim / width);
+	const int adx = dx < 0 ? -dx : dx;
+	const int ady = dy < 0 ? -dy : dy;
+	if (adx > P::DETECT_RADIUS || ady > P::DETECT_RADIUS)
+		return false;
+	if (index == jim) return true;
+	if (isAdjacentCell(index, jim)) return true;
+	// Empty tiles only — never plan through other monsters.
+	return findPathThroughEmpty(index, jim, false) != Cave::Entity::Direction::NO_DIRECTION;
+}
+
+bool Cave::Map::tryParasiteMount(const int& index, const int& jim) {
+	using P = Cave::Entity::Parasite;
+	if (!inBounds(index) || !inBounds(jim)) return false;
+	if (getEntityType(index) != Cave::Entity::Type::Parasite) return false;
+	if (getEntityType(jim) != Cave::Entity::Type::Jim) return false;
+	if (getEntityTransitioning(index)) return false;
+	// Allow catch while Jim is mid-slide — otherwise continuous movement never settles.
+	if (isJimParasiteInfested(jim)) return false;
+
+	Cave::Entity::Direction dir = Cave::Entity::Direction::NO_DIRECTION;
+	for (Cave::Entity::Direction step : Cave::Entity::ALL_DIRECTIONS) {
+		if (getIndex(index, step) == jim) {
+			dir = step;
+			break;
+		}
+	}
+	if (dir == Cave::Entity::Direction::NO_DIRECTION) return false;
+
+	// Instant remove — an away-slide toward Jim overlaps his tile and can composite
+	// a Space floor / wedge on him while he is mid-move. Do not clear Jim's slide:
+	// snapping his into/away transitions is what made the player hitch on catch.
+	(void)dir;
+	setEntity(index, Cave::Entity::Space());
+
+	infestJimWithParasite(jim);
+	return true;
+}
+
+void Cave::Map::transferParasiteOver(const int& from, const int& to) {
+	ensureCosmicUnder();
+	if (!inBounds(from) || !inBounds(to)) return;
+	if (from >= static_cast<int>(m_cosmicOver.size()) || to >= static_cast<int>(m_cosmicOver.size()))
+		return;
+	if (m_cosmicOver[static_cast<size_t>(from)].getType() != Cave::Entity::Type::Parasite)
+		return;
+	const int holdFrame = m_cosmicOver[static_cast<size_t>(from)].getAnimation().currentFrame;
+	const int mode = Cave::Entity::Parasite::mode(m_cosmicOver[static_cast<size_t>(from)]);
+	m_cosmicOver[static_cast<size_t>(to)] = std::move(m_cosmicOver[static_cast<size_t>(from)]);
+	m_cosmicOver[static_cast<size_t>(from)] = Cave::Entity::Base();
+	m_cosmicOver[static_cast<size_t>(to)].clearTransition();
+	m_cosmicOver[static_cast<size_t>(to)].setAnimationFrame(holdFrame);
+	Cave::Entity::Parasite::setMode(m_cosmicOver[static_cast<size_t>(to)], mode);
+}
+
+bool Cave::Map::tryParasiteChaseStep(const int& index, Cave::Entity::Direction dir, int jim) {
+	if (dir == Cave::Entity::Direction::NO_DIRECTION) return false;
+	const int dest = getIndex(index, dir);
+	if (dest == OUT_OF_BOUNDS_INDEX) return false;
+
+	// Stepping onto Jim catches him.
+	if (dest == jim || getEntityType(dest) == Cave::Entity::Type::Jim) {
+		if (isJimParasiteInfested(jim)) return false;
+		return tryParasiteMount(index, inBounds(jim) ? jim : dest);
+	}
+
+	// Vacating ghosts block moveEntity. Snip them so 2x chase can keep up with Jim
+	// (including his leave-slide). Restore if the move still fails.
+	if (getEntityTransitioning(dest)) {
+		const bool walkableGhost = hasTrait(Cave::Entity::Trait::Empty, dest)
+			|| isPassableGate(dest);
+		if (!walkableGhost) return false;
+		if (!caveEntities[dest].isAwayTransition()
+			&& getEntityType(dest) != Cave::Entity::Type::Space
+			&& !isPassableGate(dest))
+			return false;
+		Cave::Entity::Base saved = caveEntities[dest];
+		caveEntities[dest].clearTransition();
+		if (tryMoveEnemy(index, Cave::Entity::Trait::Empty, dir, 8))
+			return true;
+		caveEntities[dest] = std::move(saved);
+		return false;
+	}
+
+	return tryMoveEnemy(index, Cave::Entity::Trait::Empty, dir, 8);
+}
+
+bool Cave::Map::tryParasiteDetach(const int& jim) {
+	using P = Cave::Entity::Parasite;
+	ensureCosmicUnder();
+	if (jim < 0 || jim >= static_cast<int>(m_cosmicOver.size()))
+		return false;
+	Cave::Entity::Base& over = m_cosmicOver[static_cast<size_t>(jim)];
+	if (over.getType() != Cave::Entity::Type::Parasite) return false;
+	if (P::mode(over) != P::MODE_DETACH) return false;
+	if (over.isTransitioning()) return false;
+
+	Cave::Entity::Direction best = Cave::Entity::Direction::NO_DIRECTION;
+	int bestDist = -1;
+	const int jx = jim % width;
+	const int jy = jim / width;
+	for (Cave::Entity::Direction step : Cave::Entity::ALL_DIRECTIONS) {
+		const int next = getIndex(jim, step);
+		if (next == OUT_OF_BOUNDS_INDEX) continue;
+		if (getEntityTransitioning(next)) continue;
+		if (!(hasTrait(Cave::Entity::Trait::Empty, next) || isPassableGate(next)))
+			continue;
+		const int nx = next % width;
+		const int ny = next / width;
+		const int dist = (nx - jx) * (nx - jx) + (ny - jy) * (ny - jy);
+		if (dist > bestDist) {
+			bestDist = dist;
+			best = step;
+		}
+	}
+	if (best == Cave::Entity::Direction::NO_DIRECTION)
+		return false;
+
+	const int dest = getIndex(jim, best);
+	Cave::Entity::Animation anim = over.getAnimation();
+	Cave::Entity::Base parasite = std::move(over);
+	over = Cave::Entity::Base();
+	P::setMode(parasite, P::MODE_FLEE);
+	parasite.extra = P::FLEE_TICKS;
+	parasite.targetIndex = OUT_OF_BOUNDS_INDEX;
+
+	coverPassableGate(dest);
+	setEntity(dest, std::move(parasite));
+	Cave::Entity::Animation spaceAnim = Cave::Entity::Space().getAnimation();
+	// Normal idle slide speed — post-detach is cooldown wander, not 2x flee.
+	caveEntities[dest].applyIntoTransition(best, spaceAnim);
+	setEntityMoving(dest, true);
+	return true;
+}
+
+void Cave::Map::updateParasiteOverlays() {
+	using P = Cave::Entity::Parasite;
+	ensureCosmicUnder();
+	for (int i = 0; i < width * height; ++i) {
+		Cave::Entity::Base& over = m_cosmicOver[static_cast<size_t>(i)];
+		if (over.getType() != Cave::Entity::Type::Parasite) continue;
+		if (Utils::TickCounter::onTick())
+			over.updateAnimation();
+		const int mode = P::mode(over);
+		if (mode == P::MODE_MOUNT) {
+			if (over.isTransitioning()) continue;
+			// Overlay already running from mount start — only clear the body sprite.
+			over = Cave::Entity::Base();
+			continue;
+		}
+		if (mode == P::MODE_DETACH) {
+			if (!tryParasiteDetach(i)) {
+				// No free neighbor yet — keep sitting on Jim (still drawn).
+			}
+		}
+	}
+}
+
+void Cave::Map::updateJimParasiteInfestation() {
+	using P = Cave::Entity::Parasite;
+	if (m_state != Cave::State::Play || editorIdle()) {
+		m_jimParasiteOverlayFrame = -1;
+		return;
+	}
+
+	auto ensureDetach = [&](int jimCell) {
+		if (!inBounds(jimCell) || getEntityType(jimCell) != Cave::Entity::Type::Jim)
+			return;
+		ensureCosmicUnder();
+		Cave::Entity::Base& over = m_cosmicOver[static_cast<size_t>(jimCell)];
+		if (over.getType() == Cave::Entity::Type::Parasite) return;
+		over = Cave::Entity::Parasite();
+		P::setMode(over, P::MODE_DETACH);
+	};
+
+	if (m_game->isMultiplayer()) {
+		for (int i = 0; i < Net::MaxPlayers; ++i) {
+			int& frames = m_playerParasite[static_cast<size_t>(i)];
+			if (frames <= 0) continue;
+			frames--;
+			int jimCell = OUT_OF_BOUNDS_INDEX;
+			for (int cell = 0; cell < width * height; ++cell) {
+				if (getEntityType(cell) != Cave::Entity::Type::Jim) continue;
+				if (caveEntities[cell].spawnCredit == i) {
+					jimCell = cell;
+					break;
+				}
+			}
+			// Spawn body on the last overlay frame so clear→parasite has no gap.
+			if (frames == 1)
+				ensureDetach(jimCell);
+		}
+		const int local = m_game->mpLocalId();
+		if (local >= 0 && local < Net::MaxPlayers)
+			m_jimParasiteFrames = m_playerParasite[static_cast<size_t>(local)];
+	}
+	else {
+		if (m_jimParasiteFrames > 0)
+			m_jimParasiteFrames--;
+		if (m_jimParasiteFrames == 1)
+			ensureDetach(m_jimIndex);
+		if (inBounds(m_jimIndex) && getEntityType(m_jimIndex) == Cave::Entity::Type::Jim) {
+			const int pid = caveEntities[m_jimIndex].spawnCredit;
+			if (pid >= 0 && pid < Net::MaxPlayers)
+				m_playerParasite[static_cast<size_t>(pid)] = m_jimParasiteFrames;
+		}
+	}
+
+	if (m_jimParasiteFrames > 0)
+		m_jimParasiteOverlayFrame = (static_cast<int>(globalCounter) / 8) % P::OVERLAY_FRAMES;
+	else
+		m_jimParasiteOverlayFrame = -1;
+}
+
+void Cave::Map::updateParasiteChaseHalfTick() {
+	if (m_state != Cave::State::Play) return;
+	for (int index = 0; index < width * height; ++index) {
+		if (getEntityType(index) != Cave::Entity::Type::Parasite) continue;
+		if (Cave::Entity::Parasite::mode(caveEntities[index]) != Cave::Entity::Parasite::MODE_CHASE)
+			continue;
+		updateParasite(index);
+	}
+}
+
+void Cave::Map::updateParasite(const int& index) {
+	using P = Cave::Entity::Parasite;
+	const bool fullTick = Utils::TickCounter::onTick();
+	if (fullTick)
+		updateEntityAnimation(index);
+	if (editorIdle()) return;
+
+	// Infestation is the Jim interaction — skip Reactive Jim explode; still die to Jimlin/lava/amoeba.
+	if (getEntityType(index) != Cave::Entity::Type::Parasite) return;
+	if (isAdjacentToJimlin(index)
+		|| (!Cave::Entity::isLavaImmune(Cave::Entity::Type::Parasite)
+			&& isAdjacentTo(index, Cave::Entity::Type::Lava))
+		|| isAdjacentTo(index, Cave::Entity::Type::Amoeba)) {
+		createExplosion(index);
+		return;
+	}
+	if (getEntityTransitioning(index)) return;
+
+	int mode = P::mode(caveEntities[index]);
+
+	// Post-detach cooldown: same idle wall-follow as wander, no chase for 5s.
+	if (mode == P::MODE_FLEE) {
+		if (fullTick) {
+			if (caveEntities[index].extra > 0)
+				caveEntities[index].extra--;
+			if (caveEntities[index].extra <= 0) {
+				P::setMode(caveEntities[index], P::MODE_WANDER);
+				caveEntities[index].targetIndex = OUT_OF_BOUNDS_INDEX;
+				caveEntities[index].extra = 0;
+				mode = P::MODE_WANDER;
+			}
+			else {
+				tryWallFollowEmpty(index, false);
+				return;
+			}
+		}
+		else {
+			return;
+		}
+	}
+
+	const int jim = nearestJimIndex(index);
+	if (mode != P::MODE_FLEE && parasiteCanDetectJim(index, jim)) {
+		P::setMode(caveEntities[index], P::MODE_CHASE);
+		mode = P::MODE_CHASE;
+	}
+	else if (mode == P::MODE_CHASE) {
+		P::setMode(caveEntities[index], P::MODE_WANDER);
+		mode = P::MODE_WANDER;
+		caveEntities[index].targetIndex = OUT_OF_BOUNDS_INDEX;
+	}
+
+	if (mode == P::MODE_CHASE) {
+		if (inBounds(jim) && isAdjacentCell(index, jim)
+			&& !isJimParasiteInfested(jim)) {
+			if (tryParasiteMount(index, jim))
+				return;
+		}
+		const Cave::Entity::Direction dir = findPathThroughEmpty(index, jim, false);
+		if (dir != Cave::Entity::Direction::NO_DIRECTION
+			&& tryParasiteChaseStep(index, dir, jim))
+			return;
+		setEntityMoving(index, false);
+		return;
+	}
+
+	if (!fullTick) return;
+	tryWallFollowEmpty(index, false);
 }
 
 bool Cave::Map::hiveRoomBorderLinked(int x0, int y0, int x1, int y1) const {
@@ -9091,13 +9630,13 @@ void Cave::Map::updateCaterpillar(const int& index) {
 	updateEntityAnimation(index);
 	if (editorIdle()) return;
 	if (handleEnemyDeath(index)) return;
+	if (getEntityTransitioning(index)) return;
 
 	using C = Cave::Entity::Caterpillar;
 	int& mode = caveEntities[index].spawnCredit;
 	int& timer = caveEntities[index].extra;
 
 	if (mode == C::MODE_REST) {
-		if (getEntityTransitioning(index)) return;
 		setEntityMoving(index, false);
 		if (timer < C::REST_TICKS)
 			timer++;
@@ -9105,8 +9644,6 @@ void Cave::Map::updateCaterpillar(const int& index) {
 		setEntity(index, Cave::Entity::CaterpillarChrysalize());
 		return;
 	}
-
-	if (getEntityTransitioning(index)) return;
 
 	for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
 		const int next = getIndex(index, dir);
@@ -9217,14 +9754,20 @@ bool Cave::Map::tryMovePredator(const int& index, const Cave::Entity::Direction&
 		return false;
 
 	const bool atePlayer = Cave::Entity::isPlayer(destType);
-	const int genomLook = (prey && destType == Cave::Entity::Type::Genom
-		&& (caveEntities[dest].spawnCredit & Cave::Entity::Genom::LOOK_VALID) != 0)
-		? caveEntities[dest].spawnCredit : 0;
+	int preyLook = 0;
+	if (prey) {
+		if (destType == Cave::Entity::Type::Genom
+			&& Cave::Entity::Genom::hasLook(caveEntities[dest]))
+			preyLook = caveEntities[dest].spawnCredit;
+		else if (destType == Cave::Entity::Type::Fish
+			&& Cave::Entity::Fish::hasLook(caveEntities[dest]))
+			preyLook = caveEntities[dest].spawnCredit;
+	}
 	if (!moveEntity(index, direction)) return false;
 
 	setEntityMoving(dest, true);
-	// Keep layered Genom look on the predator so the prey stack draws during the into-slide.
-	caveEntities[dest].homeIndex = genomLook != 0 ? genomLook : -1;
+	// Keep layered Genom/Fish look so tinted prey draws during the into-slide.
+	caveEntities[dest].homeIndex = preyLook != 0 ? preyLook : -1;
 	if (prey) {
 		m_game->soundManager.play(Sound::Effect::Drop);
 		notifyFusion5Stimulus(dest);
@@ -10063,7 +10606,7 @@ bool Cave::Map::tryMoveWorm(const int& index, Cave::Entity::Direction direction)
 	for (int i = 0; i < n; ++i) {
 		const int oldCell = chain[static_cast<size_t>(i)];
 		if (inNew(oldCell)) continue;
-		if (!restoreCoveredGate(oldCell))
+		if (!restoreCoveredPassable(oldCell))
 			caveEntities[oldCell] = Cave::Entity::Space();
 		caveEntities[oldCell].clearTransition();
 		setEntityUpdated(oldCell, true);
@@ -10654,6 +11197,10 @@ Cave::Entity::Base Cave::Map::monsterFromType(Cave::Entity::Type type) const {
 	case Cave::Entity::Type::Shade: return Cave::Entity::Shade();
 	case Cave::Entity::Type::Grouper: return Cave::Entity::Grouper();
 	case Cave::Entity::Type::Genom: return Cave::Entity::Genom();
+	case Cave::Entity::Type::Fish: return Cave::Entity::Fish();
+	case Cave::Entity::Type::Coral: return Cave::Entity::Coral();
+	case Cave::Entity::Type::CoralBud: return Cave::Entity::CoralBud();
+	case Cave::Entity::Type::Parasite: return Cave::Entity::Parasite();
 	case Cave::Entity::Type::Compressor: return Cave::Entity::Compressor();
 	case Cave::Entity::Type::HiveMatriarch: return Cave::Entity::HiveMatriarch();
 	case Cave::Entity::Type::HiveLarva: return Cave::Entity::HiveLarva();
@@ -12647,6 +13194,10 @@ static bool isWanderMonster(Cave::Entity::Type type) {
 	case Cave::Entity::Type::HiveGuard:
 	case Cave::Entity::Type::HiveDigger:
 	case Cave::Entity::Type::HiveTurn:
+	case Cave::Entity::Type::Fish:
+	case Cave::Entity::Type::Coral:
+	case Cave::Entity::Type::CoralBud:
+	case Cave::Entity::Type::Parasite:
 		return true;
 	default:
 		return false;
@@ -13205,6 +13756,10 @@ bool Cave::Map::isPathfindMonster(const int& index) const {
 	case Cave::Entity::Type::HiveBuilder:
 	case Cave::Entity::Type::HiveGuard:
 	case Cave::Entity::Type::HiveDigger:
+	case Cave::Entity::Type::Fish:
+	case Cave::Entity::Type::Coral:
+	case Cave::Entity::Type::CoralBud:
+	case Cave::Entity::Type::Parasite:
 		return true;
 	default:
 		return false;
@@ -13300,7 +13855,12 @@ bool Cave::Map::isFallableEntity(const int& index) const {
 	case Cave::Entity::Type::JimlinShipInactive:
 	case Cave::Entity::Type::KingShipInactive:
 	case Cave::Entity::Type::Compressor:
+	case Cave::Entity::Type::Coral:
 		return true;
+	case Cave::Entity::Type::Fish:
+		// Only fallable when dry. In water, update with other monsters so traps
+		// can catch a settled fish before it starts the next swim slide.
+		return !isWaterCell(index);
 	default:
 		return isHiveBubbled(index);
 	}
@@ -13385,6 +13945,7 @@ bool Cave::Map::handleEnemyDeath(const int& index) {
 
 	if (type != Cave::Entity::Type::God
 		&& type != Cave::Entity::Type::Compressor
+		&& type != Cave::Entity::Type::Coral
 		&& isAdjacentToJimlin(index)) {
 		if (shadeStealthed) {
 			// Invisible Shade does not explode on Jimlin contact (would kill the player).
@@ -13460,6 +14021,11 @@ bool Cave::Map::handleEnemyDeath(const int& index) {
 		return false;
 	}
 	if (isAdjacentTo(index, Cave::Entity::Trait::Reactive)) {
+		if (type == Cave::Entity::Type::Parasite) {
+			// Infestation handles Jim; Jimlin already exploded above. Amoeba still kills.
+			if (!isAdjacentTo(index, Cave::Entity::Type::Amoeba))
+				return false;
+		}
 		if (type == Cave::Entity::Type::Compressor) {
 			// Safe for Jim/Jimlin; still dies to amoeba.
 			if (!isAdjacentTo(index, Cave::Entity::Type::Amoeba))
@@ -13513,8 +14079,6 @@ bool Cave::Map::landmineHasAdjacentMonster(const int& cell) const {
 	for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
 		const int neighbour = getIndex(cell, dir);
 		if (neighbour == OUT_OF_BOUNDS_INDEX) continue;
-		// Wait until the slide into the neighbour tile has finished.
-		if (cosmicRef(neighbour).isTransitioning()) continue;
 		// Full-trap release: monster is under TrapOpen until the open strip ends.
 		if (neighbour < static_cast<int>(m_cosmicOver.size())
 			&& m_cosmicOver[static_cast<size_t>(neighbour)].getType()
@@ -13522,6 +14086,8 @@ bool Cave::Map::landmineHasAdjacentMonster(const int& cell) const {
 			continue;
 		// Hive bubbles seal the prey — landmines ignore them.
 		if (isHiveBubbled(neighbour)) continue;
+		// Count mid-slide neighbours too. Skipping transitions made detonation
+		// depend on update order (e.g. only below / right of the mine).
 		if (Cave::Entity::isMonster(cosmicType(neighbour)))
 			return true;
 	}
@@ -13638,7 +14204,7 @@ void Cave::Map::evictOverlappingChargers(const int& center) {
 	for (int i = 0; i < otherCount; ++i) {
 		clearChargerBodies(others[i]);
 		if (inBounds(others[i]) && others[i] != center)
-			caveEntities[others[i]] = Cave::Entity::Space();
+			setEntity(others[i], Cave::Entity::Space());
 	}
 }
 
@@ -13810,7 +14376,8 @@ bool Cave::Map::isChargerHardStop(const int& index) const {
 	if (!inBounds(index)) return true;
 	const Cave::Entity::Type type = getEntityType(index);
 	if (Cave::Entity::isJimlinShip(type)) return false;
-	if (Cave::Entity::isJimlin(type)) return true;
+	// Jimlins are crushed through — they must not abort a charge.
+	if (Cave::Entity::isJimlin(type)) return false;
 	if (type == Cave::Entity::Type::Amoeba || type == Cave::Entity::Type::Plasma) return true;
 	return hasTrait(Cave::Entity::Trait::Indestructible, index);
 }
@@ -13837,7 +14404,7 @@ bool Cave::Map::isChargerBrick(const int& index) const {
 bool Cave::Map::chargerIsShoveable(const int& index) const {
 	if (!inBounds(index)) return false;
 	const Cave::Entity::Type type = getEntityType(index);
-	if (Cave::Entity::isJimlin(type)) return false;
+	if (Cave::Entity::isJimlin(type)) return true;
 	if (Cave::Entity::isJimlinShip(type))
 		return true;
 	if (type == Cave::Entity::Type::Jim)
@@ -14106,9 +14673,16 @@ void Cave::Map::updateCharger(const int& index) {
 		chargerSetPose(index, C::IDLE_BASE, C::IDLE_FRAMES, 0);
 		return;
 	}
-	if (chargerFormationBusy(index)) return;
 
 	int& mem = caveEntities[index].targetIndex;
+	// Once committed to a charge/rush, keep going even if Jimlins or other
+	// entities are mid-slide in the path. Only idle waits on transitions.
+	const bool committed = mem == C::MODE_RUSH
+		|| (mem > C::MODE_CHARGE && mem < C::MODE_RUSH)
+		|| (mem > C::MODE_PAUSE && mem < C::MODE_CALM)
+		|| mem == C::MODE_CALM;
+	if (!committed && chargerFormationBusy(index)) return;
+
 	const bool fullTick = Utils::TickCounter::onTick();
 
 	if (mem > C::MODE_CHARGE && mem < C::MODE_RUSH) {
@@ -14186,8 +14760,12 @@ Cave::Entity::Animation Cave::Map::chargerMoveOne(const int& src, const Cave::En
 		|| (Cave::Entity::isActiveJimlinShip(getEntityType(src)) && !isJimlinPilotShip(src));
 	auto destAway = caveEntities[dest].copyAwayAnimation(dir);
 	Cave::Entity::Animation destinationAnimation = caveEntities[dest].getAnimation();
+	coverPassableGate(dest);
 	caveEntities[dest] = std::move(caveEntities[src]);
-	caveEntities[src] = Cave::Entity::Space();
+	if (!restoreCoveredPassable(src))
+		caveEntities[src] = Cave::Entity::Space();
+	if (getEntityType(src) == Cave::Entity::Type::Water)
+		caveEntities[src].setAnimation(Cave::Entity::Space().getAnimation());
 	caveEntities[src].applyAwayTransition(dir, sourceAnimation);
 	if (destAway)
 		caveEntities[dest].applyPushTransition(dir, *destAway);
@@ -14269,7 +14847,11 @@ bool Cave::Map::chargerSlideFormation(const int& center, const Cave::Entity::Dir
 	for (auto& piece : pieces) {
 		dests.push_back(piece.dest);
 		piece.entity = std::move(caveEntities[piece.src]);
-		caveEntities[piece.src] = Cave::Entity::Space();
+		// Leave water / open gates behind when the charger vacates a wet cell.
+		if (!restoreCoveredPassable(piece.src))
+			caveEntities[piece.src] = Cave::Entity::Space();
+		if (getEntityType(piece.src) == Cave::Entity::Type::Water)
+			caveEntities[piece.src].setAnimation(Cave::Entity::Space().getAnimation());
 	}
 
 	const int newCenter = getIndex(center, dir);
@@ -14286,6 +14868,7 @@ bool Cave::Map::chargerSlideFormation(const int& center, const Cave::Entity::Dir
 		std::optional<Cave::Entity::Animation> destAway;
 		if (!destWasFormation)
 			destAway = caveEntities[piece.dest].copyAwayAnimation(dir);
+		coverPassableGate(piece.dest);
 		caveEntities[piece.dest] = std::move(piece.entity);
 		if (getEntityType(piece.dest) == Cave::Entity::Type::ChargerBody)
 			caveEntities[piece.dest].targetIndex = newCenter;

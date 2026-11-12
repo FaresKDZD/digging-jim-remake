@@ -182,6 +182,11 @@ namespace Cave::Entity {
         HiveStorageWall,
         HiveHunterBubble,
         HiveLivingWall,
+        Water,
+        Fish,
+        Coral,
+        CoralBud,
+        Parasite,
     };
 
     inline bool isLandmine(Type type) {
@@ -381,6 +386,10 @@ namespace Cave::Entity {
         case Type::HiveGuard:
         case Type::HiveDigger:
         case Type::HiveTurn:
+        case Type::Fish:
+        case Type::Coral:
+        case Type::CoralBud:
+        case Type::Parasite:
             return true;
         default:
             return false;

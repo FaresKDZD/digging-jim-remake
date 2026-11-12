@@ -149,8 +149,13 @@ bool Cave::Map::tryCaptureMonsterInTrap(const int& trapIndex) {
 		if (type == Cave::Entity::Type::Puffer)
 			clearPufferBodies(monster);
 
-		const int look = (type == Cave::Entity::Type::Genom)
-			? caveEntities[monster].spawnCredit : 0;
+		int look = 0;
+		if (type == Cave::Entity::Type::Genom
+			&& Cave::Entity::Genom::hasLook(caveEntities[monster]))
+			look = caveEntities[monster].spawnCredit;
+		else if (type == Cave::Entity::Type::Fish
+			&& Cave::Entity::Fish::hasLook(caveEntities[monster]))
+			look = caveEntities[monster].spawnCredit;
 		setEntity(monster, Cave::Entity::Space());
 		setEntity(trapIndex, Cave::Entity::TrapFilling());
 		caveEntities[trapIndex].spawnCredit = static_cast<int>(type);
@@ -172,6 +177,9 @@ void Cave::Map::releaseTrapMonster(const int& index) {
 		setEntity(index, Cave::Entity::Protozo());
 	if (getEntityType(index) == Cave::Entity::Type::Genom
 		&& (look & Cave::Entity::Genom::LOOK_VALID) != 0)
+		caveEntities[index].spawnCredit = look;
+	if (getEntityType(index) == Cave::Entity::Type::Fish
+		&& (look & Cave::Entity::Fish::LOOK_VALID) != 0)
 		caveEntities[index].spawnCredit = look;
 	if (getEntityType(index) == Cave::Entity::Type::GallopQueen) {
 		caveEntities[index].targetIndex = index;
@@ -436,6 +444,9 @@ void Cave::Map::beginCompressorEat(const int& compressor, const int& trapCell) {
 		setEntity(trapCell, Cave::Entity::Protozo());
 	if (getEntityType(trapCell) == Cave::Entity::Type::Genom
 		&& (look & Cave::Entity::Genom::LOOK_VALID) != 0)
+		caveEntities[trapCell].spawnCredit = look;
+	if (getEntityType(trapCell) == Cave::Entity::Type::Fish
+		&& (look & Cave::Entity::Fish::LOOK_VALID) != 0)
 		caveEntities[trapCell].spawnCredit = look;
 	if (getEntityType(trapCell) == Cave::Entity::Type::GallopQueen) {
 		caveEntities[trapCell].targetIndex = trapCell;
@@ -755,6 +766,46 @@ void Cave::Map::toggleGate(const int& index) {
 	notifyFusion5Stimulus(index);
 }
 
+bool Cave::Map::editorOpenGate(const int& index) {
+	if (!inBounds(index)) return false;
+	const Cave::Entity::Type type = getEntityType(index);
+	if (type == Cave::Entity::Type::Gate) {
+		auto& gate = caveEntities[index];
+		const int mode = gate.spawnCredit;
+		if (mode == Cave::Entity::Gate::MODE_OPENING
+			|| mode == Cave::Entity::Gate::MODE_CLOSING)
+			return false;
+		if (mode == Cave::Entity::Gate::MODE_OPEN) {
+			gate.removeTrait(Cave::Entity::Trait::Traversable);
+			gate.spawnCredit = Cave::Entity::Gate::MODE_CLOSING;
+			gate.setAnimation(Cave::Entity::Gate::sheetAnimation(
+				Cave::Entity::Gate::FRAME_COUNT - 1));
+		}
+		else {
+			gate.spawnCredit = Cave::Entity::Gate::MODE_OPENING;
+			gate.setAnimation(Cave::Entity::Gate::sheetAnimation(0));
+		}
+		m_game->soundManager.play(Sound::Effect::Drop);
+		notifyFusion5Stimulus(index);
+		return true;
+	}
+	if (type == Cave::Entity::Type::PrivateGate) {
+		auto& gate = caveEntities[index];
+		const int mode = gate.spawnCredit;
+		if (mode == Cave::Entity::Gate::MODE_OPENING
+			|| mode == Cave::Entity::Gate::MODE_CLOSING)
+			return false;
+		if (mode == Cave::Entity::Gate::MODE_OPEN)
+			beginPrivateGateClose(gate);
+		else
+			beginPrivateGateOpen(gate);
+		m_game->soundManager.play(Sound::Effect::Drop);
+		notifyFusion5Stimulus(index);
+		return true;
+	}
+	return false;
+}
+
 bool Cave::Map::isPassableGate(const int& index) const {
 	if (!inBounds(index)) return false;
 	const Cave::Entity::Type type = getEntityType(index);
@@ -769,23 +820,156 @@ bool Cave::Map::isMonsterWalkable(const int& index) const {
 }
 
 void Cave::Map::coverPassableGate(const int& index) {
-	if (!isPassableGate(index)) return;
+	if (!isPassableGate(index) && getEntityType(index) != Cave::Entity::Type::Water)
+		return;
 	if (static_cast<int>(m_coveredGate.size()) != width * height) {
 		m_coveredGate.assign(static_cast<size_t>(width * height), Cave::Entity::Base());
 	}
+	if (static_cast<int>(m_waterUnder.size()) != width * height)
+		m_waterUnder.assign(static_cast<size_t>(width * height), 0);
+	const bool hadWater = getEntityType(index) == Cave::Entity::Type::Water
+		|| m_coveredGate[static_cast<size_t>(index)].getType() == Cave::Entity::Type::Water
+		|| m_waterUnder[static_cast<size_t>(index)] != 0;
 	m_coveredGate[static_cast<size_t>(index)] = caveEntities[index];
+	// Never stash leave-slide ghosts — restoring after an explosion would replay them.
+	m_coveredGate[static_cast<size_t>(index)].clearTransition();
+	// Keep water under an open gate when the gate itself gets covered by an occupant.
+	if (hadWater)
+		m_waterUnder[static_cast<size_t>(index)] = 1;
 }
 
 bool Cave::Map::restoreCoveredGate(const int& index) {
 	if (!inBounds(index)) return false;
 	if (index >= static_cast<int>(m_coveredGate.size())) return false;
 	const Cave::Entity::Type covered = m_coveredGate[static_cast<size_t>(index)].getType();
-	if (covered != Cave::Entity::Type::Gate && covered != Cave::Entity::Type::PrivateGate) {
+	if (covered != Cave::Entity::Type::Gate && covered != Cave::Entity::Type::PrivateGate)
+		return false;
+	caveEntities[index] = m_coveredGate[static_cast<size_t>(index)];
+	caveEntities[index].clearTransition();
+	m_coveredGate[static_cast<size_t>(index)] = Cave::Entity::Base();
+	// Water under the gate stays marked so isWaterCell remains true.
+	if (index < static_cast<int>(m_waterUnder.size()) && m_waterUnder[static_cast<size_t>(index)] != 0)
+		m_coveredGate[static_cast<size_t>(index)] = Cave::Entity::Water();
+	return true;
+}
+
+bool Cave::Map::restoreCoveredWater(const int& index) {
+	if (!inBounds(index)) return false;
+	if (index >= static_cast<int>(m_coveredGate.size())) return false;
+	if (m_coveredGate[static_cast<size_t>(index)].getType() != Cave::Entity::Type::Water)
+		return false;
+	caveEntities[index] = m_coveredGate[static_cast<size_t>(index)];
+	caveEntities[index].clearTransition();
+	m_coveredGate[static_cast<size_t>(index)] = Cave::Entity::Base();
+	if (index < static_cast<int>(m_waterUnder.size()))
+		m_waterUnder[static_cast<size_t>(index)] = 0;
+	return true;
+}
+
+bool Cave::Map::restoreCoveredPassable(const int& index) {
+	return restoreCoveredGate(index) || restoreCoveredWater(index);
+}
+
+bool Cave::Map::isWaterCell(const int& index) const {
+	if (!inBounds(index)) return false;
+	if (getEntityType(index) == Cave::Entity::Type::Water) return true;
+	if (index < static_cast<int>(m_waterUnder.size())
+		&& m_waterUnder[static_cast<size_t>(index)] != 0)
+		return true;
+	if (index >= static_cast<int>(m_coveredGate.size())) return false;
+	return m_coveredGate[static_cast<size_t>(index)].getType() == Cave::Entity::Type::Water;
+}
+
+bool Cave::Map::isWaterLoggable(const Cave::Entity::Base& entity) const {
+	using T = Cave::Entity::Type;
+	const T type = entity.getType();
+	if (type == T::Space || type == T::Water || type == T::NoType)
+		return false;
+	if (entity.hasTrait(Cave::Entity::Trait::Collectable))
+		return true;
+	if (entity.hasTrait(Cave::Entity::Trait::Empty))
+		return true;
+	if (Cave::Entity::isMonster(type)
+		|| Cave::Entity::isPlayer(type)
+		|| Cave::Entity::isJimlin(type)
+		|| Cave::Entity::isJimlinShip(type))
+		return true;
+	if (type == T::Gate || type == T::PrivateGate)
+		return true;
+	if (Cave::Entity::isExitDoor(type))
+		return true;
+	switch (type) {
+	case T::Boulder:
+	case T::MossyBoulder:
+	case T::MagicBoulder:
+	case T::HotBoulder:
+	case T::HotBoulderCracked:
+	case T::Diamond:
+	case T::FragileDiamond:
+	case T::HollowDiamond:
+	case T::Ore:
+	case T::Bomb:
+	case T::TNT:
+	case T::TimeBomb:
+	case T::TrapEmpty:
+	case T::TrapFull:
+	case T::Ruby:
+	case T::Pyrobe:
+	case T::GallopEgg:
+	case T::MacowEgg:
+	case T::MacowEggCooked:
+	case T::GenomEgg:
+	case T::Chrysalis:
+	case T::JimlinShipInactive:
+	case T::KingShipInactive:
+	case T::Compressor:
+	case T::Fish:
+	case T::Coral:
+	case T::CoralBud:
+	case T::Landmine:
+	case T::StartDoor:
+	case T::StartDoorOpen:
+	case T::Explosion:
+	case T::CaveGullExplosion:
+	case T::ChaosExplosion:
+	case T::SingularityExplosion:
+	case T::Detonator:
+	case T::DetonatorTriggered:
+	case T::DetonatorUsed:
+	case T::Portal:
+	case T::Well:
+	case T::Fan:
+	case T::MacowEggHatch:
+	case T::MacowEggCook:
+	case T::GallopEggPop:
+	case T::TrapFilling:
+	case T::TrapOpen:
+		return true;
+	default:
 		return false;
 	}
-	caveEntities[index] = m_coveredGate[static_cast<size_t>(index)];
-	m_coveredGate[static_cast<size_t>(index)] = Cave::Entity::Base();
-	return true;
+}
+
+bool Cave::Map::isWaterLoggable(const int& index) const {
+	if (!inBounds(index)) return false;
+	return isWaterLoggable(caveEntities[index]);
+}
+
+bool Cave::Map::isWaterSurface(const int& index) const {
+	if (!isWaterCell(index)) return false;
+	const int above = getIndex(index, Cave::Entity::Direction::UP);
+	if (isWaterCell(above)) return false;
+	// Solid tile above → body water (no surface strip).
+	if (!inBounds(above)) return true;
+	if (isPassableGate(above)) return true;
+	if (hasTrait(Cave::Entity::Trait::Empty, above)) return true;
+	return isWaterLoggable(above);
+}
+
+int Cave::Map::waterDrawFrame(const int& index) const {
+	if (isWaterSurface(index))
+		return Cave::Entity::Water::syncedSurfaceFrame();
+	return Cave::Entity::Water::BODY_FRAME;
 }
 
 void Cave::Map::beginPrivateGateOpen(Cave::Entity::Base& gate) {

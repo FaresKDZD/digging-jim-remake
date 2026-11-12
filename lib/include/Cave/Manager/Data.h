@@ -66,11 +66,14 @@ namespace Cave {
          */
         std::vector<PortalRecord> portals;
 
-        /// @brief Sticky layer/hue look for each Genom / GenomEgg in this cave.
+        /// @brief Sticky layer/hue look for each Genom / GenomEgg / Fish in this cave.
         std::vector<GenomRecord> genoms;
 
         /// @brief Monsters left in a hive hunter bubble (editor / save).
         std::vector<HiveBubbleRecord> hiveBubbles;
+
+        /// @brief Cells with water covered under another entity (editor / save / sim-keep).
+        std::vector<HiveBubbleRecord> waterUnders;
 
         /// @brief Job limits for each Singularity in this cave.
         std::vector<CosmicRecord> cosmics;
