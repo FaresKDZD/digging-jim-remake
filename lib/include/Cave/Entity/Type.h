@@ -187,6 +187,8 @@ namespace Cave::Entity {
         Coral,
         CoralBud,
         Parasite,
+        Lock,
+        Key,
     };
 
     inline bool isLandmine(Type type) {

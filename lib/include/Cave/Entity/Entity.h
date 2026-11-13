@@ -18,6 +18,8 @@
 #include "Cave/Entity/Coral.h"
 #include "Cave/Entity/CoralBud.h"
 #include "Cave/Entity/Parasite.h"
+#include "Cave/Entity/Lock.h"
+#include "Cave/Entity/Key.h"
 #include "Cave/Entity/Ruby.h"
 #include "Cave/Entity/Pyrobe.h"
 #include "Cave/Entity/Predator.h"

@@ -253,6 +253,11 @@ void Cave::Map::updateEntityTransition(const int& index) {
 		: Cave::Entity::Direction::DOWN;
 	const int ahead = getIndex(index, gravity);
 	if (!inBounds(ahead)) return;
+	// Don't early-settle onto another fallable that's still dropping.
+	if (isFallableEntity(ahead)
+		&& (getEntityFalling(ahead) || caveEntities[ahead].airborne
+			|| caveEntities[ahead].fallPending))
+		return;
 	if (!hasTrait(Cave::Entity::Trait::Crushable, ahead)
 		&& !Cave::Entity::isPlayer(getEntityType(ahead)))
 		return;

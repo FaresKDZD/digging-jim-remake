@@ -140,6 +140,7 @@ Cave::File Cave::File::loadFromFile(const std::string& directory, const std::str
         const bool isGenm = magic[0] == 'G' && magic[1] == 'E' && magic[2] == 'N' && magic[3] == 'M';
         const bool isBubl = magic[0] == 'B' && magic[1] == 'U' && magic[2] == 'B' && magic[3] == 'L';
         const bool isWatr = magic[0] == 'W' && magic[1] == 'A' && magic[2] == 'T' && magic[3] == 'R';
+        const bool isTrap = magic[0] == 'T' && magic[1] == 'R' && magic[2] == 'A' && magic[3] == 'P';
         const bool isChum = magic[0] == 'C' && magic[1] == 'H' && magic[2] == 'U' && magic[3] == 'M';
         const bool isLava = magic[0] == 'L' && magic[1] == 'A' && magic[2] == 'V' && magic[3] == 'A';
         const bool isPlan = magic[0] == 'P' && magic[1] == 'L' && magic[2] == 'A' && magic[3] == 'N';
@@ -177,6 +178,20 @@ Cave::File Cave::File::loadFromFile(const std::string& directory, const std::str
                 cosmic.settings.monsterMask = static_cast<uint64_t>(readReversedUint32(&rec[8]))
                     | (static_cast<uint64_t>(readReversedUint32(&rec[12])) << 32);
                 caveFile.caves[caveIndex].cosmics.push_back(cosmic);
+            }
+            continue;
+        }
+        if (isTrap) {
+            for (uint32_t n = 0; n < count; ++n) {
+                char rec[12] = {};
+                if (!file.read(rec, 12)) break;
+                const uint16_t caveIndex = readReversedUint16(&rec[0]);
+                if (caveIndex >= caveFile.caves.size()) continue;
+                Cave::TrapFullRecord trap;
+                trap.index = readReversedUint16(&rec[2]);
+                trap.packed = static_cast<int32_t>(readReversedUint32(&rec[4]));
+                trap.look = static_cast<int32_t>(readReversedUint32(&rec[8]));
+                caveFile.caves[caveIndex].trapFulls.push_back(trap);
             }
             continue;
         }
@@ -287,6 +302,38 @@ void Cave::File::saveToFile(const Cave::File& caveFile, const std::string& fullP
     writePackedChunk(file, bublMagic, caveFile.caves, &Cave::Data::hiveBubbles);
     const char watrMagic[4] = { 'W', 'A', 'T', 'R' };
     writePackedChunk(file, watrMagic, caveFile.caves, &Cave::Data::waterUnders);
+
+    {
+        uint32_t trapCount = 0;
+        for (const auto& cave : caveFile.caves)
+            trapCount += static_cast<uint32_t>(cave.trapFulls.size());
+        if (trapCount > 0) {
+            const char trapMagic[4] = { 'T', 'R', 'A', 'P' };
+            file.write(trapMagic, 4);
+            writeUint32LE(file, 1);
+            writeUint32LE(file, trapCount);
+            for (uint16_t caveIndex = 0; caveIndex < static_cast<uint16_t>(caveFile.caves.size()); ++caveIndex) {
+                for (const auto& trap : caveFile.caves[caveIndex].trapFulls) {
+                    char bytes[12] = {};
+                    bytes[0] = static_cast<char>(caveIndex & 0xFF);
+                    bytes[1] = static_cast<char>((caveIndex >> 8) & 0xFF);
+                    bytes[2] = static_cast<char>(trap.index & 0xFF);
+                    bytes[3] = static_cast<char>((trap.index >> 8) & 0xFF);
+                    const uint32_t packed = static_cast<uint32_t>(trap.packed);
+                    bytes[4] = static_cast<char>(packed & 0xFF);
+                    bytes[5] = static_cast<char>((packed >> 8) & 0xFF);
+                    bytes[6] = static_cast<char>((packed >> 16) & 0xFF);
+                    bytes[7] = static_cast<char>((packed >> 24) & 0xFF);
+                    const uint32_t look = static_cast<uint32_t>(trap.look);
+                    bytes[8] = static_cast<char>(look & 0xFF);
+                    bytes[9] = static_cast<char>((look >> 8) & 0xFF);
+                    bytes[10] = static_cast<char>((look >> 16) & 0xFF);
+                    bytes[11] = static_cast<char>((look >> 24) & 0xFF);
+                    file.write(bytes, 12);
+                }
+            }
+        }
+    }
 
     const uint32_t chumCount = static_cast<uint32_t>(caveFile.caves.size());
     if (chumCount > 0) {

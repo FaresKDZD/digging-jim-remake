@@ -250,6 +250,8 @@ int HUD::Editor::Panel::miniTileIndex(Cave::Entity::Type type)
     case T::Fish:             return 132;
     case T::Coral:            return 133;
     case T::Parasite:         return 134;
+    case T::Lock:             return 135;
+    case T::Key:              return 136;
     case T::Jimlin1:         return 67;
     case T::Jimlin2:         return 68;
     case T::Jimlin3:         return 69;
@@ -1138,6 +1140,8 @@ Cave::Entity::Type HUD::Editor::Panel::getType(const int& x, const int& y) const
     case 88: return Cave::Entity::Type::Fish;
     case 89: return Cave::Entity::Type::Coral;
     case 90: return Cave::Entity::Type::Parasite;
+    case 91: return Cave::Entity::Type::Lock;
+    case 92: return Cave::Entity::Type::Key;
     default: return Cave::Entity::Type::NoType;
     }
 }
@@ -1286,6 +1290,8 @@ Cave::Entity::Base HUD::Editor::Panel::getNewEntity(Cave::Entity::Type type) {
     case Cave::Entity::Type::Coral:           return Cave::Entity::Coral();
     case Cave::Entity::Type::CoralBud:        return Cave::Entity::CoralBud();
     case Cave::Entity::Type::Parasite:        return Cave::Entity::Parasite();
+    case Cave::Entity::Type::Lock:            return Cave::Entity::Lock();
+    case Cave::Entity::Type::Key:             return Cave::Entity::Key();
     case Cave::Entity::Type::Fish: {
         Cave::Entity::Fish fish;
         if (!m_fishRandomize && (m_fishLook & Cave::Entity::Fish::LOOK_VALID) != 0)

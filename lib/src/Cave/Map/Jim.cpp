@@ -333,7 +333,10 @@ void Cave::Map::updateJim(const int& index) {
 		const int inFront = getIndex(index, moveDir);
 		const bool gateAhead = inFront != OUT_OF_BOUNDS_INDEX
 			&& getEntityType(inFront) == Cave::Entity::Type::Gate;
-		if (!gateAhead) {
+		const bool lockAhead = inFront != OUT_OF_BOUNDS_INDEX
+			&& getEntityType(inFront) == Cave::Entity::Type::Lock
+			&& m_keysCarried > 0;
+		if (!gateAhead && !lockAhead) {
 			tryJimShootFireball(index, moveDir);
 			updateJimIdle(index);
 			return;
@@ -343,8 +346,11 @@ void Cave::Map::updateJim(const int& index) {
 	bool comboActive = false;
 	if (collect && moveDir != Cave::Entity::Direction::NO_DIRECTION) {
 		const int inFront = getIndex(index, moveDir);
-		comboActive = inFront != OUT_OF_BOUNDS_INDEX
-			&& getEntityType(inFront) == Cave::Entity::Type::Gate;
+		if (inFront != OUT_OF_BOUNDS_INDEX) {
+			const Cave::Entity::Type ahead = getEntityType(inFront);
+			comboActive = ahead == Cave::Entity::Type::Gate
+				|| (ahead == Cave::Entity::Type::Lock && m_keysCarried > 0);
+		}
 	}
 	if (!comboActive) {
 		if (pid >= 0 && pid < Net::MaxPlayers) m_playerGateCombo[static_cast<size_t>(pid)] = false;
@@ -411,6 +417,8 @@ void Cave::Map::updateJimMovement(const int& index, const Cave::Entity::Facing& 
 
 	if (handleJimPushVaultButton(index, inFront)) return;
 
+	if (handleJimUseLock(index, inFront, collectMode)) return;
+
 	if (handleJimUseGate(index, inFront, collectMode)) return;
 
 	if (handleJimEnterShip(index, inFront, collectMode)) return;
@@ -441,7 +449,8 @@ bool Cave::Map::handleJimBorderWrap(const int& index, const int& inFront, const 
 		return tryJimWrapWalk(index, across, direction, true) ? true : blocked();
 	}
 
-	if (isOutwardBorderCell(inFront, direction) && hasTrait(Cave::Entity::Trait::Pushable, inFront)) {
+	if (isOutwardBorderCell(inFront, direction)
+		&& (hasTrait(Cave::Entity::Trait::Pushable, inFront) || isHiveBubbled(inFront))) {
 		const int across = getWrappedIndex(inFront, direction);
 		if (tryJimWrapPush(index, inFront, across, collectMode, direction, false))
 			return true;
@@ -452,7 +461,7 @@ bool Cave::Map::handleJimBorderWrap(const int& index, const int& inFront, const 
 }
 
 bool Cave::Map::tryJimWrapPush(const int& index, const int& pushed, const int& dest, const bool& collectMode, const Cave::Entity::Direction& direction, bool snapCamera) {
-	if (!hasTrait(Cave::Entity::Trait::Pushable, pushed)) return false;
+	if (!hasTrait(Cave::Entity::Trait::Pushable, pushed) && !isHiveBubbled(pushed)) return false;
 	if ((direction == Cave::Entity::Direction::UP || direction == Cave::Entity::Direction::DOWN)
 		&& getEntityType(pushed) != Cave::Entity::Type::Fan) {
 		return false;
@@ -545,17 +554,21 @@ bool Cave::Map::handleJimTraverse(const int& index, const int& inFront, const bo
 	bool collectable = hasTrait(Cave::Entity::Trait::Collectable, inFront);
 	bool hollow = getEntityType(inFront) == Cave::Entity::Type::HollowDiamond;
 	bool timeBomb = getEntityType(inFront) == Cave::Entity::Type::TimeBomb;
+	bool key = getEntityType(inFront) == Cave::Entity::Type::Key;
 	bool landmine = getEntityType(inFront) == Cave::Entity::Type::Landmine;
 	bool macowEgg = getEntityType(inFront) == Cave::Entity::Type::MacowEgg;
 	bool macowCooked = getEntityType(inFront) == Cave::Entity::Type::MacowEggCooked;
 	bool trapEmpty = getEntityType(inFront) == Cave::Entity::Type::TrapEmpty;
 	bool trapFull = getEntityType(inFront) == Cave::Entity::Type::TrapFull;
 	const Cave::Map::FullTrapPayload trapPayload = trapFull
-		? Cave::Map::FullTrapPayload{ caveEntities[inFront].spawnCredit, caveEntities[inFront].extra }
+		? Cave::Map::FullTrapPayload{
+			caveEntities[inFront].spawnCredit,
+			caveEntities[inFront].extra,
+			caveEntities[inFront].direction }
 		: Cave::Map::FullTrapPayload{};
 	bool ruby = getEntityType(inFront) == Cave::Entity::Type::Ruby;
 	bool pyrobe = getEntityType(inFront) == Cave::Entity::Type::Pyrobe;
-	if (inShip && (collectable || ruby || pyrobe || hollow || timeBomb || landmine || macowEgg || macowCooked
+	if (inShip && (collectable || ruby || pyrobe || hollow || timeBomb || key || landmine || macowEgg || macowCooked
 		|| trapEmpty || trapFull)) {
 		return true;
 	}
@@ -590,6 +603,10 @@ bool Cave::Map::handleJimTraverse(const int& index, const int& inFront, const bo
 			else if (timeBomb) {
 				m_timeBombsCarried++;
 				m_game->soundManager.play(Sound::Effect::Drop);
+			}
+			else if (key) {
+				m_keysCarried++;
+				m_game->soundManager.play(Sound::Effect::Collect);
 			}
 			else if (landmine) {
 				m_landminesCarried++;
@@ -666,6 +683,7 @@ bool Cave::Map::handleJimTraverse(const int& index, const int& inFront, const bo
 				setEntity(inFront, Cave::Entity::TrapFull(
 					Cave::Entity::isTrapCapturable(type) ? type : Cave::Entity::Type::Protozo,
 					payload.look));
+				caveEntities[inFront].direction = payload.facing;
 				m_game->soundManager.play(Sound::Effect::Drop);
 				notifyFusion5Stimulus(inFront);
 				return true;
@@ -707,6 +725,10 @@ bool Cave::Map::handleJimTraverse(const int& index, const int& inFront, const bo
 			m_timeBombsCarried++;
 			m_game->soundManager.play(Sound::Effect::Drop);
 		}
+		else if (key) {
+			m_keysCarried++;
+			m_game->soundManager.play(Sound::Effect::Collect);
+		}
 		else if (landmine) {
 			m_landminesCarried++;
 			m_game->soundManager.play(Sound::Effect::Drop);
@@ -725,6 +747,12 @@ bool Cave::Map::handleJimTraverse(const int& index, const int& inFront, const bo
 		}
 		else if (trapFull) {
 			m_fullTrapsCarried.push_back(trapPayload);
+			// Keep the contained monster glued under the cage while it slides under Jim.
+			const size_t n = static_cast<size_t>(width * height);
+			if (m_trapSlideUnder.size() != n)
+				m_trapSlideUnder.assign(n, FullTrapPayload{});
+			if (inFront >= 0 && static_cast<size_t>(inFront) < n)
+				m_trapSlideUnder[static_cast<size_t>(inFront)] = trapPayload;
 			m_game->soundManager.play(Sound::Effect::Drop);
 		}
 		else if (digging) {
@@ -792,7 +820,7 @@ bool Cave::Map::handleJimPush(const int& index, const int& inFront, const bool& 
 		setJimPushAmination(index);
 		return true;
 	}
-	if (!hasTrait(Cave::Entity::Trait::Pushable, inFront)) {
+	if (!hasTrait(Cave::Entity::Trait::Pushable, inFront) && !isHiveBubbled(inFront)) {
 		return false;
 	}
 	if ((direction == Cave::Entity::Direction::UP || direction == Cave::Entity::Direction::DOWN)
@@ -818,6 +846,29 @@ bool Cave::Map::handleJimPush(const int& index, const int& inFront, const bool& 
 		notifyFusion5Stimulus(inFront);
 		return true;
 	}
+	return true;
+}
+
+bool Cave::Map::handleJimUseLock(const int& index, const int& inFront, const bool& collectMode) {
+	if (getEntityType(inFront) != Cave::Entity::Type::Lock) return false;
+	if (!collectMode) return false;
+	if (m_keysCarried <= 0) return false;
+
+	auto& lock = caveEntities[inFront];
+	if (lock.spawnCredit == Cave::Entity::Lock::MODE_UNLOCKING) {
+		m_jimGateComboHeld = true;
+		setJimMoveAmination(index);
+		return true;
+	}
+
+	if (!m_jimGateComboHeld) {
+		m_keysCarried--;
+		lock.spawnCredit = Cave::Entity::Lock::MODE_UNLOCKING;
+		lock.setAnimation(Cave::Entity::Lock::unlockAnimation());
+		m_game->soundManager.play(Sound::Effect::Drop);
+	}
+	m_jimGateComboHeld = true;
+	setJimMoveAmination(index);
 	return true;
 }
 

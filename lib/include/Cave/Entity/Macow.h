@@ -10,7 +10,7 @@ namespace Cave::Entity {
      * @class Macow
      * @brief Wanders like a Cave Gull (turns right). Every 5 seconds it hunts
      * a reachable Plankton, eats it, rests 1 second, then lays a Macow Egg
-     * on solid ground.
+     * downward (egg slides out under the Macow onto the nest cell below).
      */
     class Macow : public Base {
     public:

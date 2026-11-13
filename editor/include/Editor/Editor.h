@@ -405,6 +405,10 @@ private:
     /// @brief True if there are unsaved edits since the last save or file load.
     bool m_isDirty = false;
 
+    /// @brief Ignore cave/panel mouse until LMB+RMB are released after a native dialog.
+    /// Stops open/save double-clicks from painting into the preview.
+    bool m_suppressEditorMouseUntilRelease = false;
+
     /// @brief True when developer mode is active (toggled with Ctrl+D).
     bool m_developerMode = false;
 
@@ -416,6 +420,7 @@ private:
     std::vector<Cave::GenomRecord> m_clipboardGenoms;
     std::vector<Cave::HiveBubbleRecord> m_clipboardHiveBubbles;
     std::vector<Cave::HiveBubbleRecord> m_clipboardWaterUnders;
+    std::vector<Cave::TrapFullRecord> m_clipboardTrapFulls;
     Cave::Properties m_clipboardProperties{};
 
     bool m_hasSelection = false;
@@ -425,6 +430,8 @@ private:
     std::vector<int32_t> m_selectionWellPacked;
     std::vector<int32_t> m_selectionPortalPacked;
     std::vector<int32_t> m_selectionGenomPacked;
+    std::vector<int32_t> m_selectionTrapPacked;
+    std::vector<int32_t> m_selectionTrapLook;
 
     // ----------------------------------------------------------------------------------
     // Internal helpers
@@ -436,6 +443,9 @@ private:
     /// @brief Handle keyboard shortcut events.
     /// @param e The key-pressed event to process.
     void handleShortcuts(const sf::Event::KeyPressed& e, HUD::Editor::Panel* panel);
+
+    /// @brief After tinyfd dialogs, ignore editor mouse until buttons are released.
+    void suppressEditorMouseAfterNativeDialog();
 
     /**
      * @brief Check all caves for missing start/exit doors and show one combined warning.

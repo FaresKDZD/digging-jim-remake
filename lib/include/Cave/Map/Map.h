@@ -110,7 +110,7 @@ namespace Cave {
          * @param properties Pointer to the cave properties (width, height, timings, etc.).
          * @param tileData Vector of raw tile identifiers used to populate cave entities.
          */
-        void generateMap(const Cave::Properties* properties, const std::vector<char>& tileData, const std::vector<Cave::WellRecord>& wells = {}, const std::vector<Cave::PortalRecord>& portals = {}, const std::vector<Cave::CosmicRecord>& cosmics = {}, const std::vector<Cave::GenomRecord>& genoms = {}, const std::vector<Cave::HiveBubbleRecord>& hiveBubbles = {}, const std::vector<Cave::HiveBubbleRecord>& waterUnders = {});
+        void generateMap(const Cave::Properties* properties, const std::vector<char>& tileData, const std::vector<Cave::WellRecord>& wells = {}, const std::vector<Cave::PortalRecord>& portals = {}, const std::vector<Cave::CosmicRecord>& cosmics = {}, const std::vector<Cave::GenomRecord>& genoms = {}, const std::vector<Cave::HiveBubbleRecord>& hiveBubbles = {}, const std::vector<Cave::HiveBubbleRecord>& waterUnders = {}, const std::vector<Cave::TrapFullRecord>& trapFulls = {});
 
         /**
          * @brief Updates the cave state and its entities.
@@ -155,6 +155,9 @@ namespace Cave {
 
         /// @brief Write cells that currently have water covered under another entity.
         void collectWaterUnderRecords(std::vector<Cave::HiveBubbleRecord>& out) const;
+
+        /// @brief Write full-trap contents (monster type + Genom/Fish look).
+        void collectTrapFullRecords(std::vector<Cave::TrapFullRecord>& out) const;
 
         /// @brief Settle CoralBud overlays / pop state before editor cave sync.
         void finalizeCoralBudsForEditor();
@@ -831,6 +834,9 @@ namespace Cave {
          */
         bool handleJimUseGate(const int& index, const int& inFront, const bool& collectMode);
 
+        /// @brief Space+direction into a Lock while carrying a Key starts the unlock.
+        bool handleJimUseLock(const int& index, const int& inFront, const bool& collectMode);
+
         /// @brief Space toward a parked Jimlin ship boards it.
         bool handleJimEnterShip(const int& index, const int& inFront, const bool& collectMode);
 
@@ -1136,6 +1142,7 @@ namespace Cave {
         void updateFusion5Hunt(const int& index);
         void notifyFusion5Stimulus(const int& cell);
         void updateGate(const int& index);
+        void updateLock(const int& index);
         void updateVaultButton(const int& index);
         void toggleGate(const int& index);
         bool isPassableGate(const int& index) const;
@@ -1269,6 +1276,8 @@ namespace Cave {
         /// @brief Path to living stand and freeze; returns true when this tick is handled.
         bool tryHiveWorkerGoLive(const int& index);
         void beginHiveBubble(const int& prey);
+        /// @brief Inert package traits for a bubbled monster (slippery + pushable, not crushable).
+        void applyHiveBubblePackageTraits(const int& prey);
         void updateHiveHunterBubbleOverlays();
         void transferHiveBubble(const int& from, const int& to, const Cave::Entity::Direction& direction);
         int findNearestHiveHuntPrey(const int& from) const;
@@ -2305,6 +2314,9 @@ namespace Cave {
         int m_timeBombsCarried = 0;
         int m_landminesCarried = 0;
 
+        /// @brief Keys currently carried by Jim (consumed when unlocking a Lock).
+        int m_keysCarried = 0;
+
         /// @brief Unhatched Macow eggs currently carried by Jim.
         int m_macowEggsCarried = 0;
 
@@ -2314,12 +2326,15 @@ namespace Cave {
         /// @brief Empty traps currently carried by Jim.
         int m_emptyTrapsCarried = 0;
 
-        /// @brief Full traps Jim is carrying (FIFO): monster type + Genom look.
+        /// @brief Full traps Jim is carrying (FIFO): monster type + look + fish facing.
         struct FullTrapPayload {
             int monsterType = 0;
             int look = 0;
+            Cave::Entity::Direction facing = Cave::Entity::Direction::NO_DIRECTION;
         };
         std::vector<FullTrapPayload> m_fullTrapsCarried;
+        /// @brief Contained monster for TrapFull still sliding under an into/push occupant.
+        std::vector<FullTrapPayload> m_trapSlideUnder;
 
         /// @brief Remaining frames of ruby invincibility.
         int m_jimInvincibleFrames = 0;
@@ -2350,6 +2365,8 @@ namespace Cave {
             /// @brief Sub-rect within the cell / frame (defaults = full 32×32).
             int ox = 0, oy = 0, ow = 32, oh = 32;
             int tox = 0, toy = 0, tow = 32, toh = 32;
+            /// @brief Vertex/sprite tint (Fish / Genom trap underlays).
+            sf::Color tint = sf::Color::White;
         };
         std::vector<WaterDraw> m_waterDraws;
         std::vector<WaterDraw> m_breathDraws;
@@ -2361,6 +2378,10 @@ namespace Cave {
         std::vector<WaterDraw> m_coralBudFreeDraws;
         /// @brief Coral restamped above Space / under-bud (before water overlay).
         std::vector<WaterDraw> m_coralDraws;
+        /// @brief Contained monster under a transparent TrapFilling / TrapFull cage.
+        std::vector<WaterDraw> m_trapMonsterDraws;
+        /// @brief Transparent trap cage drawn above the contained monster underlay.
+        std::vector<WaterDraw> m_trapCageDraws;
 
         /// @brief Space and a direction into a gate were both held on the previous Jim tick.
         bool m_jimGateComboHeld = false;

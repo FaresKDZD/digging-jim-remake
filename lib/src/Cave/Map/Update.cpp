@@ -471,6 +471,8 @@ void Cave::Map::initEntityUpdateMaps() {
 	m_entityUpdateMap[Cave::Entity::Type::SingularityExplosion] = [this](int i) { updateSingularityExplosion(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Gate] = [this](int i) { updateGate(i); };
 	m_entityUpdateMap[Cave::Entity::Type::PrivateGate] = [this](int i) { updateGate(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Lock] = [this](int i) { updateLock(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Key] = [this](int i) { updateFallableEntity(i); };
 	m_entityUpdateMap[Cave::Entity::Type::VaultButton] = [this](int i) { updateVaultButton(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Pyram] = [this](int i) { updatePyram(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Puffer] = [this](int i) { updatePuffer(i); };
@@ -696,7 +698,19 @@ void Cave::Map::updateVisibleTiles(Camera camera) {
 	m_coralBudDraws.clear();
 	m_coralBudFreeDraws.clear();
 	m_coralDraws.clear();
+	m_trapMonsterDraws.clear();
+	m_trapCageDraws.clear();
 	ensureCosmicUnder();
+	{
+		const size_t n = static_cast<size_t>(width * height);
+		if (m_trapSlideUnder.size() != n)
+			m_trapSlideUnder.assign(n, FullTrapPayload{});
+		for (size_t i = 0; i < n; ++i) {
+			const Cave::Entity::Base& e = caveEntities[i];
+			if (!e.isIntoTransition() && !e.isPushTransition())
+				m_trapSlideUnder[i] = FullTrapPayload{};
+		}
+	}
 	auto isCoralFrame = [](int tex) {
 		using C = Cave::Entity::Coral;
 		return tex >= C::FRAME_BASE && tex < C::FRAME_BASE + C::FRAME_COUNT;
@@ -705,10 +719,49 @@ void Cave::Map::updateVisibleTiles(Camera camera) {
 		using B = Cave::Entity::CoralBud;
 		return tex >= B::FRAME_BASE && tex < B::FRAME_BASE + B::FRAME_COUNT;
 	};
+	auto isTrapCageFrame = [](int tex) {
+		using F = Cave::Entity::TrapFilling;
+		using T = Cave::Entity::TrapFull;
+		return (tex >= F::FRAME_BASE && tex < F::FRAME_BASE + F::FRAME_COUNT)
+			|| (tex >= T::FRAME_BASE && tex < T::FRAME_BASE + T::FRAME_COUNT);
+	};
+	auto isTrapCageType = [](Cave::Entity::Type t) {
+		return t == Cave::Entity::Type::TrapFilling
+			|| t == Cave::Entity::Type::TrapFull;
+	};
+	// Ephemeral underlay: lock anim phase to the global 8 Hz tick (not a fresh random start).
+	// Fish keeps its captured facing and plays the move/idle strip; Genom keeps look layers.
+	auto makeTrapContainedVisual = [this](int containedRaw, int look,
+		Cave::Entity::Direction facing) {
+		const auto contained = static_cast<Cave::Entity::Type>(containedRaw);
+		Cave::Entity::Base under = monsterFromType(
+			Cave::Entity::isTrapCapturable(contained)
+				? contained
+				: Cave::Entity::Type::Protozo);
+		if (under.getType() == Cave::Entity::Type::Genom
+			&& (look & Cave::Entity::Genom::LOOK_VALID) != 0)
+			under.spawnCredit = look;
+		if (under.getType() == Cave::Entity::Type::Fish) {
+			if ((look & Cave::Entity::Fish::LOOK_VALID) != 0)
+				under.spawnCredit = look;
+			Cave::Entity::Direction dir = facing;
+			if (dir != Cave::Entity::Direction::LEFT
+				&& dir != Cave::Entity::Direction::RIGHT)
+				dir = Cave::Entity::Direction::RIGHT;
+			under.direction = dir;
+			under.setAnimation(Cave::Entity::Fish::moveAnimation(dir));
+		}
+		under.clearTransition();
+		const int n = static_cast<int>(under.animation().frames.size());
+		if (n > 0)
+			under.setAnimationFrame(Utils::TickCounter(n).tickCount());
+		return under;
+	};
 	// Cropped restamp so coral/bud slides stay inside their cell (no black full-tile
 	// covering Jim while he pushes). Away ghosts use previous; live tiles use current.
 	auto pushCropped = [](std::vector<WaterDraw>& out, float cellX, float cellY, int tex,
-		const sf::IntRect& ep, const sf::IntRect& tp) {
+		const sf::IntRect& ep, const sf::IntRect& tp,
+		sf::Color tint = sf::Color::White) {
 		if (tex == Cave::Entity::NO_TEXTURE_INDEX) return;
 		if (ep.size.x <= 0 || ep.size.y <= 0) return;
 		WaterDraw d;
@@ -723,6 +776,7 @@ void Cave::Map::updateVisibleTiles(Camera camera) {
 		d.toy = tp.position.y;
 		d.tow = tp.size.x;
 		d.toh = tp.size.y;
+		d.tint = tint;
 		out.push_back(d);
 	};
 	auto pushFull = [](std::vector<WaterDraw>& out, float cellX, float cellY, int tex) {
@@ -753,6 +807,7 @@ void Cave::Map::updateVisibleTiles(Camera camera) {
 				|| cell.getType() == Cave::Entity::Type::PrivateGate;
 			const bool cellIsCoral = cell.getType() == Cave::Entity::Type::Coral;
 			const bool cellIsCoralBud = cell.getType() == Cave::Entity::Type::CoralBud;
+			const bool cellIsTrapCage = isTrapCageType(cell.getType());
 			const bool wet = isWaterCell(index);
 			const bool coralBudUnder = cellIsCoral
 				&& index < static_cast<int>(m_cosmicOver.size())
@@ -773,15 +828,53 @@ void Cave::Map::updateVisibleTiles(Camera camera) {
 				&& coralFloor
 				&& (cell.isAwayTransition() || cell.isPushTransition())
 				&& isCoralBudFrame(cell.getPreviousTextureIndex());
+			const bool trapCageAwayGhost =
+				!cellIsTrapCage
+				&& coralFloor
+				&& (cell.isAwayTransition() || cell.isPushTransition())
+				&& isTrapCageFrame(cell.getPreviousTextureIndex());
 			// Coral stack: Space → [bud] → coral → water (coral restamped, including falls).
 			// Free buds: Space floor + restamp under water (no Space into-wedge black seam).
 			// Never draw water textures in the tile layer (avoids surface-frame slide wedges).
 			// Away-slides keep the leaving entity ghost on a Space current; overlay paints water.
 			// Gates always leave the tile layer and restamp after water so transparent
 			// open frames show Space / water / occupants behind them.
+			// Trap cages: Space floor + overlays that share the cage's slide crops so the
+			// contained monster stays glued during falls (same idea as TrapOpen layering).
 			const float cellX = static_cast<float>(x * 32);
 			const float cellY = static_cast<float>(y * 32);
 			const int prevTex = cell.getPreviousTextureIndex();
+			auto pushTrapCageStack = [&](const Cave::Entity::Base& geom,
+				const Cave::Entity::Base& under, bool previous) {
+				const sf::IntRect ep = previous ? geom.getPreviousPosition() : geom.getCurrentPosition();
+				const sf::IntRect tp = previous ? geom.getPreviousTextureCoords() : geom.getCurrentTextureCoords();
+				const int cageTex = previous ? geom.getPreviousTextureIndex() : geom.getCurrentTextureIndex();
+				if (under.getType() == Cave::Entity::Type::Genom
+					&& Cave::Entity::Genom::hasLook(under)) {
+					using G = Cave::Entity::Genom;
+					const int frame = G::frameFromBgTexture(under.getCurrentTextureIndex());
+					int layers[G::LAYER_COUNT];
+					G::layerTextures(under.spawnCredit, frame, layers);
+					for (int i = 0; i < G::LAYER_COUNT; ++i) {
+						if (layers[i] == Cave::Entity::NO_TEXTURE_INDEX) continue;
+						pushCropped(m_trapMonsterDraws, cellX, cellY, layers[i], ep, tp,
+							G::layerTint(under.spawnCredit, i));
+					}
+				}
+				else if (under.getType() == Cave::Entity::Type::Fish) {
+					const int monsterTex = under.getCurrentTextureIndex();
+					const sf::Color tint = Cave::Entity::Fish::hasLook(under)
+						? Cave::Entity::Fish::spriteTint(under.spawnCredit)
+						: sf::Color::White;
+					pushCropped(m_trapMonsterDraws, cellX, cellY, monsterTex, ep, tp, tint);
+				}
+				else {
+					const int monsterTex = under.getCurrentTextureIndex();
+					pushCropped(m_trapMonsterDraws, cellX, cellY, monsterTex, ep, tp);
+				}
+				if (cageTex != Cave::Entity::NO_TEXTURE_INDEX && isTrapCageFrame(cageTex))
+					pushCropped(m_trapCageDraws, cellX, cellY, cageTex, ep, tp);
+			};
 			// Compressor suck already draws prey under the open mouth in TileRenderer —
 			// never restamp coral/bud on top of that stack.
 			using Comp = Cave::Entity::Compressor;
@@ -793,6 +886,46 @@ void Cave::Map::updateVisibleTiles(Camera camera) {
 				&& (isCoralFrame(prevTex) || isCoralBudFrame(prevTex));
 			if (cellIsCoral || coralAwayGhost || cellIsCoralBud || coralBudAwayGhost) {
 				entities.push_back(Cave::Entity::Space());
+			}
+			else if (cellIsTrapCage) {
+				entities.push_back(Cave::Entity::Space());
+				const Cave::Entity::Base under =
+					makeTrapContainedVisual(cell.spawnCredit, cell.extra, cell.direction);
+				pushTrapCageStack(cell, under, false);
+			}
+			else if (trapCageAwayGhost) {
+				entities.push_back(Cave::Entity::Space());
+				int credit = 0;
+				int look = 0;
+				Cave::Entity::Direction face = Cave::Entity::Direction::NO_DIRECTION;
+				const Cave::Entity::Direction dir = cell.getTransitionDirection();
+				const int dest = getIndex(index, dir);
+				if (inBounds(dest) && isTrapCageType(getEntityType(dest))
+					&& caveEntities[static_cast<size_t>(dest)].isIntoTransition()
+					&& caveEntities[static_cast<size_t>(dest)].getTransitionDirection() == dir) {
+					credit = caveEntities[static_cast<size_t>(dest)].spawnCredit;
+					look = caveEntities[static_cast<size_t>(dest)].extra;
+					face = caveEntities[static_cast<size_t>(dest)].direction;
+				}
+				const Cave::Entity::Base under = makeTrapContainedVisual(credit, look, face);
+				pushTrapCageStack(cell, under, true);
+			}
+			else if ((cell.isIntoTransition() || cell.isPushTransition())
+				&& isTrapCageFrame(prevTex)) {
+				// Jim (or other occupant) collecting a full trap: cage is the into-previous
+				// layer. Restamp monster+cage overlays and keep the occupant current.
+				FullTrapPayload payload{};
+				if (index >= 0 && static_cast<size_t>(index) < m_trapSlideUnder.size())
+					payload = m_trapSlideUnder[static_cast<size_t>(index)];
+				const Cave::Entity::Base under = makeTrapContainedVisual(
+					payload.monsterType, payload.look, payload.facing);
+				pushTrapCageStack(cell, under, true);
+				Cave::Entity::Base visual = cell;
+				const int disp = cell.getTransitionDisplacement();
+				Cave::Entity::Animation floor = Cave::Entity::Space().getAnimation();
+				visual.applyTransitionAmination(floor);
+				visual.setTransitionDisplacement(disp);
+				entities.push_back(std::move(visual));
 			}
 			else if (pusherCoralPrev) {
 				// Keep Jim/occupant, but drop opaque coral/bud previous from the tile
@@ -1116,12 +1249,24 @@ void Cave::Map::updateVisibleTiles(Camera camera) {
 void Cave::Map::drawWaterMask(sf::RenderTarget& target) const {
 	if (m_waterDraws.empty()) return;
 	sf::RectangleShape cell({ 32.f, 32.f });
-	cell.setFillColor(sf::Color::White);
 	using W = Cave::Entity::Water;
+	auto hasGateOverlay = [&](float wx, float wy) {
+		for (const WaterDraw& g : m_gateDraws) {
+			if (g.x == wx && g.y == wy)
+				return true;
+		}
+		return false;
+	};
 	for (const WaterDraw& w : m_waterDraws) {
-		// Surface strip stays still — only body water gets the side-to-side wave.
-		if (w.frame >= W::SURFACE_BASE && w.frame < W::SURFACE_BASE + W::SURFACE_COUNT)
+		// Water-logged gates stay out of both distort and Color-wave masks.
+		if (hasGateOverlay(w.x, w.y))
 			continue;
+		const bool surface = w.frame >= W::SURFACE_BASE
+			&& w.frame < W::SURFACE_BASE + W::SURFACE_COUNT;
+		// R = body UV distort, G = Color brightness wave (body + surface).
+		cell.setFillColor(surface
+			? sf::Color(0, 255, 0)
+			: sf::Color(255, 255, 255));
 		cell.setPosition({ w.x, w.y });
 		target.draw(cell);
 	}
@@ -1156,10 +1301,11 @@ void Cave::Map::drawLoadingOverlays(sf::RenderTarget& target) const {
 
 void Cave::Map::draw(sf::RenderTarget& target, sf::RenderStates states) const {
 	m_tileRenderer.render(target, states);
-	// Coral / bud above Space, under cosmic overlays (hunter bubble, TrapOpen) and water:
-	//   Space → [under-bud | free/moving bud] → coral → bubble/trap → water
+	// Coral / bud / trap cages above Space, under cosmic overlays (hunter bubble, TrapOpen) and water:
+	//   Space → [under-bud | free/moving bud] → coral → trap monster → trap cage → bubble/TrapOpen → water
 	// Free buds draw under coral so eject slides don't paint over the coral.
-	if (!m_coralBudDraws.empty() || !m_coralDraws.empty() || !m_coralBudFreeDraws.empty()) {
+	if (!m_coralBudDraws.empty() || !m_coralDraws.empty() || !m_coralBudFreeDraws.empty()
+		|| !m_trapMonsterDraws.empty() || !m_trapCageDraws.empty()) {
 		try {
 			const sf::Texture& tiles =
 				m_game->imageManager.getTexture(Image::Texture::CaveTiles);
@@ -1173,6 +1319,7 @@ void Cave::Map::draw(sf::RenderTarget& target, sf::RenderStates states) const {
 						sf::Vector2i(tx * 32 + d.tox, ty * 32 + d.toy),
 						sf::Vector2i(d.tow, d.toh)));
 				spr.setPosition({ d.x + static_cast<float>(d.ox), d.y + static_cast<float>(d.oy) });
+				spr.setColor(d.tint);
 				target.draw(spr, states);
 			};
 			for (const WaterDraw& b : m_coralBudDraws)
@@ -1181,6 +1328,10 @@ void Cave::Map::draw(sf::RenderTarget& target, sf::RenderStates states) const {
 				drawOverlay(b);
 			for (const WaterDraw& c : m_coralDraws)
 				drawOverlay(c);
+			for (const WaterDraw& m : m_trapMonsterDraws)
+				drawOverlay(m);
+			for (const WaterDraw& t : m_trapCageDraws)
+				drawOverlay(t);
 		}
 		catch (...) {
 		}
@@ -1304,7 +1455,7 @@ void Cave::Map::draw(sf::RenderTarget& target, sf::RenderStates states) const {
 				sf::Sprite breath(breathTex,
 					sf::IntRect(sf::Vector2i(0, b.frame * 32), sf::Vector2i(32, 32)));
 				breath.setPosition({ b.x, b.y });
-				target.draw(breath, noShaderStates);
+				target.draw(breath, states);
 			}
 		}
 		catch (...) {

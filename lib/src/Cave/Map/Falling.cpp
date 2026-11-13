@@ -58,6 +58,14 @@ void Cave::Map::updateFallableEntityDirection(const int& index, Cave::Entity::Di
 }
 
 bool Cave::Map::handleEntityFalling(const int& index, const int& ahead, const Cave::Entity::Direction& gravity) {
+	// Fallables still dropping through this shaft — don't treat them as solid ground
+	// or every stacked / staggered freefall retriggers Drop+Land each cell.
+	auto isAirborneFallable = [this](int cell) {
+		if (!inBounds(cell) || !isFallableEntity(cell)) return false;
+		return getEntityFalling(cell) || caveEntities[cell].airborne
+			|| caveEntities[cell].fallPending;
+	};
+
 	if (isOpenForFall(ahead)) {
 		if (!getEntityFalling(index) && !caveEntities[index].fallPending) {
 			const bool supportDugOrExploded = inBounds(ahead)
@@ -68,12 +76,14 @@ bool Cave::Map::handleEntityFalling(const int& index, const int& ahead, const Ca
 				return true;
 			}
 		}
+		const bool wasFalling = getEntityFalling(index) || caveEntities[index].airborne;
 		if (moveEntity(index, gravity)) {
-			if (!getEntityFalling(ahead)) {
-			const bool gem = hasTrait(Cave::Entity::Trait::Collectable, ahead)
-				|| getEntityType(ahead) == Cave::Entity::Type::HollowDiamond
-				|| getEntityType(ahead) == Cave::Entity::Type::Ruby
-				|| getEntityType(ahead) == Cave::Entity::Type::Pyrobe;
+			if (!wasFalling) {
+				const bool gem = hasTrait(Cave::Entity::Trait::Collectable, ahead)
+					|| getEntityType(ahead) == Cave::Entity::Type::HollowDiamond
+					|| getEntityType(ahead) == Cave::Entity::Type::Ruby
+					|| getEntityType(ahead) == Cave::Entity::Type::Pyrobe
+					|| getEntityType(ahead) == Cave::Entity::Type::Key;
 				gem ?
 					m_game->soundManager.play(Sound::Effect::DiamondDrop) :
 					m_game->soundManager.play(Sound::Effect::Drop);
@@ -84,7 +94,8 @@ bool Cave::Map::handleEntityFalling(const int& index, const int& ahead, const Ca
 			const int below = getIndex(ahead, gravity);
 			const bool delayLand = Cave::Entity::isMagicWall(getEntityType(below))
 				|| (getEntityType(below) == Cave::Entity::Type::JimlinBlock
-					&& Cave::Entity::isDiamondTile(getEntityType(ahead)));
+					&& Cave::Entity::isDiamondTile(getEntityType(ahead)))
+				|| isAirborneFallable(below);
 			if (!isOpenForFall(below) && !delayLand) {
 				if (handleEntityLanding(ahead, below)) return true;
 				if (handleEntitySlip(ahead, below, gravity)) return true;
@@ -121,6 +132,14 @@ bool Cave::Map::handleEntityLanding(const int& index, const int& ahead) {
 		setEntityFalling(index, false);
 		caveEntities[index].fallPending = false;
 		return false;
+	}
+
+	// Another fallable still dropping through this cell — keep falling with it.
+	// Settling here cleared falling and spammed Drop/Land every cell in freefall.
+	if (inBounds(ahead) && isFallableEntity(ahead)
+		&& (getEntityFalling(ahead) || caveEntities[ahead].airborne
+			|| caveEntities[ahead].fallPending)) {
+		return true;
 	}
 
 	// Bubbled packages soft-land: they fall and settle but never crush.
@@ -251,7 +270,8 @@ bool Cave::Map::handleEntityLanding(const int& index, const int& ahead) {
 			hasTrait(Cave::Entity::Trait::Collectable, index)
 				|| type == Cave::Entity::Type::HollowDiamond
 				|| type == Cave::Entity::Type::Ruby
-				|| type == Cave::Entity::Type::Pyrobe ?
+				|| type == Cave::Entity::Type::Pyrobe
+				|| type == Cave::Entity::Type::Key ?
 				m_game->soundManager.play(Sound::Effect::DiamondLand) :
 				m_game->soundManager.play(Sound::Effect::Land);
 			notifyFusion5Stimulus(index);
@@ -262,7 +282,8 @@ bool Cave::Map::handleEntityLanding(const int& index, const int& ahead) {
 			hasTrait(Cave::Entity::Trait::Collectable, index)
 				|| type == Cave::Entity::Type::HollowDiamond
 				|| type == Cave::Entity::Type::Ruby
-				|| type == Cave::Entity::Type::Pyrobe ?
+				|| type == Cave::Entity::Type::Pyrobe
+				|| type == Cave::Entity::Type::Key ?
 				m_game->soundManager.play(Sound::Effect::DiamondLand) :
 				m_game->soundManager.play(Sound::Effect::Land);
 			notifyFusion5Stimulus(index);
@@ -331,7 +352,8 @@ bool Cave::Map::handleEntityLanding(const int& index, const int& ahead) {
 		hasTrait(Cave::Entity::Trait::Collectable, index)
 			|| type == Cave::Entity::Type::HollowDiamond
 			|| type == Cave::Entity::Type::Ruby
-			|| type == Cave::Entity::Type::Pyrobe ?
+			|| type == Cave::Entity::Type::Pyrobe
+			|| type == Cave::Entity::Type::Key ?
 			m_game->soundManager.play(Sound::Effect::DiamondLand) :
 			m_game->soundManager.play(Sound::Effect::Land);
 	}

@@ -348,7 +348,7 @@ bool Cave::Map::isJimlinDiamond(const int& index) const {
 
 bool Cave::Map::isJimlinPushable(const int& index) const {
 	if (!inBounds(index)) return false;
-	if (!hasTrait(Cave::Entity::Trait::Pushable, index)) return false;
+	if (!hasTrait(Cave::Entity::Trait::Pushable, index) && !isHiveBubbled(index)) return false;
 	if (getEntityTransitioning(index)) return false;
 	if (Cave::Entity::isJimlin(getEntityType(index))) return false;
 	if (getEntityType(index) == Cave::Entity::Type::Bomb) return false;

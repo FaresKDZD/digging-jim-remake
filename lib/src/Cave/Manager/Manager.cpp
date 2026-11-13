@@ -84,7 +84,7 @@ bool Cave::Manager::startCave(const int& fileIndex, const int& caveNumber, Cave:
     m_game->setCaveProperties(*properties);
 
     // Construct the map
-    map->generateMap(properties, data.tileData, data.wells, data.portals, data.cosmics, data.genoms, data.hiveBubbles, data.waterUnders);
+    map->generateMap(properties, data.tileData, data.wells, data.portals, data.cosmics, data.genoms, data.hiveBubbles, data.waterUnders, data.trapFulls);
 
     return true;
 }

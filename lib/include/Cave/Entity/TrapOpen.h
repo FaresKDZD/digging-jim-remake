@@ -7,7 +7,8 @@ namespace Cave::Entity {
     /**
      * @class TrapOpen
      * @brief Transparent open animation drawn as an overlay above a released
-     * monster (lives in m_cosmicOver, not the cave cell).
+     * monster (lives in m_cosmicOver, not the cave cell). Same underlay idea as
+     * TrapFilling / TrapFull cages.
      */
     class TrapOpen : public Base {
     public:

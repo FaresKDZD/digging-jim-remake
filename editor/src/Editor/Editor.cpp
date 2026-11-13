@@ -260,6 +260,18 @@ static bool imguiBlocksEditorMouse()
         || ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup);
 }
 
+void Editor::suppressEditorMouseAfterNativeDialog()
+{
+    m_suppressEditorMouseUntilRelease = true;
+    // Drop clicks that arrived while the modal dialog owned the mouse (e.g. the
+    // second half of a double-click that confirmed Open/Save).
+    if (!m_window)
+        return;
+    while (m_window->pollEvent())
+    {
+    }
+}
+
 static void drawEditorPopupClickBlocker(bool extra = false)
 {
     if (!customEditorPopupOpen() && !extra)
@@ -514,6 +526,8 @@ static char entityTypeToTile(Cave::Entity::Type type)
     case Cave::Entity::Type::Coral:               return 140;
     case Cave::Entity::Type::CoralBud:            return 141;
     case Cave::Entity::Type::Parasite:            return 142;
+    case Cave::Entity::Type::Lock:                return 143;
+    case Cave::Entity::Type::Key:                 return 144;
     default:                                      return 0;
     }
 }
@@ -577,6 +591,7 @@ void Editor::copyLevel(const Cave::Map& map)
     map.collectGenomRecords(m_clipboardGenoms);
     map.collectHiveBubbleRecords(m_clipboardHiveBubbles);
     map.collectWaterUnderRecords(m_clipboardWaterUnders);
+    map.collectTrapFullRecords(m_clipboardTrapFulls);
 }
 
 void Editor::pasteLevel(Cave::Map& map)
@@ -587,7 +602,7 @@ void Editor::pasteLevel(Cave::Map& map)
         || m_clipboardTileData.size() != (size_t)(p.width * p.height))
         return;
     game.setCaveProperties(p);
-    map.generateMap(&p, m_clipboardTileData, m_clipboardWells, m_clipboardPortals, m_clipboardCosmics, m_clipboardGenoms, m_clipboardHiveBubbles, m_clipboardWaterUnders);
+    map.generateMap(&p, m_clipboardTileData, m_clipboardWells, m_clipboardPortals, m_clipboardCosmics, m_clipboardGenoms, m_clipboardHiveBubbles, m_clipboardWaterUnders, m_clipboardTrapFulls);
     map.setEditorMode();
     m_isDirty = true;
 }
@@ -622,6 +637,8 @@ void Editor::copySelection(const Cave::Map& map)
     m_selectionWellPacked.assign((size_t)m_clipW * (size_t)m_clipH, 0);
     m_selectionPortalPacked.assign((size_t)m_clipW * (size_t)m_clipH, 0);
     m_selectionGenomPacked.assign((size_t)m_clipW * (size_t)m_clipH, 0);
+    m_selectionTrapPacked.assign((size_t)m_clipW * (size_t)m_clipH, 0);
+    m_selectionTrapLook.assign((size_t)m_clipW * (size_t)m_clipH, 0);
     for (int y = y0; y <= y1; ++y)
         for (int x = x0; x <= x1; ++x) {
             const int i = (y - y0) * m_clipW + (x - x0);
@@ -645,6 +662,12 @@ void Editor::copySelection(const Cave::Map& map)
                     || type == Cave::Entity::Type::GenomEgg
                     || type == Cave::Entity::Type::Fish)
                     m_selectionGenomPacked[i] = e.spawnCredit;
+                if (type == Cave::Entity::Type::TrapFull
+                    || type == Cave::Entity::Type::TrapFilling) {
+                    const int facing = static_cast<int>(e.direction);
+                    m_selectionTrapPacked[i] = (e.spawnCredit & 0xFFFF) | ((facing & 0xFF) << 16);
+                    m_selectionTrapLook[i] = e.extra;
+                }
             }
         }
 }
@@ -674,11 +697,23 @@ void Editor::pasteSelection(Cave::Map& map, int destX, int destY)
             && (size_t)clipI < m_selectionGenomPacked.size()
             && m_selectionGenomPacked[clipI] != 0)
             e.spawnCredit = m_selectionGenomPacked[clipI];
+        if (tile == 117 && (size_t)clipI < m_selectionTrapPacked.size()) {
+            const int packed = m_selectionTrapPacked[clipI];
+            const auto contained = static_cast<Cave::Entity::Type>(packed & 0xFFFF);
+            const auto face = static_cast<Cave::Entity::Direction>((packed >> 16) & 0xFF);
+            const int look = (size_t)clipI < m_selectionTrapLook.size()
+                ? m_selectionTrapLook[clipI] : 0;
+            e = Cave::Entity::TrapFull(
+                Cave::Entity::isTrapCapturable(contained) ? contained : Cave::Entity::Type::Protozo,
+                look);
+            e.direction = face;
+        }
         map.placeEntity(ty * map.width + tx, e);
     };
 
-    // Bodies copy as space. Place those first so they cannot wipe a charger
-    // that inflateCharger just expanded, then drop chargers that still fit.
+    // Bodies copy as space. Place those first so they cannot wipe a charger /
+    // worm that inflateCharger / spawnWormBodies just expanded, then drop
+    // chargers and worms that still fit.
     for (int y = 0; y < m_clipH; ++y)
     {
         const int ty = destY + y;
@@ -689,7 +724,8 @@ void Editor::pasteSelection(Cave::Map& map, int destX, int destY)
             if (tx < minX || tx > maxX) continue;
             const int clipI = y * m_clipW + x;
             char tile = m_selectionClipboard[clipI];
-            if (tile == 53)
+            // Charger=53, Worm=101 — deferred so body inflate is not wiped.
+            if (tile == 53 || tile == 101)
                 tile = 0;
             placeTile(tx, ty, tile, clipI);
         }
@@ -708,6 +744,20 @@ void Editor::pasteSelection(Cave::Map& map, int destX, int destY)
             if (!chargerFitsOnMap(map, tx, ty, minX, maxX, minY, maxY))
                 continue;
             placeTile(tx, ty, 53, clipI);
+        }
+    }
+    for (int y = 0; y < m_clipH; ++y)
+    {
+        const int ty = destY + y;
+        if (ty < minY || ty > maxY) continue;
+        for (int x = 0; x < m_clipW; ++x)
+        {
+            const int tx = destX + x;
+            if (tx < minX || tx > maxX) continue;
+            const int clipI = y * m_clipW + x;
+            if (m_selectionClipboard[clipI] != 101)
+                continue;
+            placeTile(tx, ty, 101, clipI);
         }
     }
     map.setEditorMode();
@@ -734,6 +784,7 @@ void Editor::syncCurrentCave(Cave::Map& map, Cave::File& loadedFile, int current
     map.collectGenomRecords(cave.genoms);
     map.collectHiveBubbleRecords(cave.hiveBubbles);
     map.collectWaterUnderRecords(cave.waterUnders);
+    map.collectTrapFullRecords(cave.trapFulls);
 }
 
 void Editor::insertLevel(Cave::Map& map, Cave::File& loadedFile, int& currentCaveIndex)
@@ -755,7 +806,7 @@ void Editor::insertLevel(Cave::Map& map, Cave::File& loadedFile, int& currentCav
 
     const Cave::Data& cave = loadedFile.caves[currentCaveIndex];
     game.setCaveProperties(cave.properties);
-    map.generateMap(&cave.properties, cave.tileData, cave.wells, cave.portals, cave.cosmics, cave.genoms, cave.hiveBubbles, cave.waterUnders);
+    map.generateMap(&cave.properties, cave.tileData, cave.wells, cave.portals, cave.cosmics, cave.genoms, cave.hiveBubbles, cave.waterUnders, cave.trapFulls);
     map.setEditorMode();
 }
 
@@ -817,7 +868,7 @@ bool Editor::checkUnsavedChanges(Cave::Map& map, Cave::File& loadedFile, int cur
     if (result == 1)
     {
         saveFile(map, loadedFile, currentCaveIndex);
-        // If still dirty, the user cancelled the save dialog â€” don't proceed
+        // If still dirty, the user cancelled the save dialog — don't proceed
         if (m_isDirty) return false;
     }
     return true;
@@ -834,6 +885,7 @@ void Editor::saveFileAs(Cave::Map& map, Cave::File& loadedFile, int currentCaveI
         ? (std::filesystem::path(getCavesDir()) / "untitled.cav").string()
         : m_savedFilePath;
     const char* result = tinyfd_saveFileDialog("Save Cave File", defaultPathStr.c_str(), 1, filterPatterns, "Cave Files");
+    suppressEditorMouseAfterNativeDialog();
     if (!result) return;
 
     try
@@ -887,7 +939,7 @@ void Editor::deleteLevel(Cave::Map& map, Cave::File& loadedFile, int& currentCav
 
     const Cave::Data& cave = loadedFile.caves[currentCaveIndex];
     game.setCaveProperties(cave.properties);
-    map.generateMap(&cave.properties, cave.tileData, cave.wells, cave.portals, cave.cosmics, cave.genoms, cave.hiveBubbles, cave.waterUnders);
+    map.generateMap(&cave.properties, cave.tileData, cave.wells, cave.portals, cave.cosmics, cave.genoms, cave.hiveBubbles, cave.waterUnders, cave.trapFulls);
     map.setEditorMode();
 }
 
@@ -969,7 +1021,7 @@ void Editor::applyEditorSnapshot(const EditorSnapshot& snap, Cave::Map& map, Cav
     const Cave::Data& cave = loadedFile.caves[currentCaveIndex];
     game.setCaveProperties(cave.properties);
     auto p = game.getCaveProperties();
-    map.generateMap(&p, cave.tileData, cave.wells, cave.portals, cave.cosmics, cave.genoms, cave.hiveBubbles, cave.waterUnders);
+    map.generateMap(&p, cave.tileData, cave.wells, cave.portals, cave.cosmics, cave.genoms, cave.hiveBubbles, cave.waterUnders, cave.trapFulls);
     map.setEditorMode();
 
     const bool sameLayout = prevCave == currentCaveIndex && prevW == map.width && prevH == map.height;
@@ -1018,7 +1070,7 @@ void Editor::stopSimulate(Cave::Map& map, Cave::File& loadedFile, int& currentCa
         0);
 
     if (allowCancel && keep == 0)
-        return; // Cancel â€” leave Simulate running
+        return; // Cancel — leave Simulate running
 
     m_simulating = false;
     if (keep == 1)
@@ -1033,7 +1085,7 @@ void Editor::stopSimulate(Cave::Map& map, Cave::File& loadedFile, int& currentCa
             const Cave::Data& cave = loadedFile.caves[currentCaveIndex];
             game.setCaveProperties(cave.properties);
             auto p = game.getCaveProperties();
-            map.generateMap(&p, cave.tileData, cave.wells, cave.portals, cave.cosmics, cave.genoms, cave.hiveBubbles, cave.waterUnders);
+            map.generateMap(&p, cave.tileData, cave.wells, cave.portals, cave.cosmics, cave.genoms, cave.hiveBubbles, cave.waterUnders, cave.trapFulls);
         }
         map.setEditorMode();
         return;
@@ -1463,7 +1515,7 @@ bool Editor::run()
     auto toggleFullscreen = [&]()
     {
         ImGui::SFML::Shutdown();
-        // Reset to arrow before window.create() â€” SFML reapplies the stored cursor
+        // Reset to arrow before window.create() — SFML reapplies the stored cursor
         // during window recreation, and a stale X11 cursor XID causes BadCursor on Linux/WSL.
         { sf::Cursor arrow(sf::Cursor::Type::Arrow); window.setMouseCursor(arrow); }
         if (!isFullscreen)
@@ -1537,6 +1589,80 @@ bool Editor::run()
     const sf::Vector2f viewSize   = sf::Vector2f(MAP_W, MAP_H);
     sf::Vector2f caveBounds = sf::Vector2f(CAVE_W * 32.f, CAVE_H * 32.f);
     Camera caveCamera(viewSize, sf::Vector2f(viewSize.x / 2.f, viewSize.y / 2.f), caveBounds);
+
+    // Cave preview post-FX (water color + distortion), same path as the game.
+    sf::RenderTexture caveSceneRt(sf::Vector2u(static_cast<unsigned>(MAP_W), static_cast<unsigned>(MAP_H)));
+    caveSceneRt.setSmooth(false);
+    sf::RenderTexture waterMaskRt(sf::Vector2u(static_cast<unsigned>(MAP_W), static_cast<unsigned>(MAP_H)));
+    waterMaskRt.setSmooth(false);
+    sf::RenderTexture waterFxRt(sf::Vector2u(static_cast<unsigned>(MAP_W), static_cast<unsigned>(MAP_H)));
+    waterFxRt.setSmooth(false);
+
+    sf::Shader waterWaveShader;
+    bool waterWaveOk = waterWaveShader.loadFromFile(
+        "./assets/shaders/water_wave.frag", sf::Shader::Type::Fragment);
+    if (waterWaveOk) {
+        waterWaveShader.setUniform("time", 0.f);
+        waterWaveShader.setUniform("blendColor", sf::Glsl::Vec3(
+            74.f / 255.f, 127.f / 255.f, 160.f / 255.f));
+        waterWaveShader.setUniform("tint", sf::Glsl::Vec3{ 0.5f, 0.5f, 0.5f });
+        waterWaveShader.setUniform("viewCenter", sf::Glsl::Vec2{ 0.f, 0.f });
+        waterWaveShader.setUniform("viewSize", sf::Glsl::Vec2{ MAP_W, MAP_H });
+        waterWaveShader.setUniform("rtSize", sf::Glsl::Vec2{ MAP_W, MAP_H });
+    }
+
+    auto blitCavePreview = [&](sf::RenderTarget& target) {
+        const sf::View worldView = caveCamera.view();
+        caveSceneRt.setView(worldView);
+        caveSceneRt.clear(sf::Color(20, 20, 20));
+        caveSceneRt.draw(map, shaderManager.currentShader());
+        if (map.hasLoadingOverlays())
+            map.drawLoadingOverlays(caveSceneRt);
+
+        const sf::Texture* caveTex = &caveSceneRt.getTexture();
+        if (waterWaveOk && map.hasWaterOverlays()) {
+            waterMaskRt.setView(worldView);
+            waterMaskRt.clear(sf::Color::Black);
+            map.drawWaterMask(waterMaskRt);
+            waterMaskRt.display();
+
+            const sf::Vector2f c = caveCamera.getCenter();
+            const sf::Vector2f s = caveCamera.getSize();
+            waterWaveShader.setUniform("viewCenter", sf::Glsl::Vec2{ c.x, c.y });
+            waterWaveShader.setUniform("viewSize", sf::Glsl::Vec2{ s.x, s.y });
+            {
+                const bool fixed = game.getGameOptions().fixedColours;
+                waterWaveShader.setUniform("tint", fixed
+                    ? sf::Glsl::Vec3{ 0.5f, 0.5f, 0.5f }
+                    : sf::Glsl::Vec3{
+                        static_cast<float>(std::clamp(game.getHue(), 0, 200)) / 200.f,
+                        static_cast<float>(std::clamp(game.getSat(), 0, 200)) / 200.f,
+                        static_cast<float>(std::clamp(game.getLum(), 0, 200)) / 200.f,
+                    });
+            }
+            waterWaveShader.setUniform("time", static_cast<float>(globalCounter) * 0.14f);
+            waterWaveShader.setUniform("waterMask", waterMaskRt.getTexture());
+
+            caveSceneRt.display();
+            const sf::View screenView(sf::FloatRect(
+                { 0.f, 0.f }, { MAP_W, MAP_H }));
+            waterFxRt.setView(screenView);
+            waterFxRt.clear(sf::Color::Black);
+            waterFxRt.draw(sf::Sprite(caveSceneRt.getTexture()), &waterWaveShader);
+            waterFxRt.display();
+            caveTex = &waterFxRt.getTexture();
+        }
+        else {
+            caveSceneRt.display();
+        }
+
+        sf::Sprite caveSpr(*caveTex);
+        caveSpr.setPosition({ 0.f, TOOLBAR_H });
+        const sf::View prev = target.getView();
+        target.setView(target.getDefaultView());
+        target.draw(caveSpr);
+        target.setView(prev);
+    };
 
     auto applyCaveZoom = [&](float newZoom, const sf::Vector2f* keepWorld) {
         newZoom = std::clamp(newZoom, 0.25f, 4.f);
@@ -1704,6 +1830,11 @@ bool Editor::run()
 
     while (window.isOpen())
     {
+        if (m_suppressEditorMouseUntilRelease
+            && !sf::Mouse::isButtonPressed(sf::Mouse::Button::Left)
+            && !sf::Mouse::isButtonPressed(sf::Mouse::Button::Right))
+            m_suppressEditorMouseUntilRelease = false;
+
         m_viewZoom = std::clamp(m_viewZoom, 0.25f, 4.f);
         {
             const sf::Vector2f camSize = { MAP_W / m_viewZoom, MAP_H / m_viewZoom };
@@ -1779,7 +1910,7 @@ bool Editor::run()
 
             if (window.hasFocus()) if (const auto* e = event->getIf<sf::Event::MouseButtonPressed>())
             {
-                if (imguiBlocksEditorMouse())
+                if (imguiBlocksEditorMouse() || m_suppressEditorMouseUntilRelease)
                     continue;
 
                 if (e->button == sf::Mouse::Button::Right)
@@ -1794,7 +1925,7 @@ bool Editor::run()
                         if (editorPanel.handleRightClick(vp, PANEL_X, TOOLBAR_H))
                         {
                             tilePickerPos = ImVec2((float)e->position.x, (float)e->position.y);
-                            // Simulate speed menu consumes the click â€” skip palette pickers.
+                            // Simulate speed menu consumes the click — skip palette pickers.
                             if (!m_openSimSpeedMenu)
                             {
                                 if (Cave::Entity::isSpaceSlotType(editorPanel.getSelectedType()))
@@ -2206,7 +2337,7 @@ bool Editor::run()
         drawEditorPopupClickBlocker(m_showCavesList);
         drawCavesListWindow(currentCaveIndex, loadedFile);
 
-        // Right-click Simulate button â†’ speed dropdown (only while simulating).
+        // Right-click Simulate button ? speed dropdown (only while simulating).
         {
             if (m_openSimSpeedMenu)
             {
@@ -2790,7 +2921,8 @@ bool Editor::run()
             bool overVsb     = rtPx.x >= (int)VSB_X;
             bool overHsb     = rtPx.y >= (int)HSB_Y;
 
-            if (!imguiBlocksEditorMouse() && !overToolbar && !overVsb && !overHsb
+            if (!imguiBlocksEditorMouse() && !m_suppressEditorMouseUntilRelease
+                && !overToolbar && !overVsb && !overHsb
                 && !vsbDragging && !hsbDragging)
             {
                 sf::View caveView = caveCamera.view();
@@ -2914,11 +3046,10 @@ bool Editor::run()
         sf::View caveRenderView = caveCamera.view();
         caveRenderView.setViewport(sf::FloatRect(sf::Vector2f(CAVE_VP_X, CAVE_VP_Y),
                                                   sf::Vector2f(CAVE_VP_W, CAVE_VP_H)));
-        rt.setView(caveRenderView);
+        rt.setView(rt.getDefaultView());
         rt.clear(sf::Color(20, 20, 20));
-        rt.draw(map, shaderManager.currentShader());
-        if (map.hasLoadingOverlays())
-            map.drawLoadingOverlays(rt);
+        blitCavePreview(rt);
+        rt.setView(caveRenderView);
 
         if (map.editorProbeIndex() >= 0)
         {
@@ -3046,7 +3177,7 @@ bool Editor::run()
             game.setCaveProperties(caveData.properties);
             originalProps = caveData.properties;
             auto p = game.getCaveProperties();
-            map.generateMap(&p, caveData.tileData, caveData.wells, caveData.portals, caveData.cosmics, caveData.genoms, caveData.hiveBubbles, caveData.waterUnders);
+            map.generateMap(&p, caveData.tileData, caveData.wells, caveData.portals, caveData.cosmics, caveData.genoms, caveData.hiveBubbles, caveData.waterUnders, caveData.trapFulls);
             map.setEditorMode();
             syncCaveBounds();
             caveCamera.setCentre(sf::Vector2f(caveCamera.getSize().x / 2.f, caveCamera.getSize().y / 2.f));
@@ -3105,6 +3236,7 @@ bool Editor::run()
             const char* filterPatterns[] = {"*.cav"};
             std::string openDefaultPath = (std::filesystem::path(getCavesDir()) / "").string();
             const char* openResult = tinyfd_openFileDialog("Open Cave File", openDefaultPath.c_str(), 1, filterPatterns, "Cave Files", 0);
+            suppressEditorMouseAfterNativeDialog();
             if (openResult)
             {
                 try
@@ -3127,7 +3259,7 @@ bool Editor::run()
                         game.setCaveProperties(caveData.properties);
                         originalProps = caveData.properties;
                         auto p = game.getCaveProperties();
-                        map.generateMap(&p, caveData.tileData, caveData.wells, caveData.portals, caveData.cosmics, caveData.genoms, caveData.hiveBubbles, caveData.waterUnders);
+                        map.generateMap(&p, caveData.tileData, caveData.wells, caveData.portals, caveData.cosmics, caveData.genoms, caveData.hiveBubbles, caveData.waterUnders, caveData.trapFulls);
                         map.setEditorMode();
                         syncCaveBounds();
                         caveCamera.setCentre(sf::Vector2f(caveCamera.getSize().x / 2.f, caveCamera.getSize().y / 2.f));
@@ -3299,13 +3431,7 @@ bool Editor::run()
                 toolbarBg.setFillColor(sf::Color(212, 208, 200));
                 rt.draw(toolbarBg);
 
-                sf::View caveRV = caveCamera.view();
-                caveRV.setViewport(sf::FloatRect(sf::Vector2f(CAVE_VP_X, CAVE_VP_Y),
-                                                  sf::Vector2f(CAVE_VP_W, CAVE_VP_H)));
-                rt.setView(caveRV);
-                rt.draw(map, shaderManager.currentShader());
-                if (map.hasLoadingOverlays())
-                    map.drawLoadingOverlays(rt);
+                blitCavePreview(rt);
 
                 sf::View panelRV = panelCamera.view();
                 panelRV.setViewport(sf::FloatRect(sf::Vector2f(PANEL_VP_X, PANEL_VP_Y),
@@ -3439,6 +3565,7 @@ bool Editor::run()
                     std::vector<Cave::GenomRecord> newGenoms;
                     std::vector<Cave::HiveBubbleRecord> newHiveBubbles;
                     std::vector<Cave::HiveBubbleRecord> newWaterUnders;
+                    std::vector<Cave::TrapFullRecord> newTrapFulls;
                     for (int cy = 0; cy < copyH; cy++) {
                         for (int cx = 0; cx < copyW; cx++) {
                             int srcIdx = (srcY0 + cy + 1) * (int)oldP.width + (srcX0 + cx + 1);
@@ -3472,6 +3599,16 @@ bool Editor::run()
                                     rec.packed = map.caveEntities[srcIdx].spawnCredit;
                                     newGenoms.push_back(rec);
                                 }
+                                if (srcType == Cave::Entity::Type::TrapFull
+                                    || srcType == Cave::Entity::Type::TrapFilling) {
+                                    Cave::TrapFullRecord rec;
+                                    rec.index = static_cast<uint16_t>(dstIdx);
+                                    const int facing = static_cast<int>(map.caveEntities[srcIdx].direction);
+                                    rec.packed = (map.caveEntities[srcIdx].spawnCredit & 0xFFFF)
+                                        | ((facing & 0xFF) << 16);
+                                    rec.look = map.caveEntities[srcIdx].extra;
+                                    newTrapFulls.push_back(rec);
+                                }
                             }
                             if (map.isHiveBubbled(srcIdx)) {
                                 Cave::HiveBubbleRecord rec;
@@ -3487,7 +3624,7 @@ bool Editor::run()
                         }
                     }
 
-                    map.generateMap(&p, newTiles, newWells, newPortals, newCosmics, newGenoms, newHiveBubbles, newWaterUnders);
+                    map.generateMap(&p, newTiles, newWells, newPortals, newCosmics, newGenoms, newHiveBubbles, newWaterUnders, newTrapFulls);
                     map.setEditorMode();
                     syncCaveBounds();
                 }
@@ -3683,7 +3820,7 @@ bool Editor::run()
                 }
 #elif defined(__APPLE__) || defined(__linux__)
                 {
-                    // Use fork/exec to pass arguments directly â€” avoids shell quoting
+                    // Use fork/exec to pass arguments directly — avoids shell quoting
                     // issues with spaces in filenames that std::system() cannot handle.
                     std::string caveArg  = "--cave=" + caveFilename;
                     std::string startArg = "--start=" + std::to_string(currentCaveIndex + 1);

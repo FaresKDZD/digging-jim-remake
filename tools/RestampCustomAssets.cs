@@ -135,6 +135,10 @@ class RestampCustomAssets {
             StampParasiteOntoCurrent();
             return;
         }
+        if (args.Length > 0 && args[0] == "--lock-key") {
+            StampLockKeyOntoCurrent();
+            return;
+        }
 
         string clean = Path.Combine(Root, "tools", "_restore", "tiles_github_oct3.png");
         if (!File.Exists(clean))
@@ -943,6 +947,53 @@ class RestampCustomAssets {
         Console.WriteLine("DONE");
     }
 
+    static void StampLockKeyOntoCurrent() {
+        if (!File.Exists(TilesPath)) throw new Exception("Missing " + TilesPath);
+        // After HiveLivingWall at 2011.
+        const int lockBase = 2012;
+        const int keyBase = 2020;
+        const int lastFrame = keyBase + 15;
+        int dirtBefore;
+        using (Bitmap tiles = LoadPngExact(TilesPath)) {
+            dirtBefore = tiles.GetPixel(0, 0).ToArgb();
+            int needH = FrameBottom(lastFrame);
+            Bitmap work = tiles;
+            Bitmap expanded = null;
+            if (tiles.Height < needH) {
+                expanded = ExpandExact(tiles, SHEET_W_CONST(), needH);
+                work = expanded;
+                Console.WriteLine("Expanded tiles to " + work.Width + "x" + work.Height);
+            }
+
+            StampStrip(work, "lock.png", lockBase, 8);
+            StampStrip(work, "key.png", keyBase, 16);
+
+            string outPath = TilesPath + ".restamped.png";
+            work.Save(outPath, ImageFormat.Png);
+            Console.WriteLine("Wrote " + outPath);
+            if (expanded != null) expanded.Dispose();
+        }
+
+        File.Copy(TilesPath + ".restamped.png", TilesPath, true);
+        File.Delete(TilesPath + ".restamped.png");
+        Console.WriteLine("Replaced " + TilesPath);
+
+        StampMiniIconFromCustom("lock.png", 135);
+        StampMiniIconFromCustom("key.png", 136);
+
+        Console.WriteLine("Stamped=" + stamped + " skipped=" + skipped);
+        foreach (var line in log) Console.WriteLine(line);
+
+        VerifyExact("lock.png", lockBase);
+        VerifyExact("key.png", keyBase);
+        using (var tiles = LoadPngExact(TilesPath)) {
+            if (tiles.GetPixel(0, 0).ToArgb() != dirtBefore)
+                throw new Exception("DIRT PIXEL CHANGED - abort, sheet was re-encoded badly");
+        }
+        Console.WriteLine("VERIFY OK dirt untouched");
+        Console.WriteLine("DONE");
+    }
+
     static void StampParasiteOntoCurrent() {
         if (!File.Exists(TilesPath)) throw new Exception("Missing " + TilesPath);
         // After CoralBud at 1996–2002.
@@ -1555,7 +1606,7 @@ class RestampCustomAssets {
 
             StampStrip(work, "trap_empty.png", emptyFrame, 1);
             StampStrip(work, "trap_filling.png", fillingBase, 8);
-            StampStrip(work, "trap_full.png", fullBase, 4);
+            StampStrip(work, "trap_full.png", fullBase, 1);
             StampStrip(work, "trap_open.png", openBase, 4);
 
             string outPath = TilesPath + ".restamped.png";

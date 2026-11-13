@@ -7,6 +7,8 @@
 #include "Cave/Entity/Caterpillar.h"
 #include "Cave/Entity/Compressor.h"
 #include "Cave/Entity/Fish.h"
+#include "Cave/Entity/GallopEgg.h"
+#include "Cave/Entity/GallopQueen.h"
 #include "Cave/Entity/Genom.h"
 #include "Cave/Entity/GenomEgg.h"
 #include "Cave/Entity/HiveLarva.h"
@@ -14,6 +16,8 @@
 #include "Cave/Entity/HiveHunterBubble.h"
 #include "Cave/Entity/HiveWorker.h"
 #include "Cave/Entity/Jim.h"
+#include "Cave/Entity/Macow.h"
+#include "Cave/Entity/MacowEgg.h"
 #include "Cave/Entity/Parasite.h"
 #include "Cave/Entity/Space.h"
 #include "Cave/Entity/Spinner.h"
@@ -201,6 +205,7 @@ void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>
                     sf::Color::White);
                 clearTileVerts(&m_vertices[index * 12 + 6], 6);
 
+                // Genom/Fish look rides in homeIndex (LOOK_VALID). Prey draws under the mouth.
                 const int rideLook = (entity.homeIndex != -1
                     && (entity.homeIndex & Cave::Entity::Genom::LOOK_VALID) != 0)
                     ? entity.homeIndex : 0;
@@ -210,6 +215,10 @@ void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>
                     && prevTex < Cave::Entity::Compressor::OPEN_BASE + Cave::Entity::Compressor::OPEN_COUNT;
                 const bool preyIsParasite = prevTex >= Cave::Entity::Parasite::FRAME_BASE
                     && prevTex < Cave::Entity::Parasite::FRAME_BASE + Cave::Entity::Parasite::FRAME_COUNT;
+                const bool preyIsFish = Cave::Entity::Fish::isFishTexture(prevTex);
+                const sf::Color preyTint = (preyIsFish && rideLook != 0)
+                    ? Cave::Entity::Fish::spriteTint(rideLook)
+                    : sf::Color::White;
                 if (rideLook != 0 && Cave::Entity::Genom::isGenomTexture(prevTex)) {
                     const int frame = Cave::Entity::Genom::frameFromBgTexture(prevTex);
                     pushGenomLayers(entity, rideLook, frame, baseX, baseY, moveEp, moveTp, index);
@@ -253,11 +262,12 @@ void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>
                     q.ty1 = (float)(textureCoords.y * (int)m_tilesize.y + moveTp.position.y);
                     q.tx2 = (float)(textureCoords.x * (int)m_tilesize.x + moveTp.position.x + moveTp.size.x);
                     q.ty2 = (float)(textureCoords.y * (int)m_tilesize.y + moveTp.position.y + moveTp.size.y);
-                    q.tint = sf::Color::White;
+                    q.tint = preyTint;
                     q.cellIndex = index;
                     overlays.push_back(q);
                 }
 
+                // Mouth on top — prey (incl. Fish tint) stays under the compressor.
                 const int mouthTex = entity.getCurrentTextureIndex();
                 if (mouthTex != Cave::Entity::NO_TEXTURE_INDEX) {
                     const sf::Vector2i textureCoords = { mouthTex % m_tilesetCols, mouthTex / m_tilesetCols };
@@ -635,6 +645,23 @@ void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>
                         q.cellIndex = index;
                         overlays.push_back(q);
                     }
+                    // Into-slide overlaps the parent tile — re-stamp a full Genom on top.
+                    if (entity.getTransitionDirection() == Cave::Entity::Direction::DOWN) {
+                        const int aboveIndex = index - gridRange.size.x;
+                        if (aboveIndex >= 0 && aboveIndex < cellCount) {
+                            const auto& parent = entities[static_cast<size_t>(aboveIndex)];
+                            if (parent.getType() == Cave::Entity::Type::Genom
+                                && Cave::Entity::Genom::hasLook(parent)
+                                && parent.isAwayTransition()) {
+                                const int pFrame = Cave::Entity::Genom::frameFromBgTexture(
+                                    parent.getCurrentTextureIndex());
+                                const sf::IntRect fullEp{ { 0, 0 }, { (int)m_tilesize.x, (int)m_tilesize.y } };
+                                const sf::IntRect fullTp{ { 0, 0 }, { (int)m_tilesize.x, (int)m_tilesize.y } };
+                                pushGenomLayers(parent, parent.spawnCredit, pFrame,
+                                    baseX, baseY - (float)m_tilesize.y, fullEp, fullTp, index);
+                            }
+                        }
+                    }
                 }
                 else {
                     writeTileQuad(tri,
@@ -656,6 +683,58 @@ void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>
                 const bool genomInto = isGenom && entity.isIntoTransition();
                 const int ghostLook = Cave::Entity::Genom::hasLook(entity)
                     ? entity.spawnCredit : gateGhostLook;
+                // Egg slides out under a full Genom (same underlay pattern as matriarch/macow).
+                const bool genomLayAway = isGenom && entity.isAwayTransition()
+                    && Cave::Entity::GenomEgg::isEggTexture(prevTex);
+
+                if (genomLayAway) {
+                    writeTileQuad(tri,
+                        baseX, baseY, baseX + (float)m_tilesize.x, baseY + (float)m_tilesize.y,
+                        (float)(floorCoords.x * (int)m_tilesize.x), (float)(floorCoords.y * (int)m_tilesize.y),
+                        (float)((floorCoords.x + 1) * (int)m_tilesize.x), (float)((floorCoords.y + 1) * (int)m_tilesize.y),
+                        sf::Color::White);
+                    clearTileVerts(&m_vertices[index * 12 + 6], 6);
+                    const sf::IntRect pep = entity.getPreviousPosition();
+                    const sf::IntRect ptp = entity.getPreviousTextureCoords();
+                    int eggLook = 0;
+                    const int belowIndex = index + gridRange.size.x;
+                    if (belowIndex >= 0 && belowIndex < cellCount) {
+                        const auto& below = entities[static_cast<size_t>(belowIndex)];
+                        if (below.getType() == Cave::Entity::Type::GenomEgg
+                            && Cave::Entity::Genom::hasLook(below))
+                            eggLook = below.spawnCredit;
+                    }
+                    if (eggLook != 0) {
+                        const int babyFrame = std::min(
+                            Cave::Entity::GenomEgg::frameFromTexture(prevTex),
+                            Cave::Entity::Genom::FRAME_COUNT - 1);
+                        pushGenomEggStack(entity, eggLook, prevTex, babyFrame,
+                            baseX, baseY, pep, ptp, index);
+                    }
+                    else if (prevTex != Cave::Entity::NO_TEXTURE_INDEX) {
+                        const sf::Vector2i textureCoords = { prevTex % m_tilesetCols, prevTex / m_tilesetCols };
+                        OverlayQuad q;
+                        q.px1 = baseX + pep.position.x;
+                        q.py1 = baseY + pep.position.y;
+                        q.px2 = baseX + pep.position.x + pep.size.x;
+                        q.py2 = baseY + pep.position.y + pep.size.y;
+                        q.tx1 = (float)(textureCoords.x * (int)m_tilesize.x + ptp.position.x);
+                        q.ty1 = (float)(textureCoords.y * (int)m_tilesize.y + ptp.position.y);
+                        q.tx2 = (float)(textureCoords.x * (int)m_tilesize.x + ptp.position.x + ptp.size.x);
+                        q.ty2 = (float)(textureCoords.y * (int)m_tilesize.y + ptp.position.y + ptp.size.y);
+                        q.tint = sf::Color::White;
+                        q.cellIndex = index;
+                        overlays.push_back(q);
+                    }
+                    const int frame = Cave::Entity::Genom::frameFromBgTexture(
+                        entity.getCurrentTextureIndex());
+                    const sf::IntRect fullEp{ { 0, 0 }, { (int)m_tilesize.x, (int)m_tilesize.y } };
+                    const sf::IntRect fullTp{ { 0, 0 }, { (int)m_tilesize.x, (int)m_tilesize.y } };
+                    pushGenomLayers(entity, entity.spawnCredit, frame, baseX, baseY,
+                        fullEp, fullTp, index);
+                    index++;
+                    continue;
+                }
 
                 if (genomInto) {
                     // Match other monsters: current under, previous (gate) on top.
@@ -794,6 +873,16 @@ void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>
                 && prevTex >= Cave::Entity::HiveLarva::FRAME_BASE
                 && prevTex < Cave::Entity::HiveLarva::FRAME_BASE + Cave::Entity::HiveLarva::FRAME_COUNT;
 
+            // Macow lay: egg slides out under a full Macow (same underlay pattern).
+            const bool macowLayAway = entity.getType() == Cave::Entity::Type::Macow
+                && entity.isAwayTransition()
+                && prevTex == Cave::Entity::MacowEgg::FRAME_BASE;
+
+            // Gallop Queen lay: fetus egg slides out under a full queen.
+            const bool gallopLayAway = entity.getType() == Cave::Entity::Type::GallopQueen
+                && entity.isAwayTransition()
+                && prevTex == Cave::Entity::GallopEgg::FRAME_BASE_FETUS;
+
             using HC = Cave::Entity::HiveCollector;
             // Hauler / builder drop: cargo slides out under a full body.
             const bool collectorDropAway = Cave::Entity::isHiveDepositSpitter(entity.getType())
@@ -820,8 +909,8 @@ void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>
                 && (entity.spawnCredit == HC::MODE_CARRY_BUBBLED
                     || entity.spawnCredit == Cave::Entity::HiveServant::MODE_CARRY_BUBBLED);
 
-            // Larva into-slide on the cell below also overlaps the matriarch tile and
-            // would draw after her — re-stamp a full matriarch on top.
+            // Larva / Macow-egg into-slide on the cell below also overlaps the parent
+            // tile and would draw after her — re-stamp a full body on top.
             const int viewW = gridRange.size.x;
             const int aboveIndex = index - viewW;
             const bool hiveBirthInto = entity.getType() == Cave::Entity::Type::HiveLarva
@@ -829,6 +918,18 @@ void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>
                 && entity.getTransitionDirection() == Cave::Entity::Direction::DOWN
                 && aboveIndex >= 0
                 && entities[static_cast<size_t>(aboveIndex)].getType() == Cave::Entity::Type::HiveMatriarch
+                && entities[static_cast<size_t>(aboveIndex)].isAwayTransition();
+            const bool macowLayInto = entity.getType() == Cave::Entity::Type::MacowEgg
+                && entity.isIntoTransition()
+                && entity.getTransitionDirection() == Cave::Entity::Direction::DOWN
+                && aboveIndex >= 0
+                && entities[static_cast<size_t>(aboveIndex)].getType() == Cave::Entity::Type::Macow
+                && entities[static_cast<size_t>(aboveIndex)].isAwayTransition();
+            const bool gallopLayInto = entity.getType() == Cave::Entity::Type::GallopEgg
+                && entity.isIntoTransition()
+                && entity.getTransitionDirection() == Cave::Entity::Direction::DOWN
+                && aboveIndex >= 0
+                && entities[static_cast<size_t>(aboveIndex)].getType() == Cave::Entity::Type::GallopQueen
                 && entities[static_cast<size_t>(aboveIndex)].isAwayTransition();
 
             // Deposit may slide any direction out of the collector.
@@ -903,8 +1004,8 @@ void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>
             };
 
             sf::Vertex* tri2 = &m_vertices[index * 12 + 6];
-            if (hiveBirthAway || collectorDropAway) {
-                // Cargo/larva away crop underneath; solid body stamped over it.
+            if (hiveBirthAway || macowLayAway || gallopLayAway || collectorDropAway) {
+                // Cargo/larva/egg away crop underneath; solid body stamped over it.
                 const sf::IntRect pep = entity.getPreviousPosition();
                 const sf::IntRect ptp = entity.getPreviousTextureCoords();
                 const int dropLook = Cave::Entity::hiveHaulerCargoLook(entity);
@@ -1060,6 +1161,16 @@ void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>
                     const auto& matriarch = entities[static_cast<size_t>(aboveIndex)];
                     pushSpriteOverlay(baseX, baseY - (float)m_tilesize.y,
                         matriarch.getCurrentTextureIndex(), index);
+                }
+                if (macowLayInto) {
+                    const auto& macow = entities[static_cast<size_t>(aboveIndex)];
+                    pushSpriteOverlay(baseX, baseY - (float)m_tilesize.y,
+                        macow.getCurrentTextureIndex(), index);
+                }
+                if (gallopLayInto) {
+                    const auto& queen = entities[static_cast<size_t>(aboveIndex)];
+                    pushSpriteOverlay(baseX, baseY - (float)m_tilesize.y,
+                        queen.getCurrentTextureIndex(), index);
                 }
                 if (collectorDropInto) {
                     const auto& collector = entities[static_cast<size_t>(collectorDropNeighbor)];

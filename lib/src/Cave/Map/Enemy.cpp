@@ -2413,8 +2413,10 @@ void Cave::Map::updateFish(const int& index) {
 	}
 
 	// Entered water while falling: settle, then resume swimming.
-	if (getEntityFalling(index) || caveEntities[index].fallPending
-		|| caveEntities[index].airborne) {
+	// Bubbled packages keep falling (routed via isFallableEntity).
+	if (!isHiveBubbled(index)
+		&& (getEntityFalling(index) || caveEntities[index].fallPending
+			|| caveEntities[index].airborne)) {
 		setEntityFalling(index, false);
 		caveEntities[index].fallPending = false;
 		caveEntities[index].airborne = false;
@@ -2959,7 +2961,13 @@ void Cave::Map::updateParasiteOverlays() {
 
 void Cave::Map::updateJimParasiteInfestation() {
 	using P = Cave::Entity::Parasite;
-	if (m_state != Cave::State::Play || editorIdle()) {
+	if (editorIdle()) {
+		m_jimParasiteOverlayFrame = -1;
+		return;
+	}
+	// Keep the player parasite overlay visible during pause / ESC quit confirm.
+	// Only clear it when leaving play entirely (load/end/intro/etc.).
+	if (m_state != Cave::State::Play && m_state != Cave::State::Pause) {
 		m_jimParasiteOverlayFrame = -1;
 		return;
 	}
@@ -2974,36 +2982,39 @@ void Cave::Map::updateJimParasiteInfestation() {
 		P::setMode(over, P::MODE_DETACH);
 	};
 
-	if (m_game->isMultiplayer()) {
-		for (int i = 0; i < Net::MaxPlayers; ++i) {
-			int& frames = m_playerParasite[static_cast<size_t>(i)];
-			if (frames <= 0) continue;
-			frames--;
-			int jimCell = OUT_OF_BOUNDS_INDEX;
-			for (int cell = 0; cell < width * height; ++cell) {
-				if (getEntityType(cell) != Cave::Entity::Type::Jim) continue;
-				if (caveEntities[cell].spawnCredit == i) {
-					jimCell = cell;
-					break;
+	// Freeze the infestation countdown while paused; still refresh the overlay pose.
+	if (m_state == Cave::State::Play) {
+		if (m_game->isMultiplayer()) {
+			for (int i = 0; i < Net::MaxPlayers; ++i) {
+				int& frames = m_playerParasite[static_cast<size_t>(i)];
+				if (frames <= 0) continue;
+				frames--;
+				int jimCell = OUT_OF_BOUNDS_INDEX;
+				for (int cell = 0; cell < width * height; ++cell) {
+					if (getEntityType(cell) != Cave::Entity::Type::Jim) continue;
+					if (caveEntities[cell].spawnCredit == i) {
+						jimCell = cell;
+						break;
+					}
 				}
+				// Spawn body on the last overlay frame so clear→parasite has no gap.
+				if (frames == 1)
+					ensureDetach(jimCell);
 			}
-			// Spawn body on the last overlay frame so clear→parasite has no gap.
-			if (frames == 1)
-				ensureDetach(jimCell);
+			const int local = m_game->mpLocalId();
+			if (local >= 0 && local < Net::MaxPlayers)
+				m_jimParasiteFrames = m_playerParasite[static_cast<size_t>(local)];
 		}
-		const int local = m_game->mpLocalId();
-		if (local >= 0 && local < Net::MaxPlayers)
-			m_jimParasiteFrames = m_playerParasite[static_cast<size_t>(local)];
-	}
-	else {
-		if (m_jimParasiteFrames > 0)
-			m_jimParasiteFrames--;
-		if (m_jimParasiteFrames == 1)
-			ensureDetach(m_jimIndex);
-		if (inBounds(m_jimIndex) && getEntityType(m_jimIndex) == Cave::Entity::Type::Jim) {
-			const int pid = caveEntities[m_jimIndex].spawnCredit;
-			if (pid >= 0 && pid < Net::MaxPlayers)
-				m_playerParasite[static_cast<size_t>(pid)] = m_jimParasiteFrames;
+		else {
+			if (m_jimParasiteFrames > 0)
+				m_jimParasiteFrames--;
+			if (m_jimParasiteFrames == 1)
+				ensureDetach(m_jimIndex);
+			if (inBounds(m_jimIndex) && getEntityType(m_jimIndex) == Cave::Entity::Type::Jim) {
+				const int pid = caveEntities[m_jimIndex].spawnCredit;
+				if (pid >= 0 && pid < Net::MaxPlayers)
+					m_playerParasite[static_cast<size_t>(pid)] = m_jimParasiteFrames;
+			}
 		}
 	}
 
@@ -3837,16 +3848,22 @@ bool Cave::Map::isHiveBubbled(const int& cell) const {
 	return Cave::Entity::isMonster(getEntityType(cell));
 }
 
+void Cave::Map::applyHiveBubblePackageTraits(const int& prey) {
+	if (!inBounds(prey)) return;
+	// Inert package: no crush / hazard targeting, slips fallables, Jim can shove.
+	// Still destructible so explosions consume them like a boulder.
+	caveEntities[prey].removeTrait(Cave::Entity::Trait::Crushable);
+	caveEntities[prey].addTrait(Cave::Entity::Trait::Slippery);
+	caveEntities[prey].addTrait(Cave::Entity::Trait::Pushable);
+}
+
 void Cave::Map::beginHiveBubble(const int& prey) {
 	if (!inBounds(prey)) return;
 	if (!Cave::Entity::isHiveHuntPrey(getEntityType(prey))) return;
 	if (isHiveBubbled(prey)) return;
 	ensureCosmicUnder();
 	m_cosmicOver[static_cast<size_t>(prey)] = Cave::Entity::HiveHunterBubble();
-	// Inert package: no crush / hazard targeting, slips fallables.
-	// Still destructible so explosions consume them like a boulder.
-	caveEntities[prey].removeTrait(Cave::Entity::Trait::Crushable);
-	caveEntities[prey].addTrait(Cave::Entity::Trait::Slippery);
+	applyHiveBubblePackageTraits(prey);
 	// Keep any in-progress slide — clearing it snapped mid-tile and left a seam.
 	setEntityMoving(prey, false);
 }
@@ -3865,6 +3882,8 @@ void Cave::Map::updateHiveHunterBubbleOverlays() {
 			over = Cave::Entity::Base();
 			continue;
 		}
+		// Keep package traits even if the bubble was loaded / deposited without them.
+		applyHiveBubblePackageTraits(i);
 	}
 }
 
@@ -7486,6 +7505,8 @@ bool Cave::Map::tryHiveBuilderDepositDebris(const int& builder) {
 		using Bubble = Cave::Entity::HiveHunterBubble;
 		m_cosmicOver[static_cast<size_t>(below)] = Bubble();
 		m_cosmicOver[static_cast<size_t>(below)].setAnimationFrame(Bubble::FRAME_LAST);
+		if (Cave::Entity::isMonster(getEntityType(below)))
+			applyHiveBubblePackageTraits(below);
 	}
 	caveEntities[below].applyIntoTransition(Cave::Entity::Direction::DOWN, spaceAnim);
 	caveEntities[builder].applyAwayTransition(Cave::Entity::Direction::DOWN, cargoAnim);
@@ -8708,8 +8729,7 @@ bool Cave::Map::tryHiveCollectorDrop(const int& collector) {
 		using B = Cave::Entity::HiveHunterBubble;
 		m_cosmicOver[static_cast<size_t>(below)] = B();
 		m_cosmicOver[static_cast<size_t>(below)].setAnimationFrame(B::FRAME_LAST);
-		caveEntities[below].removeTrait(Cave::Entity::Trait::Crushable);
-		caveEntities[below].addTrait(Cave::Entity::Trait::Slippery);
+		applyHiveBubblePackageTraits(below);
 	}
 	caveEntities[below].applyIntoTransition(Cave::Entity::Direction::DOWN, spaceAnim);
 	caveEntities[collector].applyAwayTransition(Cave::Entity::Direction::DOWN, cargoAnim);
@@ -8756,8 +8776,7 @@ bool Cave::Map::tryHiveCollectorFlatDeposit(const int& collector) {
 			using B = Cave::Entity::HiveHunterBubble;
 			m_cosmicOver[static_cast<size_t>(vacated)] = B();
 			m_cosmicOver[static_cast<size_t>(vacated)].setAnimationFrame(B::FRAME_LAST);
-			caveEntities[vacated].removeTrait(Cave::Entity::Trait::Crushable);
-			caveEntities[vacated].addTrait(Cave::Entity::Trait::Slippery);
+			applyHiveBubblePackageTraits(vacated);
 		}
 		caveEntities[vacated].applyIntoTransition(Cave::Entity::Direction::DOWN, spaceAnim);
 		C::clearCargo(caveEntities[dest]);
@@ -8975,8 +8994,7 @@ bool Cave::Map::tryHiveServantDrop(const int& servant) {
 	using B = Cave::Entity::HiveHunterBubble;
 	m_cosmicOver[static_cast<size_t>(below)] = B();
 	m_cosmicOver[static_cast<size_t>(below)].setAnimationFrame(B::FRAME_LAST);
-	caveEntities[below].removeTrait(Cave::Entity::Trait::Crushable);
-	caveEntities[below].addTrait(Cave::Entity::Trait::Slippery);
+	applyHiveBubblePackageTraits(below);
 	caveEntities[below].applyIntoTransition(Cave::Entity::Direction::DOWN, spaceAnim);
 	caveEntities[servant].applyAwayTransition(Cave::Entity::Direction::DOWN, cargoAnim);
 	S::clearCargoKeepBubbledAway(caveEntities[servant]);
@@ -9016,8 +9034,7 @@ bool Cave::Map::tryHiveServantFlatDeposit(const int& servant) {
 		using B = Cave::Entity::HiveHunterBubble;
 		m_cosmicOver[static_cast<size_t>(vacated)] = B();
 		m_cosmicOver[static_cast<size_t>(vacated)].setAnimationFrame(B::FRAME_LAST);
-		caveEntities[vacated].removeTrait(Cave::Entity::Trait::Crushable);
-		caveEntities[vacated].addTrait(Cave::Entity::Trait::Slippery);
+		applyHiveBubblePackageTraits(vacated);
 		caveEntities[vacated].applyIntoTransition(Cave::Entity::Direction::DOWN, spaceAnim);
 		S::clearCargo(caveEntities[dest]);
 		caveEntities[dest].targetIndex = OUT_OF_BOUNDS_INDEX;
@@ -9367,14 +9384,22 @@ bool Cave::Map::tryLayGenomEgg(const int& index) {
 	using G = Cave::Entity::Genom;
 	if (getEntityType(index) != Cave::Entity::Type::Genom) return false;
 	if (G::breedMode(caveEntities[index]) != G::MODE_PREGNANT) return false;
+	if (getEntityTransitioning(index)) return false;
 
 	const int nest = caveEntities[index].targetIndex;
-	if (!isGenomEggNest(nest) || !isAdjacentCell(index, nest)) return false;
+	const int down = getIndex(index, Cave::Entity::Direction::DOWN);
+	// Eggs only drop downward from inside the Genom.
+	if (down != nest || !isGenomEggNest(down)) return false;
 
 	const int babyLook = G::pregnancyLook(caveEntities[index]);
 	if ((babyLook & G::LOOK_VALID) == 0) return false;
 
-	setEntity(nest, Cave::Entity::GenomEgg(babyLook));
+	Cave::Entity::GenomEgg egg(babyLook);
+	Cave::Entity::Animation eggAnim = egg.getAnimation();
+	Cave::Entity::Animation spaceAnim = Cave::Entity::Space().getAnimation();
+	setEntity(down, std::move(egg));
+	caveEntities[down].applyIntoTransition(Cave::Entity::Direction::DOWN, spaceAnim);
+	caveEntities[index].applyAwayTransition(Cave::Entity::Direction::DOWN, eggAnim);
 	m_game->soundManager.play(Sound::Effect::Drop);
 	G::resetBreed(caveEntities[index]);
 	return true;
@@ -9424,8 +9449,27 @@ void Cave::Map::updateGenom(const int& index) {
 	}
 
 	if (mode == G::MODE_PREGNANT) {
+		auto tryClimbToLay = [&]() -> bool {
+			const int up = getIndex(index, Cave::Entity::Direction::UP);
+			if (!inBounds(up) || !isMonsterWalkable(up) || getEntityTransitioning(up))
+				return false;
+			if (!tryMoveEnemy(index, Cave::Entity::Trait::Empty, Cave::Entity::Direction::UP))
+				return false;
+			// Vacated cell is now below — use it as the nest when it qualifies.
+			if (isGenomEggNest(index))
+				caveEntities[up].targetIndex = index;
+			return true;
+		};
+
 		int nest = caveEntities[index].targetIndex;
 		if (!isGenomEggNest(nest)) {
+			// Tile under us isn't empty — climb one up so next tick can drop into the vacated cell.
+			const int below = getIndex(index, Cave::Entity::Direction::DOWN);
+			const bool belowFree = inBounds(below) && !getEntityTransitioning(below)
+				&& hasTrait(Cave::Entity::Trait::Empty, below);
+			if (!belowFree && tryClimbToLay())
+				return;
+
 			if (timer > 0) {
 				G::setBreedState(caveEntities[index], G::MODE_PREGNANT, timer - 1);
 				// Same wander as Jelly — keep goal/hold across cooldown ticks.
@@ -9442,9 +9486,28 @@ void Cave::Map::updateGenom(const int& index) {
 			G::setBreedState(caveEntities[index], G::MODE_PREGNANT, 0);
 			caveEntities[index].extra = 0;
 		}
-		if (isAdjacentCell(index, nest) && tryLayGenomEgg(index))
+		// Stand directly above the nest so the egg can slide downward.
+		const int stand = getIndex(nest, Cave::Entity::Direction::UP);
+		if (!inBounds(stand) || (stand != index && !isMonsterWalkable(stand))) {
+			caveEntities[index].targetIndex = OUT_OF_BOUNDS_INDEX;
+			G::setBreedState(caveEntities[index], G::MODE_PREGNANT, G::SEARCH_RETRY_TICKS);
+			wanderTowardRandomEmpty(index, G::HOLD_TICKS);
 			return;
-		const Cave::Entity::Direction dir = findPathThroughEmpty(index, nest, false);
+		}
+		if (index == stand && tryLayGenomEgg(index))
+			return;
+		// Sitting on the nest (or blocked below) — step up so the egg can drop downward.
+		if ((nest == index || getIndex(index, Cave::Entity::Direction::UP) == stand)
+			&& tryClimbToLay())
+			return;
+		{
+			const int below = getIndex(index, Cave::Entity::Direction::DOWN);
+			const bool belowFree = inBounds(below) && !getEntityTransitioning(below)
+				&& hasTrait(Cave::Entity::Trait::Empty, below);
+			if (!belowFree && tryClimbToLay())
+				return;
+		}
+		const Cave::Entity::Direction dir = findPathThroughEmpty(index, stand, false);
 		if (dir != Cave::Entity::Direction::NO_DIRECTION
 			&& tryMoveEnemy(index, Cave::Entity::Trait::Empty, dir))
 			return;
@@ -9997,30 +10060,23 @@ bool Cave::Map::isMacowNestCell(const int& nest, const int& macow) const {
 
 bool Cave::Map::isMacowLayStand(const int& stand) const {
 	if (!inBounds(stand)) return false;
-	for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
-		if (isMacowNestCell(getIndex(stand, dir), stand))
-			return true;
-	}
-	return false;
+	// Eggs only drop downward — stand must have a nest cell directly below.
+	return isMacowNestCell(getIndex(stand, Cave::Entity::Direction::DOWN), stand);
 }
 
 bool Cave::Map::tryLayMacowEgg(const int& index) {
+	if (getEntityTransitioning(index)) return false;
 	const int down = getIndex(index, Cave::Entity::Direction::DOWN);
-	if (isMacowNestCell(down, index)) {
-		setEntity(down, Cave::Entity::MacowEgg());
-		return true;
-	}
-	int nests[4];
-	int count = 0;
-	for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
-		if (dir == Cave::Entity::Direction::DOWN) continue;
-		const int nest = getIndex(index, dir);
-		if (!isMacowNestCell(nest, index)) continue;
-		nests[count++] = nest;
-	}
-	if (count <= 0) return false;
-	const int dest = nests[Utils::randomInteger(0, count - 1)];
-	setEntity(dest, Cave::Entity::MacowEgg());
+	if (!isMacowNestCell(down, index)) return false;
+
+	Cave::Entity::MacowEgg egg;
+	Cave::Entity::Animation eggAnim = egg.getAnimation();
+	Cave::Entity::Animation spaceAnim = Cave::Entity::Space().getAnimation();
+	setEntity(down, std::move(egg));
+	caveEntities[down].applyIntoTransition(Cave::Entity::Direction::DOWN, spaceAnim);
+	// Egg away-layer slides out under the Macow into the cell below.
+	caveEntities[index].applyAwayTransition(Cave::Entity::Direction::DOWN, eggAnim);
+	m_game->soundManager.play(Sound::Effect::Drop);
 	return true;
 }
 
@@ -12575,26 +12631,23 @@ void Cave::Map::wanderGallopQueen(const int& index, const int& nest, bool nestOn
 
 bool Cave::Map::tryLayGallopEgg(const int& index) {
 	if (getEntityType(index) != Cave::Entity::Type::GallopQueen) return false;
+	if (getEntityTransitioning(index)) return false;
 
 	const int nest = caveEntities[index].targetIndex;
-	const Cave::Entity::Direction sides[3] = {
-		Cave::Entity::Direction::DOWN,
-		Cave::Entity::Direction::LEFT,
-		Cave::Entity::Direction::RIGHT,
-	};
+	const int dest = getIndex(index, Cave::Entity::Direction::DOWN);
+	if (dest == OUT_OF_BOUNDS_INDEX) return false;
+	if (inBounds(nest) && !inGallopQueenNest(nest, dest)) return false;
+	if (!gallopDepositSupported(dest)) return false;
 
-	for (Cave::Entity::Direction dir : sides) {
-		const int dest = getIndex(index, dir);
-		if (dest == OUT_OF_BOUNDS_INDEX) continue;
-		if (inBounds(nest) && !inGallopQueenNest(nest, dest)) continue;
-		if (!gallopDepositSupported(dest)) continue;
-
-		setEntity(dest, Cave::Entity::GallopEgg());
-		m_game->soundManager.play(Sound::Effect::Drop);
-		return true;
-	}
-
-	return false;
+	Cave::Entity::GallopEgg egg;
+	Cave::Entity::Animation eggAnim = egg.getAnimation();
+	Cave::Entity::Animation spaceAnim = Cave::Entity::Space().getAnimation();
+	setEntity(dest, std::move(egg));
+	caveEntities[dest].applyIntoTransition(Cave::Entity::Direction::DOWN, spaceAnim);
+	// Egg away-layer slides out under the queen into the cell below.
+	caveEntities[index].applyAwayTransition(Cave::Entity::Direction::DOWN, eggAnim);
+	m_game->soundManager.play(Sound::Effect::Drop);
+	return true;
 }
 
 void Cave::Map::updateGallopQueen(const int& index) {
@@ -12708,6 +12761,18 @@ void Cave::Map::updateGallopQueen(const int& index) {
 				else
 					packed = Q::packCredit(Q::MODE_NEST, 0, ignore);
 				return;
+			}
+			// Tile under her isn't empty — climb one up so next tick can drop into the vacated cell.
+			{
+				const int below = getIndex(index, Cave::Entity::Direction::DOWN);
+				const bool belowFree = inBounds(below) && !getEntityTransitioning(below)
+					&& hasTrait(Cave::Entity::Trait::Empty, below);
+				const int up = getIndex(index, Cave::Entity::Direction::UP);
+				const bool canClimb = inBounds(up) && !getEntityTransitioning(up)
+					&& gallopCanTraverse(up);
+				if (!belowFree && canClimb
+					&& tryMoveEnemy(index, Cave::Entity::Trait::Empty, Cave::Entity::Direction::UP))
+					return;
 			}
 			if (!nestHasStableGallopSpot(nest)) {
 				if (state - Q::MODE_LAY >= Q::LAY_TICKS + Q::STALL_TICKS) {
@@ -13023,7 +13088,13 @@ bool Cave::Map::nestHasStableGallopSpot(const int& nest) const {
 	for (int y = ny - radius; y <= ny + radius; ++y) {
 		for (int x = nx - radius; x <= nx + radius; ++x) {
 			if (x < 0 || y < 0 || x >= width || y >= height) continue;
-			if (gallopDepositSupported(y * width + x)) return true;
+			const int stand = y * width + x;
+			const int down = getIndex(stand, Cave::Entity::Direction::DOWN);
+			// Need a stand in-nest with a downward deposit slot also in-nest.
+			if (!inGallopQueenNest(nest, stand)) continue;
+			if (!gallopDepositSupported(down)) continue;
+			if (!inGallopQueenNest(nest, down)) continue;
+			return true;
 		}
 	}
 	return false;
@@ -13032,6 +13103,14 @@ bool Cave::Map::nestHasStableGallopSpot(const int& nest) const {
 int Cave::Map::findGallopDepositSpot(const int& index, const int& nest) const {
 	const int cellCount = static_cast<int>(caveEntities.size());
 	if (index < 0 || index >= cellCount) return OUT_OF_BOUNDS_INDEX;
+
+	auto isLayStand = [&](int cell) -> bool {
+		if (!inGallopQueenNest(nest, cell)) return false;
+		const int down = getIndex(cell, Cave::Entity::Direction::DOWN);
+		return gallopDepositSupported(down) && inGallopQueenNest(nest, down);
+	};
+
+	if (isLayStand(index)) return index;
 
 	std::vector<char> visited(static_cast<size_t>(cellCount), 0);
 	std::queue<int> frontier;
@@ -13048,7 +13127,8 @@ int Cave::Map::findGallopDepositSpot(const int& index, const int& nest) const {
 			if (visited[static_cast<size_t>(next)]) continue;
 			if (!gallopCanTraverse(next)) continue;
 			visited[static_cast<size_t>(next)] = 1;
-			if (inGallopQueenNest(nest, next) && gallopDepositSupported(next)) return next;
+			// Path to a stand above a deposit cell (egg drops downward only).
+			if (isLayStand(next)) return next;
 			frontier.push(next);
 		}
 	}
@@ -13847,6 +13927,7 @@ bool Cave::Map::isFallableEntity(const int& index) const {
 	case Cave::Entity::Type::TrapFull:
 	case Cave::Entity::Type::Ruby:
 	case Cave::Entity::Type::Pyrobe:
+	case Cave::Entity::Type::Key:
 	case Cave::Entity::Type::GallopEgg:
 	case Cave::Entity::Type::MacowEgg:
 	case Cave::Entity::Type::MacowEggCooked:
@@ -13858,6 +13939,8 @@ bool Cave::Map::isFallableEntity(const int& index) const {
 	case Cave::Entity::Type::Coral:
 		return true;
 	case Cave::Entity::Type::Fish:
+		// Bubbled packages fall like boulders even underwater.
+		if (isHiveBubbled(index)) return true;
 		// Only fallable when dry. In water, update with other monsters so traps
 		// can catch a settled fish before it starts the next swim slide.
 		return !isWaterCell(index);

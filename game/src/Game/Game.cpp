@@ -658,8 +658,18 @@ void Game::mainGameLoop() {
     sf::Shader waterWaveShader;
     bool waterWaveOk = waterWaveShader.loadFromFile(
         "./assets/shaders/water_wave.frag", sf::Shader::Type::Fragment);
-    if (waterWaveOk)
+    if (waterWaveOk) {
         waterWaveShader.setUniform("time", 0.f);
+        // Soft water-blue for the Color brightness layer (#4a7fa0).
+        waterWaveShader.setUniform("blendColor", sf::Glsl::Vec3(
+            74.f / 255.f, 127.f / 255.f, 160.f / 255.f));
+        waterWaveShader.setUniform("tint", sf::Glsl::Vec3{ 0.5f, 0.5f, 0.5f });
+        waterWaveShader.setUniform("viewCenter", sf::Glsl::Vec2{ 0.f, 0.f });
+        waterWaveShader.setUniform("viewSize", sf::Glsl::Vec2{
+            static_cast<float>(SCREEN_WIDTH), static_cast<float>(SCREEN_HEIGHT) });
+        waterWaveShader.setUniform("rtSize", sf::Glsl::Vec2{
+            static_cast<float>(SCREEN_WIDTH), static_cast<float>(SCREEN_HEIGHT) });
+    }
 
     // View that maps the virtual screen (640x480) to fill the entire window.
     auto makeWindowView = [&]() -> sf::View {
@@ -909,6 +919,23 @@ void Game::mainGameLoop() {
                 map.drawWaterMask(waterMaskRt);
                 waterMaskRt.display();
 
+                {
+                    // Use Camera getters (same centre the view was set from when drawing).
+                    const sf::Vector2f c = camera.getCenter();
+                    const sf::Vector2f s = camera.getSize();
+                    waterWaveShader.setUniform("viewCenter", sf::Glsl::Vec2{ c.x, c.y });
+                    waterWaveShader.setUniform("viewSize", sf::Glsl::Vec2{ s.x, s.y });
+                }
+                {
+                    const bool fixed = getGameOptions().fixedColours;
+                    waterWaveShader.setUniform("tint", fixed
+                        ? sf::Glsl::Vec3{ 0.5f, 0.5f, 0.5f }
+                        : sf::Glsl::Vec3{
+                            static_cast<float>(std::clamp(getHue(), 0, 200)) / 200.f,
+                            static_cast<float>(std::clamp(getSat(), 0, 200)) / 200.f,
+                            static_cast<float>(std::clamp(getLum(), 0, 200)) / 200.f,
+                        });
+                }
                 waterWaveShader.setUniform("time", fxTime);
                 waterWaveShader.setUniform("waterMask", waterMaskRt.getTexture());
 

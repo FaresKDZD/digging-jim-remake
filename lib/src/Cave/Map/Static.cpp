@@ -150,16 +150,26 @@ bool Cave::Map::tryCaptureMonsterInTrap(const int& trapIndex) {
 			clearPufferBodies(monster);
 
 		int look = 0;
+		Cave::Entity::Direction face = Cave::Entity::Direction::NO_DIRECTION;
 		if (type == Cave::Entity::Type::Genom
 			&& Cave::Entity::Genom::hasLook(caveEntities[monster]))
 			look = caveEntities[monster].spawnCredit;
-		else if (type == Cave::Entity::Type::Fish
-			&& Cave::Entity::Fish::hasLook(caveEntities[monster]))
-			look = caveEntities[monster].spawnCredit;
+		else if (type == Cave::Entity::Type::Fish) {
+			if (Cave::Entity::Fish::hasLook(caveEntities[monster]))
+				look = caveEntities[monster].spawnCredit;
+			face = getEntityDirection(monster);
+			if (face != Cave::Entity::Direction::LEFT
+				&& face != Cave::Entity::Direction::RIGHT)
+				face = caveEntities[monster].direction;
+			if (face != Cave::Entity::Direction::LEFT
+				&& face != Cave::Entity::Direction::RIGHT)
+				face = Cave::Entity::Direction::RIGHT;
+		}
 		setEntity(monster, Cave::Entity::Space());
 		setEntity(trapIndex, Cave::Entity::TrapFilling());
 		caveEntities[trapIndex].spawnCredit = static_cast<int>(type);
 		caveEntities[trapIndex].extra = look;
+		caveEntities[trapIndex].direction = face;
 		m_game->soundManager.play(Sound::Effect::Drop);
 		return true;
 	}
@@ -171,6 +181,7 @@ void Cave::Map::releaseTrapMonster(const int& index) {
 		return;
 	const auto contained = static_cast<Cave::Entity::Type>(caveEntities[index].spawnCredit);
 	const int look = caveEntities[index].extra;
+	const Cave::Entity::Direction face = caveEntities[index].direction;
 	if (Cave::Entity::isTrapCapturable(contained))
 		setEntity(index, monsterFromType(contained));
 	else
@@ -178,9 +189,17 @@ void Cave::Map::releaseTrapMonster(const int& index) {
 	if (getEntityType(index) == Cave::Entity::Type::Genom
 		&& (look & Cave::Entity::Genom::LOOK_VALID) != 0)
 		caveEntities[index].spawnCredit = look;
-	if (getEntityType(index) == Cave::Entity::Type::Fish
-		&& (look & Cave::Entity::Fish::LOOK_VALID) != 0)
-		caveEntities[index].spawnCredit = look;
+	if (getEntityType(index) == Cave::Entity::Type::Fish) {
+		if ((look & Cave::Entity::Fish::LOOK_VALID) != 0)
+			caveEntities[index].spawnCredit = look;
+		Cave::Entity::Direction dir = face;
+		if (dir != Cave::Entity::Direction::LEFT
+			&& dir != Cave::Entity::Direction::RIGHT)
+			dir = Cave::Entity::Direction::RIGHT;
+		setEntityDirection(index, dir);
+		caveEntities[index].extra = Cave::Entity::Fish::MODE_MOVE;
+		setEntityAnimation(index, Cave::Entity::Fish::moveAnimation(dir));
+	}
 	if (getEntityType(index) == Cave::Entity::Type::GallopQueen) {
 		caveEntities[index].targetIndex = index;
 		caveEntities[index].spawnCredit = Cave::Entity::GallopQueen::MODE_NEST;
@@ -380,9 +399,11 @@ void Cave::Map::updateTrapFilling(const int& index) {
 	}
 	const auto contained = static_cast<Cave::Entity::Type>(caveEntities[index].spawnCredit);
 	const int look = caveEntities[index].extra;
+	const Cave::Entity::Direction face = caveEntities[index].direction;
 	setEntity(index, Cave::Entity::TrapFull(
 		Cave::Entity::isTrapCapturable(contained) ? contained : Cave::Entity::Type::Protozo,
 		look));
+	caveEntities[index].direction = face;
 }
 
 void Cave::Map::updateTrapFull(const int& index) {
@@ -438,6 +459,7 @@ void Cave::Map::beginCompressorEat(const int& compressor, const int& trapCell) {
 
 	const auto contained = static_cast<Cave::Entity::Type>(caveEntities[trapCell].spawnCredit);
 	const int look = caveEntities[trapCell].extra;
+	const Cave::Entity::Direction face = caveEntities[trapCell].direction;
 	if (Cave::Entity::isTrapCapturable(contained))
 		setEntity(trapCell, monsterFromType(contained));
 	else
@@ -445,9 +467,17 @@ void Cave::Map::beginCompressorEat(const int& compressor, const int& trapCell) {
 	if (getEntityType(trapCell) == Cave::Entity::Type::Genom
 		&& (look & Cave::Entity::Genom::LOOK_VALID) != 0)
 		caveEntities[trapCell].spawnCredit = look;
-	if (getEntityType(trapCell) == Cave::Entity::Type::Fish
-		&& (look & Cave::Entity::Fish::LOOK_VALID) != 0)
-		caveEntities[trapCell].spawnCredit = look;
+	if (getEntityType(trapCell) == Cave::Entity::Type::Fish) {
+		if ((look & Cave::Entity::Fish::LOOK_VALID) != 0)
+			caveEntities[trapCell].spawnCredit = look;
+		Cave::Entity::Direction dir = face;
+		if (dir != Cave::Entity::Direction::LEFT
+			&& dir != Cave::Entity::Direction::RIGHT)
+			dir = Cave::Entity::Direction::RIGHT;
+		setEntityDirection(trapCell, dir);
+		caveEntities[trapCell].extra = Cave::Entity::Fish::MODE_MOVE;
+		setEntityAnimation(trapCell, Cave::Entity::Fish::moveAnimation(dir));
+	}
 	if (getEntityType(trapCell) == Cave::Entity::Type::GallopQueen) {
 		caveEntities[trapCell].targetIndex = trapCell;
 		caveEntities[trapCell].spawnCredit = Cave::Entity::GallopQueen::MODE_NEST;
@@ -534,13 +564,17 @@ void Cave::Map::updateCompressor(const int& index) {
 					|| preyType == Cave::Entity::Type::GenomEgg)
 				&& Cave::Entity::Genom::hasLook(caveEntities[prey]))
 				? caveEntities[prey].spawnCredit : 0;
+			const int fishLook = (preyType == Cave::Entity::Type::Fish
+				&& Cave::Entity::Fish::hasLook(caveEntities[prey]))
+				? caveEntities[prey].spawnCredit : 0;
+			const int rideLook = genomLook != 0 ? genomLook : fishLook;
 			setEntity(prey, Cave::Entity::Space());
-			// Keep layered Genom look on the vacated Space so the away ghost draws the stack.
-			if (genomLook != 0)
-				caveEntities[prey].spawnCredit = genomLook;
+			// Keep Genom/Fish look on the vacated Space so the away ghost stays tinted.
+			if (rideLook != 0)
+				caveEntities[prey].spawnCredit = rideLook;
 			caveEntities[prey].applyAwayTransition(Cave::Entity::Direction::DOWN, preyAnim);
 			// Ride into the mouth under the compressor (renderer keeps compressor full-tile on top).
-			caveEntities[index].homeIndex = genomLook != 0 ? genomLook : -1;
+			caveEntities[index].homeIndex = rideLook != 0 ? rideLook : -1;
 			caveEntities[index].applyIntoTransition(Cave::Entity::Direction::DOWN, preyAnim);
 			C::setMode(caveEntities[index], C::MODE_SUCKING);
 			caveEntities[index].extra = 1; // mark suck slide started
@@ -745,6 +779,20 @@ void Cave::Map::updateGate(const int& index) {
 	}
 }
 
+void Cave::Map::updateLock(const int& index) {
+	if (getEntityType(index) != Cave::Entity::Type::Lock) return;
+	auto& lock = caveEntities[index];
+	if (lock.spawnCredit != Cave::Entity::Lock::MODE_UNLOCKING) return;
+
+	const int last = static_cast<int>(lock.getAnimation().frames.size()) - 1;
+	int frame = lock.getAnimation().currentFrame;
+	if (frame < last) {
+		lock.setAnimationFrame(frame + 1);
+		return;
+	}
+	setEntity(index, Cave::Entity::Space());
+}
+
 void Cave::Map::toggleGate(const int& index) {
 	if (getEntityType(index) != Cave::Entity::Type::Gate) return;
 	auto& gate = caveEntities[index];
@@ -906,11 +954,15 @@ bool Cave::Map::isWaterLoggable(const Cave::Entity::Base& entity) const {
 	case T::HotBoulderCracked:
 	case T::Diamond:
 	case T::FragileDiamond:
+	case T::BreakingFragileDiamond:
 	case T::HollowDiamond:
 	case T::Ore:
+	case T::OreTransformation:
 	case T::Bomb:
 	case T::TNT:
 	case T::TimeBomb:
+	case T::Key:
+	case T::Lock:
 	case T::TrapEmpty:
 	case T::TrapFull:
 	case T::Ruby:

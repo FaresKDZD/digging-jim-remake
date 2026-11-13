@@ -52,7 +52,7 @@ void Cave::Map::load() {
 	}
 }
 
-void Cave::Map::generateMap(const Cave::Properties* properties, const std::vector<char>& tileData, const std::vector<Cave::WellRecord>& wells, const std::vector<Cave::PortalRecord>& portals, const std::vector<Cave::CosmicRecord>& cosmics, const std::vector<Cave::GenomRecord>& genoms, const std::vector<Cave::HiveBubbleRecord>& hiveBubbles, const std::vector<Cave::HiveBubbleRecord>& waterUnders) {
+void Cave::Map::generateMap(const Cave::Properties* properties, const std::vector<char>& tileData, const std::vector<Cave::WellRecord>& wells, const std::vector<Cave::PortalRecord>& portals, const std::vector<Cave::CosmicRecord>& cosmics, const std::vector<Cave::GenomRecord>& genoms, const std::vector<Cave::HiveBubbleRecord>& hiveBubbles, const std::vector<Cave::HiveBubbleRecord>& waterUnders, const std::vector<Cave::TrapFullRecord>& trapFulls) {
 
 	// Reset start door location
 	m_startDoorIndex = OUT_OF_BOUNDS_INDEX;
@@ -183,6 +183,20 @@ void Cave::Map::generateMap(const Cave::Properties* properties, const std::vecto
 		}
 	}
 
+	for (const auto& trap : trapFulls) {
+		const int index = static_cast<int>(trap.index);
+		if (!inBounds(index)) continue;
+		if (getEntityType(index) != Cave::Entity::Type::TrapFull
+			&& getEntityType(index) != Cave::Entity::Type::TrapFilling)
+			continue;
+		const auto contained = static_cast<Cave::Entity::Type>(trap.packed & 0xFFFF);
+		const Cave::Entity::Type monster = Cave::Entity::isTrapCapturable(contained)
+			? contained : Cave::Entity::Type::Protozo;
+		const auto face = static_cast<Cave::Entity::Direction>((trap.packed >> 16) & 0xFF);
+		setEntity(index, Cave::Entity::TrapFull(monster, trap.look));
+		caveEntities[index].direction = face;
+	}
+
 	for (const auto& bubble : hiveBubbles) {
 		const int index = static_cast<int>(bubble.index);
 		if (!inBounds(index) || !Cave::Entity::isMonster(getEntityType(index)))
@@ -190,8 +204,7 @@ void Cave::Map::generateMap(const Cave::Properties* properties, const std::vecto
 		using B = Cave::Entity::HiveHunterBubble;
 		m_cosmicOver[static_cast<size_t>(index)] = B();
 		m_cosmicOver[static_cast<size_t>(index)].setAnimationFrame(B::FRAME_LAST);
-		caveEntities[index].removeTrait(Cave::Entity::Trait::Crushable);
-		caveEntities[index].addTrait(Cave::Entity::Trait::Slippery);
+		applyHiveBubblePackageTraits(index);
 	}
 
 	for (const auto& under : waterUnders) {
@@ -234,11 +247,13 @@ void Cave::Map::generateMap(const Cave::Properties* properties, const std::vecto
 	m_game->soundManager.stop(Sound::Effect::Wawa);
 	m_hollowCarried = 0;
 	m_timeBombsCarried = 0;
+	m_keysCarried = 0;
 	m_landminesCarried = 0;
 	m_macowEggsCarried = 0;
 	m_macowCookedEggsCarried = 0;
 	m_emptyTrapsCarried = 0;
 	m_fullTrapsCarried.clear();
+	m_trapSlideUnder.clear();
 	m_jimInvincibleFrames = 0;
 	m_jimPyrobeFrames = 0;
 	m_jimParasiteFrames = 0;
@@ -881,6 +896,21 @@ void Cave::Map::collectWaterUnderRecords(std::vector<Cave::HiveBubbleRecord>& ou
 		if (!coveredWater) continue;
 		Cave::HiveBubbleRecord rec;
 		rec.index = static_cast<uint16_t>(index);
+		out.push_back(rec);
+	}
+}
+
+void Cave::Map::collectTrapFullRecords(std::vector<Cave::TrapFullRecord>& out) const {
+	out.clear();
+	for (int index = 0; index < width * height; ++index) {
+		const Cave::Entity::Type type = getEntityType(index);
+		if (type != Cave::Entity::Type::TrapFull && type != Cave::Entity::Type::TrapFilling)
+			continue;
+		Cave::TrapFullRecord rec;
+		rec.index = static_cast<uint16_t>(index);
+		const int facing = static_cast<int>(caveEntities[index].direction);
+		rec.packed = (caveEntities[index].spawnCredit & 0xFFFF) | ((facing & 0xFF) << 16);
+		rec.look = caveEntities[index].extra;
 		out.push_back(rec);
 	}
 }

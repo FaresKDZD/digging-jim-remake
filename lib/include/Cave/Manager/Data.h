@@ -32,6 +32,14 @@ namespace Cave {
         int32_t packed = 0;
     };
 
+    /// @brief Full trap contents: contained monster type + Genom/Fish look.
+    struct TrapFullRecord {
+        uint16_t index = 0;
+        /// @brief Low 16 bits = contained Type; bits 16-23 = fish facing Direction.
+        int32_t packed = 0;
+        int32_t look = 0;   ///< Genom/Fish look (LOOK_VALID bit when set).
+    };
+
     /// @brief Per-singularity cosmic job limits stored alongside cave tile data.
     struct CosmicRecord {
         uint16_t index = 0;
@@ -74,6 +82,9 @@ namespace Cave {
 
         /// @brief Cells with water covered under another entity (editor / save / sim-keep).
         std::vector<HiveBubbleRecord> waterUnders;
+
+        /// @brief Full traps and their contained monster + look (editor / save / sim-keep).
+        std::vector<TrapFullRecord> trapFulls;
 
         /// @brief Job limits for each Singularity in this cave.
         std::vector<CosmicRecord> cosmics;

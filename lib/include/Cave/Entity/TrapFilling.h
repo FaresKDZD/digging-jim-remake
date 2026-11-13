@@ -6,7 +6,8 @@ namespace Cave::Entity {
 
     /**
      * @class TrapFilling
-     * @brief One-shot capture animation. spawnCredit = monster type; extra = Genom look.
+     * @brief One-shot capture animation. spawnCredit = monster type; extra = look.
+     * Transparent cage draws above the contained monster.
      */
     class TrapFilling : public Base {
     public:
