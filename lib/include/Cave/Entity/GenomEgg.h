@@ -22,11 +22,14 @@ namespace Cave::Entity {
             addTrait(Trait::Slippery);
             extra = IDLE_TICKS;
             spawnCredit = 0;
+            stuckTicks = Genom::packBehaviour(Genom::MOVE_WANDER, true, true);
         }
 
-        explicit GenomEgg(int babyLook)
+        explicit GenomEgg(int babyLook, int babyMove = Genom::MOVE_WANDER,
+            bool babyBreed = true, bool babyDropDiamonds = true)
             : GenomEgg() {
             spawnCredit = babyLook | Genom::LOOK_VALID;
+            stuckTicks = Genom::packBehaviour(babyMove, babyBreed, babyDropDiamonds);
         }
 
         static bool isHatching(const Base& entity) {

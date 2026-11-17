@@ -195,6 +195,24 @@ Cave::File Cave::File::loadFromFile(const std::string& directory, const std::str
             }
             continue;
         }
+        if (isGenm) {
+            const uint32_t version = readReversedUint32(verBytes);
+            const int recSize = (version >= 2) ? 12 : 8;
+            for (uint32_t n = 0; n < count; ++n) {
+                char rec[12] = {};
+                if (!file.read(rec, recSize)) break;
+                const uint16_t caveIndex = readReversedUint16(&rec[0]);
+                if (caveIndex >= caveFile.caves.size()) continue;
+                Cave::GenomRecord genom;
+                genom.index = readReversedUint16(&rec[2]);
+                genom.packed = static_cast<int32_t>(readReversedUint32(&rec[4]));
+                genom.behaviour = (version >= 2)
+                    ? static_cast<int32_t>(readReversedUint32(&rec[8]))
+                    : Cave::Entity::Genom::MOVE_WANDER;
+                caveFile.caves[caveIndex].genoms.push_back(genom);
+            }
+            continue;
+        }
         for (uint32_t n = 0; n < count; ++n) {
             char rec[8] = {};
             if (!file.read(rec, 8)) break;
@@ -211,12 +229,6 @@ Cave::File Cave::File::loadFromFile(const std::string& directory, const std::str
                 portal.index = readReversedUint16(&rec[2]);
                 portal.packed = static_cast<int32_t>(readReversedUint32(&rec[4]));
                 caveFile.caves[caveIndex].portals.push_back(portal);
-            }
-            else if (isGenm) {
-                Cave::GenomRecord genom;
-                genom.index = readReversedUint16(&rec[2]);
-                genom.packed = static_cast<int32_t>(readReversedUint32(&rec[4]));
-                caveFile.caves[caveIndex].genoms.push_back(genom);
             }
             else if (isBubl) {
                 Cave::HiveBubbleRecord bubble;
@@ -296,8 +308,37 @@ void Cave::File::saveToFile(const Cave::File& caveFile, const std::string& fullP
     writePackedChunk(file, wellMagic, caveFile.caves, &Cave::Data::wells);
     const char portMagic[4] = { 'P', 'O', 'R', 'T' };
     writePackedChunk(file, portMagic, caveFile.caves, &Cave::Data::portals);
-    const char genmMagic[4] = { 'G', 'E', 'N', 'M' };
-    writePackedChunk(file, genmMagic, caveFile.caves, &Cave::Data::genoms);
+    {
+        uint32_t genomCount = 0;
+        for (const auto& cave : caveFile.caves)
+            genomCount += static_cast<uint32_t>(cave.genoms.size());
+        if (genomCount > 0) {
+            const char genmMagic[4] = { 'G', 'E', 'N', 'M' };
+            file.write(genmMagic, 4);
+            writeUint32LE(file, 2); // v2: look + movement behaviour
+            writeUint32LE(file, genomCount);
+            for (uint16_t caveIndex = 0; caveIndex < static_cast<uint16_t>(caveFile.caves.size()); ++caveIndex) {
+                for (const auto& genom : caveFile.caves[caveIndex].genoms) {
+                    char bytes[12] = {};
+                    bytes[0] = static_cast<char>(caveIndex & 0xFF);
+                    bytes[1] = static_cast<char>((caveIndex >> 8) & 0xFF);
+                    bytes[2] = static_cast<char>(genom.index & 0xFF);
+                    bytes[3] = static_cast<char>((genom.index >> 8) & 0xFF);
+                    const uint32_t packed = static_cast<uint32_t>(genom.packed);
+                    bytes[4] = static_cast<char>(packed & 0xFF);
+                    bytes[5] = static_cast<char>((packed >> 8) & 0xFF);
+                    bytes[6] = static_cast<char>((packed >> 16) & 0xFF);
+                    bytes[7] = static_cast<char>((packed >> 24) & 0xFF);
+                    const uint32_t behaviour = static_cast<uint32_t>(genom.behaviour);
+                    bytes[8] = static_cast<char>(behaviour & 0xFF);
+                    bytes[9] = static_cast<char>((behaviour >> 8) & 0xFF);
+                    bytes[10] = static_cast<char>((behaviour >> 16) & 0xFF);
+                    bytes[11] = static_cast<char>((behaviour >> 24) & 0xFF);
+                    file.write(bytes, 12);
+                }
+            }
+        }
+    }
     const char bublMagic[4] = { 'B', 'U', 'B', 'L' };
     writePackedChunk(file, bublMagic, caveFile.caves, &Cave::Data::hiveBubbles);
     const char watrMagic[4] = { 'W', 'A', 'T', 'R' };

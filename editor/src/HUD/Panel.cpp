@@ -46,6 +46,8 @@ HUD::Editor::Panel::Panel(::Editor* editor) : m_editor(editor), m_tileRenderer(&
         m_entities[variant.type] = getNewEntity(variant.type);
     for (const auto& variant : Cave::Entity::God::VARIANTS)
         m_entities[variant.type] = getNewEntity(variant.type);
+    for (const auto& variant : Cave::Entity::Dirt::VARIANTS)
+        m_entities[variant.type] = getNewEntity(variant.type);
     for (const auto& variant : Cave::Entity::Jimlin::VARIANTS)
         m_entities[variant.type] = getNewEntity(variant.type);
     for (const auto& variant : Cave::Entity::Gate::VARIANTS)
@@ -61,8 +63,15 @@ HUD::Editor::Panel::Panel(::Editor* editor) : m_editor(editor), m_tileRenderer(&
     for (const auto& variant : Cave::Entity::HiveWall::VARIANTS)
         m_entities[variant.type] = getNewEntity(variant.type);
 
-    if (m_entities.count(Cave::Entity::Type::Genom))
-        m_genomLook = m_entities[Cave::Entity::Type::Genom].spawnCredit;
+    if (m_entities.count(Cave::Entity::Type::Genom)) {
+        using G = Cave::Entity::Genom;
+        auto& genom = m_entities[Cave::Entity::Type::Genom];
+        m_genomLook = genom.spawnCredit;
+        // Constructor defaults wander+breed+drop; match Randomize-on by sampling behaviours too.
+        if (m_genomRandomize)
+            genom.stuckTicks = G::packBehaviour(
+                G::randomMovement(), G::randomCanBreed(), G::randomDropsDiamonds());
+    }
     if (m_entities.count(Cave::Entity::Type::Fish))
         m_fishLook = m_entities[Cave::Entity::Type::Fish].spawnCredit;
 
@@ -252,6 +261,7 @@ int HUD::Editor::Panel::miniTileIndex(Cave::Entity::Type type)
     case T::Parasite:         return 134;
     case T::Lock:             return 135;
     case T::Key:              return 136;
+    case T::Gravel:           return 137;
     case T::Jimlin1:         return 67;
     case T::Jimlin2:         return 68;
     case T::Jimlin3:         return 69;
@@ -760,6 +770,7 @@ void HUD::Editor::Panel::pickEntityType(Cave::Entity::Type type) {
     if (Cave::Entity::isFusion(type)) { setFusionType(type); return; }
     if (Cave::Entity::isPyrozoVariant(type)) { setPyrozoType(type); return; }
     if (Cave::Entity::isGodVariant(type)) { setGodType(type); return; }
+    if (Cave::Entity::isDirtVariant(type)) { setDirtType(type); return; }
     if (Cave::Entity::isJimlin(type)) { setJimlinType(type); return; }
     if (Cave::Entity::isGateVariant(type)) { setGateType(type); return; }
     if (Cave::Entity::isJimlinBlockVariant(type)) { setJimlinBlockType(type); return; }
@@ -816,6 +827,16 @@ void HUD::Editor::Panel::setGodType(Cave::Entity::Type type) {
     if (!Cave::Entity::isGodVariant(type)) return;
     m_godType = type;
     selectType(GodSlotX, GodSlotY);
+}
+
+bool HUD::Editor::Panel::isDirtSlot(const int& x, const int& y) const {
+    return x == DirtSlotX && y == DirtSlotY;
+}
+
+void HUD::Editor::Panel::setDirtType(Cave::Entity::Type type) {
+    if (!Cave::Entity::isDirtVariant(type)) return;
+    m_dirtType = type;
+    selectType(DirtSlotX, DirtSlotY);
 }
 
 bool HUD::Editor::Panel::isJimlinSlot(const int& x, const int& y) const {
@@ -877,33 +898,45 @@ bool HUD::Editor::Panel::isFishSlot(const int& x, const int& y) const {
 }
 
 void HUD::Editor::Panel::syncGenomPaletteEntity() {
+    using G = Cave::Entity::Genom;
     auto it = m_entities.find(Cave::Entity::Type::Genom);
     if (it == m_entities.end()) return;
-    if (m_genomRandomize)
-        it->second.spawnCredit = Cave::Entity::Genom::randomLook();
+    if (m_genomRandomize) {
+        it->second.spawnCredit = G::randomLook();
+        it->second.stuckTicks = G::packBehaviour(
+            G::randomMovement(), G::randomCanBreed(), G::randomDropsDiamonds());
+    }
     else {
-        if ((m_genomLook & Cave::Entity::Genom::LOOK_VALID) == 0)
-            m_genomLook = Cave::Entity::Genom::randomLook();
+        if ((m_genomLook & G::LOOK_VALID) == 0)
+            m_genomLook = G::randomLook();
         it->second.spawnCredit = m_genomLook;
+        it->second.stuckTicks = G::packBehaviour(m_genomMove, m_genomCanBreed, m_genomDropsDiamonds);
     }
 }
 
 void HUD::Editor::Panel::setGenomRandomize(bool randomize) {
+    using G = Cave::Entity::Genom;
     if (m_genomRandomize == randomize) return;
     m_genomRandomize = randomize;
     auto it = m_entities.find(Cave::Entity::Type::Genom);
     if (it == m_entities.end()) return;
     if (randomize) {
-        // Fresh sample on the icon; keep m_genomLook as the last custom for when randomize turns off.
-        it->second.spawnCredit = Cave::Entity::Genom::randomLook();
+        // Fresh sample on the icon; keep m_genomLook/move as the last custom for when randomize turns off.
+        it->second.spawnCredit = G::randomLook();
+        it->second.stuckTicks = G::packBehaviour(
+            G::randomMovement(), G::randomCanBreed(), G::randomDropsDiamonds());
     }
     else {
-        // What you see becomes the fixed place look.
-        if ((it->second.spawnCredit & Cave::Entity::Genom::LOOK_VALID) != 0)
+        // What you see becomes the fixed place look / behaviour.
+        if ((it->second.spawnCredit & G::LOOK_VALID) != 0)
             m_genomLook = it->second.spawnCredit;
-        if ((m_genomLook & Cave::Entity::Genom::LOOK_VALID) == 0)
-            m_genomLook = Cave::Entity::Genom::randomLook();
+        if ((m_genomLook & G::LOOK_VALID) == 0)
+            m_genomLook = G::randomLook();
+        m_genomMove = G::movement(it->second);
+        m_genomCanBreed = G::canBreed(it->second);
+        m_genomDropsDiamonds = G::dropsDiamonds(it->second);
         it->second.spawnCredit = m_genomLook;
+        it->second.stuckTicks = G::packBehaviour(m_genomMove, m_genomCanBreed, m_genomDropsDiamonds);
     }
 }
 
@@ -914,8 +947,37 @@ void HUD::Editor::Panel::setGenomLook(int look) {
         G::spikes(look), G::body(look), G::eyes(look), G::mouth(look));
     m_genomRandomize = false;
     auto it = m_entities.find(Cave::Entity::Type::Genom);
-    if (it != m_entities.end())
+    if (it != m_entities.end()) {
         it->second.spawnCredit = m_genomLook;
+        it->second.stuckTicks = G::packBehaviour(m_genomMove, m_genomCanBreed, m_genomDropsDiamonds);
+    }
+}
+
+void HUD::Editor::Panel::setGenomMovement(int move) {
+    using G = Cave::Entity::Genom;
+    m_genomMove = G::clampMovement(move);
+    m_genomRandomize = false;
+    auto it = m_entities.find(Cave::Entity::Type::Genom);
+    if (it != m_entities.end())
+        it->second.stuckTicks = G::packBehaviour(m_genomMove, m_genomCanBreed, m_genomDropsDiamonds);
+}
+
+void HUD::Editor::Panel::setGenomCanBreed(bool enabled) {
+    using G = Cave::Entity::Genom;
+    m_genomCanBreed = enabled;
+    m_genomRandomize = false;
+    auto it = m_entities.find(Cave::Entity::Type::Genom);
+    if (it != m_entities.end())
+        it->second.stuckTicks = G::packBehaviour(m_genomMove, m_genomCanBreed, m_genomDropsDiamonds);
+}
+
+void HUD::Editor::Panel::setGenomDropsDiamonds(bool enabled) {
+    using G = Cave::Entity::Genom;
+    m_genomDropsDiamonds = enabled;
+    m_genomRandomize = false;
+    auto it = m_entities.find(Cave::Entity::Type::Genom);
+    if (it != m_entities.end())
+        it->second.stuckTicks = G::packBehaviour(m_genomMove, m_genomCanBreed, m_genomDropsDiamonds);
 }
 
 int HUD::Editor::Panel::getGenomPaletteLook() const {
@@ -926,6 +988,30 @@ int HUD::Editor::Panel::getGenomPaletteLook() const {
         return m_genomLook;
     using G = Cave::Entity::Genom;
     return G::packLook(0, 255, 1, 0, 0, 0, 0, 0);
+}
+
+int HUD::Editor::Panel::getGenomPaletteMovement() const {
+    using G = Cave::Entity::Genom;
+    auto it = m_entities.find(Cave::Entity::Type::Genom);
+    if (it != m_entities.end())
+        return G::movement(it->second);
+    return G::clampMovement(m_genomMove);
+}
+
+bool HUD::Editor::Panel::getGenomPaletteCanBreed() const {
+    using G = Cave::Entity::Genom;
+    auto it = m_entities.find(Cave::Entity::Type::Genom);
+    if (it != m_entities.end())
+        return G::canBreed(it->second);
+    return m_genomCanBreed;
+}
+
+bool HUD::Editor::Panel::getGenomPaletteDropsDiamonds() const {
+    using G = Cave::Entity::Genom;
+    auto it = m_entities.find(Cave::Entity::Type::Genom);
+    if (it != m_entities.end())
+        return G::dropsDiamonds(it->second);
+    return m_genomDropsDiamonds;
 }
 
 void HUD::Editor::Panel::syncFishPaletteEntity() {
@@ -993,7 +1079,7 @@ bool HUD::Editor::Panel::handleRightClick(sf::Vector2f vp, float panelX, float t
     if (px >= 0 && px < 3 && py >= 0 && py < VISIBLE_PALETTE_ROWS && lx < SB_X)
     {
         const int row = py + m_scrollRow;
-        if (isSpaceSlot(px, row) || isPegulSlot(px, row) || isFusionSlot(px, row) || isPyrozoSlot(px, row)
+        if (isSpaceSlot(px, row) || isDirtSlot(px, row) || isPegulSlot(px, row) || isFusionSlot(px, row) || isPyrozoSlot(px, row)
             || isGodSlot(px, row)
             || isJimlinSlot(px, row) || isGateSlot(px, row) || isJimlinBlockSlot(px, row)
             || isJimlinShipSlot(px, row)
@@ -1050,7 +1136,7 @@ Cave::Entity::Type HUD::Editor::Panel::getType(const int& x, const int& y) const
     int num = std::clamp(y, 0, TOTAL_PALETTE_ROWS - 1) * 3 + std::clamp(x, 0, 2);
     switch (num) {
     case 0:  return m_spaceSlotType;
-    case 1:  return Cave::Entity::Type::Dirt;
+    case 1:  return m_dirtType;
     case 2:  return Cave::Entity::Type::Boulder;
     case 3:  return Cave::Entity::Type::Diamond;
     case 4:  return Cave::Entity::Type::FragileDiamond;
@@ -1146,10 +1232,182 @@ Cave::Entity::Type HUD::Editor::Panel::getType(const int& x, const int& y) const
     }
 }
 
+bool HUD::Editor::Panel::getPaletteSlotAt(sf::Vector2f vp, float panelX, float toolbarH,
+    int& outX, int& outY) const
+{
+    const float lx = vp.x - panelX;
+    const float ly = vp.y - toolbarH;
+    if (lx < 0.f || lx >= SB_X || ly < 0.f || ly >= PALETTE_H)
+        return false;
+    const int px = static_cast<int>(lx) / 34;
+    const int py = static_cast<int>(ly) / 34;
+    if (px < 0 || px >= 3 || py < 0 || py >= VISIBLE_PALETTE_ROWS)
+        return false;
+    outX = px;
+    outY = py + m_scrollRow;
+    return getType(outX, outY) != Cave::Entity::Type::NoType;
+}
+
+std::string HUD::Editor::Panel::getPaletteSlotName(const int& x, const int& y) const
+{
+    const Cave::Entity::Type type = getType(x, y);
+    if (type == Cave::Entity::Type::NoType)
+        return {};
+
+    auto labelOf = [](const auto& variants, Cave::Entity::Type t) -> const char* {
+        for (const auto& v : variants) {
+            if (v.type == t)
+                return v.label;
+        }
+        return nullptr;
+    };
+
+    // Multi-type slots: show the currently selected object only.
+    if (isSpaceSlot(x, y)) {
+        if (const char* label = labelOf(Cave::Entity::Cosmic::VARIANTS, type))
+            return label;
+    }
+    else if (isPegulSlot(x, y)) {
+        if (const char* label = labelOf(Cave::Entity::Pegul::VARIANTS, type))
+            return std::string("Pegul ") + label;
+    }
+    else if (isFusionSlot(x, y)) {
+        if (const char* label = labelOf(Cave::Entity::Fusion::VARIANTS, type))
+            return std::string("Fusion ") + label;
+    }
+    else if (isGodSlot(x, y)) {
+        if (const char* label = labelOf(Cave::Entity::God::VARIANTS, type))
+            return label;
+    }
+    else if (isDirtSlot(x, y)) {
+        if (const char* label = labelOf(Cave::Entity::Dirt::VARIANTS, type))
+            return label;
+    }
+    else if (isJimlinSlot(x, y)) {
+        if (const char* label = labelOf(Cave::Entity::Jimlin::VARIANTS, type))
+            return std::string("Jimlin ") + label;
+    }
+    else if (isGateSlot(x, y)) {
+        if (type == Cave::Entity::Type::PrivateGate)
+            return "Private Gate";
+        return "Gate";
+    }
+    else if (isJimlinBlockSlot(x, y)) {
+        if (const char* label = labelOf(Cave::Entity::JimlinBlock::VARIANTS, type))
+            return label;
+    }
+    else if (isJimlinShipSlot(x, y)) {
+        if (const char* label = labelOf(Cave::Entity::JimlinShipInactive::VARIANTS, type))
+            return label;
+    }
+    else if (isPyrozoSlot(x, y)) {
+        if (const char* label = labelOf(Cave::Entity::Pyrozo::VARIANTS, type))
+            return label;
+    }
+    else if (isHiveMatriarchSlot(x, y)) {
+        if (const char* label = labelOf(Cave::Entity::HiveMatriarch::VARIANTS, type))
+            return std::string("Hive ") + label;
+    }
+    else if (isHiveWallSlot(x, y)) {
+        if (const char* label = labelOf(Cave::Entity::HiveWall::VARIANTS, type))
+            return label;
+    }
+
+    // Single-type slots — same names as the Tools menu.
+    switch (type) {
+    case Cave::Entity::Type::Dirt: return "Dirt";
+    case Cave::Entity::Type::Gravel: return "Gravel";
+    case Cave::Entity::Type::Boulder: return "Boulder";
+    case Cave::Entity::Type::Diamond: return "Diamond";
+    case Cave::Entity::Type::FragileDiamond: return "Fragile Diamond";
+    case Cave::Entity::Type::Ore: return "Granite Ore";
+    case Cave::Entity::Type::Wall: return "Wall";
+    case Cave::Entity::Type::SolidWall: return "Solid Wall";
+    case Cave::Entity::Type::MagicWallActive: return "Magic Wall";
+    case Cave::Entity::Type::HorizontalWallPlaceholder: return "Horizontal Expanding Wall";
+    case Cave::Entity::Type::VerticalWallPlaceholder: return "Vertical Expanding Wall";
+    case Cave::Entity::Type::Plasma: return "Plasma";
+    case Cave::Entity::Type::Protozo: return "Protozo";
+    case Cave::Entity::Type::CaveGull: return "Cave Gull";
+    case Cave::Entity::Type::Eater: return "Diamond Eater";
+    case Cave::Entity::Type::Aggressor: return "Aggressor";
+    case Cave::Entity::Type::Cilia: return "Cilia";
+    case Cave::Entity::Type::Amoeba: return "Amoeba";
+    case Cave::Entity::Type::Detonator: return "Detonator";
+    case Cave::Entity::Type::TNT: return "TNT Box";
+    case Cave::Entity::Type::Bomb: return "Drop Bomb";
+    case Cave::Entity::Type::TubeHorizontal: return "Horizontal Tube";
+    case Cave::Entity::Type::TubeVertical: return "Vertical Tube";
+    case Cave::Entity::Type::TubeCross: return "Cross Tube";
+    case Cave::Entity::Type::TubeLeft: return "Tube Left";
+    case Cave::Entity::Type::TubeRight: return "Tube Right";
+    case Cave::Entity::Type::TubeUp: return "Tube Up";
+    case Cave::Entity::Type::TubeDown: return "Tube Down";
+    case Cave::Entity::Type::StartDoor: return "Start Door";
+    case Cave::Entity::Type::ExitDoor: return "Exit Door";
+    case Cave::Entity::Type::HollowDiamond: return "Hollow Diamond";
+    case Cave::Entity::Type::Ruby: return "Ruby";
+    case Cave::Entity::Type::MagicBoulder: return "Magic Boulder";
+    case Cave::Entity::Type::Chum: return "Chum";
+    case Cave::Entity::Type::Fan: return "Fan";
+    case Cave::Entity::Type::TimeBomb: return "Time Bomb";
+    case Cave::Entity::Type::Well: return "Well";
+    case Cave::Entity::Type::Portal: return "Portal";
+    case Cave::Entity::Type::Mole: return "Mole";
+    case Cave::Entity::Type::Spinner: return "Spinner";
+    case Cave::Entity::Type::Blob: return "Blob";
+    case Cave::Entity::Type::Sludg: return "Sludg";
+    case Cave::Entity::Type::BoulderEater: return "Boulder Eater";
+    case Cave::Entity::Type::Pyram: return "Pyram";
+    case Cave::Entity::Type::GallopEgg: return "Gallop Egg";
+    case Cave::Entity::Type::Gallop: return "Gallop";
+    case Cave::Entity::Type::GallopQueen: return "Gallop Queen";
+    case Cave::Entity::Type::Creep: return "Creep";
+    case Cave::Entity::Type::Tetrapus: return "Tetrapus";
+    case Cave::Entity::Type::Glutton: return "Glutton";
+    case Cave::Entity::Type::Binocule: return "Binocule";
+    case Cave::Entity::Type::Puffer: return "Puffer";
+    case Cave::Entity::Type::Charger: return "Charger";
+    case Cave::Entity::Type::Magma: return "Magma";
+    case Cave::Entity::Type::HotBoulder: return "Hot Boulder";
+    case Cave::Entity::Type::Lava: return "Lava";
+    case Cave::Entity::Type::Hellgull: return "Hellgull";
+    case Cave::Entity::Type::Charia: return "Charia";
+    case Cave::Entity::Type::ObsidianWall: return "Obsidian Wall";
+    case Cave::Entity::Type::Worm: return "Worm";
+    case Cave::Entity::Type::Pyrobe: return "Pyrobe";
+    case Cave::Entity::Type::Predator: return "Predator";
+    case Cave::Entity::Type::Plankton: return "Plankton";
+    case Cave::Entity::Type::Macow: return "Macow";
+    case Cave::Entity::Type::MacowEgg: return "Macow Egg";
+    case Cave::Entity::Type::Moss: return "Moss";
+    case Cave::Entity::Type::Caterpillar: return "Caterpillar";
+    case Cave::Entity::Type::Butterfly: return "Butterfly";
+    case Cave::Entity::Type::Jelly: return "Jelly";
+    case Cave::Entity::Type::MossyBoulder: return "Mossy Boulder";
+    case Cave::Entity::Type::TrapEmpty: return "Trap";
+    case Cave::Entity::Type::Mimic: return "Mimic";
+    case Cave::Entity::Type::Shade: return "Shade";
+    case Cave::Entity::Type::Grouper: return "Grouper";
+    case Cave::Entity::Type::Genom: return "Genom";
+    case Cave::Entity::Type::Landmine: return "Landmine";
+    case Cave::Entity::Type::Compressor: return "Compressor";
+    case Cave::Entity::Type::Water: return "Water";
+    case Cave::Entity::Type::Fish: return "Fish";
+    case Cave::Entity::Type::Coral: return "Coral";
+    case Cave::Entity::Type::Parasite: return "Parasite";
+    case Cave::Entity::Type::Lock: return "Lock";
+    case Cave::Entity::Type::Key: return "Key";
+    default: break;
+    }
+    return {};
+}
+
 Cave::Entity::Base HUD::Editor::Panel::getNewEntity(Cave::Entity::Type type) {
     switch (type) {
     case Cave::Entity::Type::Space:           return Cave::Entity::Space();
     case Cave::Entity::Type::Dirt:            return Cave::Entity::Dirt();
+    case Cave::Entity::Type::Gravel:          return Cave::Entity::Gravel();
     case Cave::Entity::Type::Boulder:         return Cave::Entity::Boulder();
     case Cave::Entity::Type::Diamond:         return Cave::Entity::Diamond();
     case Cave::Entity::Type::FragileDiamond:  return Cave::Entity::FragileDiamond();
@@ -1266,9 +1524,17 @@ Cave::Entity::Base HUD::Editor::Panel::getNewEntity(Cave::Entity::Type type) {
     case Cave::Entity::Type::Shade:             return Cave::Entity::Shade();
     case Cave::Entity::Type::Grouper:           return Cave::Entity::Grouper();
     case Cave::Entity::Type::Genom: {
+        using G = Cave::Entity::Genom;
         Cave::Entity::Genom genom;
-        if (!m_genomRandomize && (m_genomLook & Cave::Entity::Genom::LOOK_VALID) != 0)
-            genom.spawnCredit = m_genomLook;
+        if (!m_genomRandomize) {
+            if ((m_genomLook & G::LOOK_VALID) != 0)
+                genom.spawnCredit = m_genomLook;
+            genom.stuckTicks = G::packBehaviour(m_genomMove, m_genomCanBreed, m_genomDropsDiamonds);
+        }
+        else {
+            genom.stuckTicks = G::packBehaviour(
+                G::randomMovement(), G::randomCanBreed(), G::randomDropsDiamonds());
+        }
         return genom;
     }
     case Cave::Entity::Type::Landmine:         return Cave::Entity::Landmine();

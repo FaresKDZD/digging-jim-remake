@@ -7,7 +7,8 @@
 
 namespace Cave::Entity {
 
-    /// @brief Pyrozo — protozo-like, lava/fire immune, splits into extinguished copies on death.
+    /// @brief Pyrozo ? protozo-like, lava/fire immune; death plays pyrozo_form then
+    /// leaves extinguished copies on every blast tile.
     class Pyrozo : public Base {
     public:
         static constexpr int FRAME_BASE = 1351;

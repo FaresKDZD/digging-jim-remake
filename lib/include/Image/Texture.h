@@ -25,6 +25,9 @@ namespace Image {
         /// @brief Transparent fire overlay strip (8×32) for Jim magma overheat.
         CaveFireOverlay,
 
+        /// @brief Gravel dig break overlay strip (2×32).
+        CaveBreakOverlay,
+
         /// @brief Breath meter overlay strip (10×32) for Jim underwater drowning.
         CaveBreathOverlay,
 
@@ -90,7 +93,10 @@ namespace Image {
         EditorSelect,
 
         /// @brief Editor mini tiles for map.
-        EditorMiniTiles
+        EditorMiniTiles,
+
+        /// @brief 32×32 inventory edge border (9px strip + transparent remainder).
+        InventoryBorder
     };
 
 }

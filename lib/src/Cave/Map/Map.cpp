@@ -175,6 +175,7 @@ void Cave::Map::generateMap(const Cave::Properties* properties, const std::vecto
 		const Cave::Entity::Type type = getEntityType(index);
 		if (type == Cave::Entity::Type::Genom || type == Cave::Entity::Type::GenomEgg) {
 			caveEntities[index].spawnCredit = genom.packed | Cave::Entity::Genom::LOOK_VALID;
+			Cave::Entity::Genom::setBehaviourPacked(caveEntities[index], genom.behaviour);
 			continue;
 		}
 		if (type == Cave::Entity::Type::Fish) {
@@ -253,11 +254,14 @@ void Cave::Map::generateMap(const Cave::Properties* properties, const std::vecto
 	m_macowCookedEggsCarried = 0;
 	m_emptyTrapsCarried = 0;
 	m_fullTrapsCarried.clear();
+	m_inventoryOrder.clear();
+	m_inventorySelected = 0;
 	m_trapSlideUnder.clear();
 	m_jimInvincibleFrames = 0;
 	m_jimPyrobeFrames = 0;
 	m_jimParasiteFrames = 0;
 	m_jimParasiteOverlayFrame = -1;
+	m_jimlinParasiteFrames.clear();
 	m_jimMagmaHeat = 0;
 	m_jimMagmaForcedHeatFrames = 0;
 	m_jimMagmaFireDrawFrame = -1;
@@ -870,6 +874,9 @@ void Cave::Map::collectGenomRecords(std::vector<Cave::GenomRecord>& out) const {
 		Cave::GenomRecord rec;
 		rec.index = static_cast<uint16_t>(index);
 		rec.packed = caveEntities[index].spawnCredit;
+		rec.behaviour = (type == Cave::Entity::Type::Fish)
+			? 0
+			: Cave::Entity::Genom::behaviourPacked(caveEntities[index]);
 		out.push_back(rec);
 	}
 }
@@ -1048,6 +1055,11 @@ void Cave::Map::setEntity(const int& index, Cave::Entity::Base&& entity) {
 		&& !Cave::Entity::isMonster(getEntityType(index))) {
 		m_cosmicOver[static_cast<size_t>(index)] = Cave::Entity::Base();
 	}
+	// Infestation is stored per-cell for Jimlins — drop when the host is replaced
+	// (moves transfer via transferJimlinParasite instead of setEntity).
+	if (index < static_cast<int>(m_jimlinParasiteFrames.size())
+		&& (!Cave::Entity::isJimlin(newType) || !Cave::Entity::isJimlin(oldType)))
+		m_jimlinParasiteFrames[static_cast<size_t>(index)] = 0;
 }
 
 bool Cave::Map::inBounds(const int& index) const {

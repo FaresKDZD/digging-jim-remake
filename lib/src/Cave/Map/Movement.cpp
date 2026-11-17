@@ -85,6 +85,8 @@ bool Cave::Map::moveEntityTo(const int& sourceIndex, const int& destinationIndex
 	if (sourceType == Cave::Entity::Type::Jim
 		|| Cave::Entity::isHuntTarget(sourceType))
 		transferParasiteOver(sourceIndex, destinationIndex);
+	if (Cave::Entity::isJimlin(sourceType))
+		transferJimlinParasite(sourceIndex, destinationIndex);
 	if (vacateFallable
 		&& sourceIndex >= 0 && sourceIndex < static_cast<int>(m_fallableVacated.size()))
 		m_fallableVacated[static_cast<size_t>(sourceIndex)] = 1;
@@ -192,11 +194,16 @@ bool Cave::Map::warpEntity(const int& sourceIndex, const Cave::Entity::Direction
 		return false;
 	}
 
+	const Cave::Entity::Type sourceType = getEntityType(sourceIndex);
 	coverPassableGate(destinationIndex);
 	caveEntities[destinationIndex] = std::move(caveEntities[sourceIndex]);
 	if (!restoreCoveredPassable(sourceIndex)) {
 		caveEntities[sourceIndex] = Cave::Entity::Space();
 	}
+	if (Cave::Entity::isJimlin(sourceType))
+		transferJimlinParasite(sourceIndex, destinationIndex);
+	if (sourceType == Cave::Entity::Type::Jim || Cave::Entity::isHuntTarget(sourceType))
+		transferParasiteOver(sourceIndex, destinationIndex);
 
 	return true;
 }
@@ -247,6 +254,13 @@ bool Cave::Map::pushEntityTo(const int& sourceIndex, const int& pushedIndex, con
 		? caveEntities[pushedIndex].spawnCredit : 0;
 
 	const bool pushBubble = isHiveBubbled(pushedIndex);
+	const Cave::Entity::Type sourceType = getEntityType(sourceIndex);
+	const Cave::Entity::Type pushedType = getEntityType(pushedIndex);
+	ensureJimlinParasiteSize();
+	const int srcParasite = Cave::Entity::isJimlin(sourceType)
+		? m_jimlinParasiteFrames[static_cast<size_t>(sourceIndex)] : 0;
+	const int pushedParasite = Cave::Entity::isJimlin(pushedType)
+		? m_jimlinParasiteFrames[static_cast<size_t>(pushedIndex)] : 0;
 
 	coverPassableGate(destinationIndex);
 	caveEntities[destinationIndex] = std::move(caveEntities[pushedIndex]);
@@ -264,6 +278,9 @@ bool Cave::Map::pushEntityTo(const int& sourceIndex, const int& pushedIndex, con
 		caveEntities[pushedIndex].homeIndex = eggLook;
 	if (pushBubble)
 		transferHiveBubble(pushedIndex, destinationIndex, direction);
+	m_jimlinParasiteFrames[static_cast<size_t>(sourceIndex)] = 0;
+	m_jimlinParasiteFrames[static_cast<size_t>(pushedIndex)] = srcParasite;
+	m_jimlinParasiteFrames[static_cast<size_t>(destinationIndex)] = pushedParasite;
 
 	return true;
 }

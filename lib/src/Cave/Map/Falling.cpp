@@ -223,6 +223,18 @@ bool Cave::Map::handleEntityLanding(const int& index, const int& ahead) {
 		createExplosion(index);
 		return true;
 	}
+
+	// Magic wall before hot-boulder crack/explode so hot rocks can convert.
+	{
+		const Cave::Entity::Type aheadTypeMw = getEntityType(ahead);
+		const Cave::Entity::Direction gravityMw = (type == Cave::Entity::Type::MagicBoulder)
+			? Cave::Entity::Direction::UP
+			: Cave::Entity::Direction::DOWN;
+		if (handleEntityLandingOnMagicWall(index, type, ahead, aheadTypeMw, gravityMw)) {
+			return true;
+		}
+	}
+
 	if (type == Cave::Entity::Type::HotBoulderCracked) {
 		createExplosion(index);
 		return true;
@@ -341,13 +353,6 @@ bool Cave::Map::handleEntityLanding(const int& index, const int& ahead) {
 		return true;
 	}
 
-	const Cave::Entity::Direction gravity = (type == Cave::Entity::Type::MagicBoulder)
-		? Cave::Entity::Direction::UP
-		: Cave::Entity::Direction::DOWN;
-	if (handleEntityLandingOnMagicWall(index, type, ahead, aheadType, gravity)) {
-		return true;
-	}
-
 	if (!landedOnFragileDiamond) {
 		hasTrait(Cave::Entity::Trait::Collectable, index)
 			|| type == Cave::Entity::Type::HollowDiamond
@@ -364,6 +369,7 @@ bool Cave::Map::handleEntityLanding(const int& index, const int& ahead) {
 
 bool Cave::Map::handleEntityLandingOnMagicWall(const int& index, const Cave::Entity::Type& type, const int& ahead, const Cave::Entity::Type& aheadType, const Cave::Entity::Direction& gravity) {
 	if (!Cave::Entity::isBoulder(type) && type != Cave::Entity::Type::MagicBoulder
+		&& !Cave::Entity::isHotBoulder(type)
 		&& type != Cave::Entity::Type::GallopEgg && !Cave::Entity::isMacowEgg(type)
 		&& type != Cave::Entity::Type::Chrysalis
 		&& type != Cave::Entity::Type::Diamond) {
@@ -375,28 +381,51 @@ bool Cave::Map::handleEntityLandingOnMagicWall(const int& index, const Cave::Ent
 		return true;
 	}
 
-	if (aheadType == Cave::Entity::Type::MagicWallInactive) {
+	Cave::Entity::Type wallType = aheadType;
+	if (wallType == Cave::Entity::Type::MagicWallInactive) {
 		m_magicWallStarted = true;
+		setEntity(ahead, Cave::Entity::MagicWallActive());
+		wallType = Cave::Entity::Type::MagicWallActive;
 	}
-	else if (aheadType != Cave::Entity::Type::MagicWallActive) {
+	else if (wallType != Cave::Entity::Type::MagicWallActive) {
 		return false;
 	}
 
-	setEntity(index, Cave::Entity::Space());
-
-	int beyond = getIndex(ahead, gravity);
-	if (!hasTrait(Cave::Entity::Trait::Empty, beyond)) {
+	const int beyond = getIndex(ahead, gravity);
+	if (getEntityTransitioning(ahead)
+		|| (inBounds(beyond) && getEntityTransitioning(beyond))) {
+		// Wall or exit still mid-slide — keep hovering until it frees.
+		setEntityFalling(index, true);
+		caveEntities[index].airborne = true;
 		return true;
 	}
 
+	Cave::Entity::Animation incomingAnim = caveEntities[index].getAnimation();
+	setEntity(index, Cave::Entity::Space());
+	// Slide the incoming tile into the wall (don't pop it out of existence).
+	caveEntities[index].applyAwayTransition(gravity, incomingAnim);
+
+	if (!inBounds(beyond) || !hasTrait(Cave::Entity::Trait::Empty, beyond)) {
+		// Dissolve into the wall with an underlay slide.
+		caveEntities[ahead].applyAwayTransition(gravity, incomingAnim);
+		return true;
+	}
+
+	Cave::Entity::Animation spaceAnim = Cave::Entity::Space().getAnimation();
 	if (type == Cave::Entity::Type::Diamond) {
 		setEntity(beyond, Cave::Entity::Boulder());
 	}
 	else {
 		setEntity(beyond, Cave::Entity::Diamond());
 	}
-	setEntityFalling(beyond, true);
+	// Incoming under the wall (away); transformed result slides out (into).
+	caveEntities[beyond].applyIntoTransition(gravity, spaceAnim);
+	caveEntities[ahead].applyAwayTransition(gravity, incomingAnim);
+	setEntityFalling(beyond, false);
+	caveEntities[beyond].fallPending = true;
 	caveEntities[beyond].airborne = true;
+	setEntityDirection(beyond, gravity);
+	setEntityUpdated(beyond, true);
 
 	return true;
 }
@@ -541,9 +570,11 @@ void Cave::Map::updateGenomEgg(const int& index) {
 		|| caveEntities[index].getAnimation().currentFrame
 			>= Cave::Entity::GenomEgg::FRAME_COUNT - 1) {
 		const int look = caveEntities[index].spawnCredit;
+		const int behaviour = Cave::Entity::Genom::behaviourPacked(caveEntities[index]);
 		if (restoreCoveredGate(index)) return;
 		setEntity(index, Cave::Entity::Genom());
 		caveEntities[index].spawnCredit = look | Cave::Entity::Genom::LOOK_VALID;
+		Cave::Entity::Genom::setBehaviourPacked(caveEntities[index], behaviour);
 		Cave::Entity::Genom::resetBreed(caveEntities[index]);
 	}
 }
@@ -612,6 +643,8 @@ bool Cave::Map::tryJimlinBlockTransport(const int& block) {
 	if (editorIdle()) return false;
 	if (!jimlinBlockAvailable(block))
 		return false;
+	if (getEntityTransitioning(block))
+		return false;
 
 	const int above = getIndex(block, Cave::Entity::Direction::UP);
 	if (!inBounds(above) || !Cave::Entity::isDiamondTile(getEntityType(above)))
@@ -625,15 +658,20 @@ bool Cave::Map::tryJimlinBlockTransport(const int& block) {
 		return false;
 
 	const Cave::Entity::Type type = getEntityType(above);
+	Cave::Entity::Animation diamondAnim = caveEntities[above].getAnimation();
+	Cave::Entity::Animation spaceAnim = Cave::Entity::Space().getAnimation();
 	setEntity(above, Cave::Entity::Space());
+	// Slide the diamond into the block (don't pop it out of existence).
+	caveEntities[above].applyAwayTransition(Cave::Entity::Direction::DOWN, diamondAnim, 4);
 	if (type == Cave::Entity::Type::FragileDiamond)
 		setEntity(dest, Cave::Entity::FragileDiamond());
 	else if (type == Cave::Entity::Type::HollowDiamond)
 		setEntity(dest, Cave::Entity::HollowDiamond());
 	else
 		setEntity(dest, Cave::Entity::Diamond());
-	Cave::Entity::Animation none;
-	caveEntities[dest].applyIntoTransition(Cave::Entity::Direction::DOWN, none, 4);
+	// Diamond slides into/through the block underlaid, then into the cell below.
+	caveEntities[dest].applyIntoTransition(Cave::Entity::Direction::DOWN, spaceAnim, 4);
+	caveEntities[block].applyAwayTransition(Cave::Entity::Direction::DOWN, diamondAnim, 4);
 	setEntityFalling(dest, false);
 	caveEntities[dest].fallPending = true;
 	setEntityDirection(dest, Cave::Entity::Direction::DOWN);

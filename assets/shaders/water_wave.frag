@@ -1,12 +1,13 @@
 uniform sampler2D texture;
-// R = body water (UV distort), G = all water incl. surface (Color caustic wave).
+// R = body water (UV distort), G = all water incl. surface (Color caustic wave),
+// B = lava body (UV distort only, shorter wavelengths).
 uniform sampler2D waterMask;
 uniform float time;
 // Water Color-layer tint (hue/sat); luminosity comes from the scene + caustics.
 uniform vec3 blendColor;
 // Same cave tint controls as tint.frag (hue, sat, lum in [0,1]).
 uniform vec3 tint;
-// Cave camera view in world px — caustics are evaluated in world space (stationary).
+// Cave camera view in world px ? caustics are evaluated in world space (stationary).
 uniform vec2 viewCenter;
 uniform vec2 viewSize;
 // Output RT size (e.g. 640×480); used with gl_FragCoord for stable world mapping.
@@ -122,9 +123,9 @@ float fbm(vec2 p) {
     return v;
 }
 
-// Large-scale, irregular caustic field in world space.
+// Original water caustic field (unchanged from pre-lava).
 float causticField(vec2 world) {
-    // Longer wavelengths: ~2–4 tiles across a crest (was ~finer than 1 tile).
+    // Longer wavelengths: ~2?4 tiles across a crest (was ~finer than 1 tile).
     vec2 p = world / 64.0;
     float t = time * 0.85;
 
@@ -155,6 +156,28 @@ float causticField(vec2 world) {
     return field;
 }
 
+// Separate lava distortion field: shorter wavelengths, different axes / tempo
+// (not a scaled copy of the water caustic).
+float lavaDistortField(vec2 world) {
+    vec2 p = world / 28.0;
+    float t = time * 1.15;
+
+    vec2 warp = vec2(
+        fbm(p * 0.9 + vec2(-t * 0.11, 5.7)),
+        fbm(p * 0.9 + vec2(4.3, t * 0.13))
+    );
+    vec2 q = p + (warp - 0.5) * 0.85;
+
+    float w1 = sin(q.x * 11.4 + t * 1.4 + 0.7 * sin(q.y * 7.8 - t * 0.95));
+    float w2 = sin(q.y * 9.6 - t * 1.25 + 0.85 * sin(q.x * 6.5 + t * 0.8));
+    float w3 = sin(dot(q, vec2(8.2, -6.1)) + t * 1.05
+                 + 0.6 * sin(dot(q, vec2(5.3, 7.4)) - t * 0.55));
+    float w4 = sin(dot(q, vec2(-7.1, 5.8)) + t * 1.55
+                 + 0.5 * sin(q.y * 4.9 + q.x * 3.2 + t * 0.42));
+
+    return w1 * 0.34 + w2 * 0.30 + w3 * 0.22 + w4 * 0.14;
+}
+
 float causticLight(float field) {
     float n = clamp(field * 0.5 + 0.5, 0.0, 1.0);
     return pow(n, 2.6);
@@ -166,8 +189,9 @@ void main()
     vec4 masks = texture2D(waterMask, uv);
     float bodyMask = masks.r;
     float colorMask = masks.g;
+    float lavaMask = masks.b;
 
-    // World from fragment position (FBO origin bottom-left), not from texcoords —
+    // World from fragment position (FBO origin bottom-left), not from texcoords ?
     // RT texture V-flip must not affect the caustic domain, or the pattern crawls
     // with the camera (mirrored about the view centre).
     vec2 ndc = gl_FragCoord.xy / max(rtSize, vec2(1.0));
@@ -181,7 +205,16 @@ void main()
     float ay = 1.1 / 480.0;
 
     vec2 sampleUv = uv;
-    if (bodyMask > 0.01) {
+    if (lavaMask > 0.01) {
+        float lavaField = lavaDistortField(world);
+        sampleUv.x += lavaField * ax * 1.1;
+        sampleUv.y += (lavaField * 0.4 + sin((world.x / 28.0) * 8.5 + time * 1.15) * 0.3) * ay;
+        sampleUv = clamp(sampleUv, 0.0, 1.0);
+        float sampleMask = texture2D(waterMask, sampleUv).b;
+        if (sampleMask <= 0.01)
+            sampleUv = uv;
+    }
+    else if (bodyMask > 0.01) {
         sampleUv.x += field * ax;
         sampleUv.y += (field * 0.35 + sin((world.x / 64.0) * 5.5 + time * 0.9) * 0.25) * ay;
         sampleUv = clamp(sampleUv, 0.0, 1.0);

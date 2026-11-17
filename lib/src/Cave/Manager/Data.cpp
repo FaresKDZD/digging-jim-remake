@@ -144,6 +144,7 @@ Cave::Entity::Base Cave::Data::getTileEntity(const char& tile) {
 	case 142: return Cave::Entity::Parasite();
 	case 143: return Cave::Entity::Lock();
 	case 144: return Cave::Entity::Key();
+	case 145: return Cave::Entity::Gravel();
 	default:
 		return Cave::Entity::Space();
 	}

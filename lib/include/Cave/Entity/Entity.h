@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Cave/Entity/Dirt.h"
+#include "Cave/Entity/Gravel.h"
 #include "Cave/Entity/Diamond.h"
 #include "Cave/Entity/FragileDiamond.h"
 #include "Cave/Entity/BreakingFragileDiamond.h"
@@ -85,6 +86,7 @@
 #include "Cave/Entity/Fire.h"
 #include "Cave/Entity/Fireball.h"
 #include "Cave/Entity/Pyrozo.h"
+#include "Cave/Entity/PyrozoExplosion.h"
 #include "Cave/Entity/Hellgull.h"
 #include "Cave/Entity/Charia.h"
 #include "Cave/Entity/PrivateGate.h"

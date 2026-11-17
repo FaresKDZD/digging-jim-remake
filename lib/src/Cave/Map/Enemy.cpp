@@ -2766,39 +2766,98 @@ void Cave::Map::updateJelly(const int& index) {
 	wanderTowardRandomEmpty(index, Cave::Entity::Jelly::HOLD_TICKS);
 }
 
+void Cave::Map::ensureJimlinParasiteSize() {
+	const size_t n = static_cast<size_t>(width * height);
+	if (m_jimlinParasiteFrames.size() != n)
+		m_jimlinParasiteFrames.assign(n, 0);
+}
+
+void Cave::Map::transferJimlinParasite(const int& from, const int& to) {
+	ensureJimlinParasiteSize();
+	if (!inBounds(from) || !inBounds(to) || from == to) return;
+	m_jimlinParasiteFrames[static_cast<size_t>(to)] =
+		m_jimlinParasiteFrames[static_cast<size_t>(from)];
+	m_jimlinParasiteFrames[static_cast<size_t>(from)] = 0;
+}
+
 bool Cave::Map::isJimParasiteInfested(const int& index) const {
-	if (!inBounds(index) || getEntityType(index) != Cave::Entity::Type::Jim)
-		return false;
-	const int pid = caveEntities[index].spawnCredit;
-	if (pid >= 0 && pid < Net::MaxPlayers)
-		return m_playerParasite[static_cast<size_t>(pid)] > 0;
-	return m_jimParasiteFrames > 0;
+	if (!inBounds(index)) return false;
+	const Cave::Entity::Type type = getEntityType(index);
+	if (type == Cave::Entity::Type::Jim) {
+		const int pid = caveEntities[index].spawnCredit;
+		if (pid >= 0 && pid < Net::MaxPlayers)
+			return m_playerParasite[static_cast<size_t>(pid)] > 0;
+		return m_jimParasiteFrames > 0;
+	}
+	if (Cave::Entity::isJimlin(type)) {
+		if (index >= static_cast<int>(m_jimlinParasiteFrames.size()))
+			return false;
+		return m_jimlinParasiteFrames[static_cast<size_t>(index)] > 0;
+	}
+	return false;
 }
 
 void Cave::Map::infestJimWithParasite(const int& jim) {
-	if (!inBounds(jim) || getEntityType(jim) != Cave::Entity::Type::Jim)
-		return;
+	if (!inBounds(jim)) return;
 	using P = Cave::Entity::Parasite;
-	const int pid = caveEntities[jim].spawnCredit;
-	if (pid >= 0 && pid < Net::MaxPlayers)
-		m_playerParasite[static_cast<size_t>(pid)] = P::INFEST_FRAMES;
-	m_jimParasiteFrames = P::INFEST_FRAMES;
+	const Cave::Entity::Type type = getEntityType(jim);
+	if (type == Cave::Entity::Type::Jim) {
+		const int pid = caveEntities[jim].spawnCredit;
+		if (pid >= 0 && pid < Net::MaxPlayers)
+			m_playerParasite[static_cast<size_t>(pid)] = P::INFEST_FRAMES;
+		m_jimParasiteFrames = P::INFEST_FRAMES;
+		return;
+	}
+	if (Cave::Entity::isJimlin(type)) {
+		ensureJimlinParasiteSize();
+		m_jimlinParasiteFrames[static_cast<size_t>(jim)] = P::INFEST_FRAMES;
+	}
 }
 
 void Cave::Map::clearJimParasiteInfestation(const int& jim) {
-	if (inBounds(jim) && getEntityType(jim) == Cave::Entity::Type::Jim) {
-		const int pid = caveEntities[jim].spawnCredit;
-		if (pid >= 0 && pid < Net::MaxPlayers)
-			m_playerParasite[static_cast<size_t>(pid)] = 0;
+	if (inBounds(jim)) {
+		const Cave::Entity::Type type = getEntityType(jim);
+		if (type == Cave::Entity::Type::Jim) {
+			const int pid = caveEntities[jim].spawnCredit;
+			if (pid >= 0 && pid < Net::MaxPlayers)
+				m_playerParasite[static_cast<size_t>(pid)] = 0;
+			m_jimParasiteFrames = 0;
+			m_jimParasiteOverlayFrame = -1;
+		}
+		else if (Cave::Entity::isJimlin(type)
+			&& jim < static_cast<int>(m_jimlinParasiteFrames.size())) {
+			m_jimlinParasiteFrames[static_cast<size_t>(jim)] = 0;
+		}
 	}
-	m_jimParasiteFrames = 0;
-	m_jimParasiteOverlayFrame = -1;
+}
+
+int Cave::Map::nearestParasiteHost(const int& from) const {
+	int best = OUT_OF_BOUNDS_INDEX;
+	int bestDist = 0x7fffffff;
+	const int fx = inBounds(from) ? from % width : 0;
+	const int fy = inBounds(from) ? from / width : 0;
+	for (int i = 0; i < width * height; ++i) {
+		const Cave::Entity::Type type = getEntityType(i);
+		if (type != Cave::Entity::Type::Jim && !Cave::Entity::isJimlin(type))
+			continue;
+		if (isJimParasiteInfested(i)) continue;
+		const int dx = (i % width) - fx;
+		const int dy = (i / width) - fy;
+		const int dist = (dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy);
+		if (dist < bestDist) {
+			bestDist = dist;
+			best = i;
+		}
+	}
+	return best;
 }
 
 bool Cave::Map::parasiteCanDetectJim(const int& index, const int& jim) {
 	using P = Cave::Entity::Parasite;
 	if (!inBounds(index) || !inBounds(jim)) return false;
-	if (getEntityType(jim) != Cave::Entity::Type::Jim) return false;
+	const Cave::Entity::Type host = getEntityType(jim);
+	if (host != Cave::Entity::Type::Jim && !Cave::Entity::isJimlin(host))
+		return false;
 	if (isJimParasiteInfested(jim)) return false;
 	const int dx = (index % width) - (jim % width);
 	const int dy = (index / width) - (jim / width);
@@ -2816,9 +2875,11 @@ bool Cave::Map::tryParasiteMount(const int& index, const int& jim) {
 	using P = Cave::Entity::Parasite;
 	if (!inBounds(index) || !inBounds(jim)) return false;
 	if (getEntityType(index) != Cave::Entity::Type::Parasite) return false;
-	if (getEntityType(jim) != Cave::Entity::Type::Jim) return false;
+	const Cave::Entity::Type host = getEntityType(jim);
+	if (host != Cave::Entity::Type::Jim && !Cave::Entity::isJimlin(host))
+		return false;
 	if (getEntityTransitioning(index)) return false;
-	// Allow catch while Jim is mid-slide — otherwise continuous movement never settles.
+	// Allow catch while the host is mid-slide — otherwise continuous movement never settles.
 	if (isJimParasiteInfested(jim)) return false;
 
 	Cave::Entity::Direction dir = Cave::Entity::Direction::NO_DIRECTION;
@@ -2830,9 +2891,9 @@ bool Cave::Map::tryParasiteMount(const int& index, const int& jim) {
 	}
 	if (dir == Cave::Entity::Direction::NO_DIRECTION) return false;
 
-	// Instant remove — an away-slide toward Jim overlaps his tile and can composite
-	// a Space floor / wedge on him while he is mid-move. Do not clear Jim's slide:
-	// snapping his into/away transitions is what made the player hitch on catch.
+	// Instant remove — an away-slide toward the host overlaps their tile and can composite
+	// a Space floor / wedge on them while mid-move. Do not clear the host's slide:
+	// snapping Jim's into/away transitions is what made the player hitch on catch.
 	(void)dir;
 	setEntity(index, Cave::Entity::Space());
 
@@ -2861,10 +2922,16 @@ bool Cave::Map::tryParasiteChaseStep(const int& index, Cave::Entity::Direction d
 	const int dest = getIndex(index, dir);
 	if (dest == OUT_OF_BOUNDS_INDEX) return false;
 
-	// Stepping onto Jim catches him.
-	if (dest == jim || getEntityType(dest) == Cave::Entity::Type::Jim) {
-		if (isJimParasiteInfested(jim)) return false;
-		return tryParasiteMount(index, inBounds(jim) ? jim : dest);
+	// Stepping onto Jim / Jimlin catches them.
+	{
+		const Cave::Entity::Type destType = getEntityType(dest);
+		if (dest == jim
+			|| destType == Cave::Entity::Type::Jim
+			|| Cave::Entity::isJimlin(destType)) {
+			const int host = (dest == jim || !inBounds(jim)) ? dest : jim;
+			if (isJimParasiteInfested(host)) return false;
+			return tryParasiteMount(index, host);
+		}
 	}
 
 	// Vacating ghosts block moveEntity. Snip them so 2x chase can keep up with Jim
@@ -2972,11 +3039,13 @@ void Cave::Map::updateJimParasiteInfestation() {
 		return;
 	}
 
-	auto ensureDetach = [&](int jimCell) {
-		if (!inBounds(jimCell) || getEntityType(jimCell) != Cave::Entity::Type::Jim)
+	auto ensureDetach = [&](int hostCell) {
+		if (!inBounds(hostCell)) return;
+		const Cave::Entity::Type host = getEntityType(hostCell);
+		if (host != Cave::Entity::Type::Jim && !Cave::Entity::isJimlin(host))
 			return;
 		ensureCosmicUnder();
-		Cave::Entity::Base& over = m_cosmicOver[static_cast<size_t>(jimCell)];
+		Cave::Entity::Base& over = m_cosmicOver[static_cast<size_t>(hostCell)];
 		if (over.getType() == Cave::Entity::Type::Parasite) return;
 		over = Cave::Entity::Parasite();
 		P::setMode(over, P::MODE_DETACH);
@@ -3016,8 +3085,23 @@ void Cave::Map::updateJimParasiteInfestation() {
 					m_playerParasite[static_cast<size_t>(pid)] = m_jimParasiteFrames;
 			}
 		}
+
+		// Jimlin hosts: same duration / detach, independent of the player filter timer.
+		ensureJimlinParasiteSize();
+		for (int cell = 0; cell < width * height; ++cell) {
+			int& frames = m_jimlinParasiteFrames[static_cast<size_t>(cell)];
+			if (frames <= 0) continue;
+			if (!Cave::Entity::isJimlin(getEntityType(cell))) {
+				frames = 0;
+				continue;
+			}
+			frames--;
+			if (frames == 1)
+				ensureDetach(cell);
+		}
 	}
 
+	// Player overlay / screen filter only — Jimlin overlays are drawn separately.
 	if (m_jimParasiteFrames > 0)
 		m_jimParasiteOverlayFrame = (static_cast<int>(globalCounter) / 8) % P::OVERLAY_FRAMES;
 	else
@@ -3041,10 +3125,9 @@ void Cave::Map::updateParasite(const int& index) {
 		updateEntityAnimation(index);
 	if (editorIdle()) return;
 
-	// Infestation is the Jim interaction — skip Reactive Jim explode; still die to Jimlin/lava/amoeba.
+	// Infestation handles Jim / Jimlin contact — skip Reactive explode; still die to lava/amoeba.
 	if (getEntityType(index) != Cave::Entity::Type::Parasite) return;
-	if (isAdjacentToJimlin(index)
-		|| (!Cave::Entity::isLavaImmune(Cave::Entity::Type::Parasite)
+	if ((!Cave::Entity::isLavaImmune(Cave::Entity::Type::Parasite)
 			&& isAdjacentTo(index, Cave::Entity::Type::Lava))
 		|| isAdjacentTo(index, Cave::Entity::Type::Amoeba)) {
 		createExplosion(index);
@@ -3075,8 +3158,8 @@ void Cave::Map::updateParasite(const int& index) {
 		}
 	}
 
-	const int jim = nearestJimIndex(index);
-	if (mode != P::MODE_FLEE && parasiteCanDetectJim(index, jim)) {
+	const int host = nearestParasiteHost(index);
+	if (mode != P::MODE_FLEE && parasiteCanDetectJim(index, host)) {
 		P::setMode(caveEntities[index], P::MODE_CHASE);
 		mode = P::MODE_CHASE;
 	}
@@ -3087,14 +3170,14 @@ void Cave::Map::updateParasite(const int& index) {
 	}
 
 	if (mode == P::MODE_CHASE) {
-		if (inBounds(jim) && isAdjacentCell(index, jim)
-			&& !isJimParasiteInfested(jim)) {
-			if (tryParasiteMount(index, jim))
+		if (inBounds(host) && isAdjacentCell(index, host)
+			&& !isJimParasiteInfested(host)) {
+			if (tryParasiteMount(index, host))
 				return;
 		}
-		const Cave::Entity::Direction dir = findPathThroughEmpty(index, jim, false);
+		const Cave::Entity::Direction dir = findPathThroughEmpty(index, host, false);
 		if (dir != Cave::Entity::Direction::NO_DIRECTION
-			&& tryParasiteChaseStep(index, dir, jim))
+			&& tryParasiteChaseStep(index, dir, host))
 			return;
 		setEntityMoving(index, false);
 		return;
@@ -9285,6 +9368,7 @@ int Cave::Map::findGenomBreedPartner(const int& index) {
 	auto isEligibleMate = [this, index](int cell) {
 		if (cell == index) return false;
 		if (getEntityType(cell) != Cave::Entity::Type::Genom) return false;
+		if (!G::canBreed(caveEntities[cell])) return false;
 		const int mode = G::breedMode(caveEntities[cell]);
 		return mode == G::MODE_BREED || mode == G::MODE_COURT;
 	};
@@ -9394,7 +9478,10 @@ bool Cave::Map::tryLayGenomEgg(const int& index) {
 	const int babyLook = G::pregnancyLook(caveEntities[index]);
 	if ((babyLook & G::LOOK_VALID) == 0) return false;
 
-	Cave::Entity::GenomEgg egg(babyLook);
+	const int babyMove = G::pregnancyMovement(caveEntities[index]);
+	const bool babyBreed = G::pregnancyCanBreed(caveEntities[index]);
+	const bool babyDrop = G::pregnancyDropsDiamonds(caveEntities[index]);
+	Cave::Entity::GenomEgg egg(babyLook, babyMove, babyBreed, babyDrop);
 	Cave::Entity::Animation eggAnim = egg.getAnimation();
 	Cave::Entity::Animation spaceAnim = Cave::Entity::Space().getAnimation();
 	setEntity(down, std::move(egg));
@@ -9403,6 +9490,86 @@ bool Cave::Map::tryLayGenomEgg(const int& index) {
 	m_game->soundManager.play(Sound::Effect::Drop);
 	G::resetBreed(caveEntities[index]);
 	return true;
+}
+
+void Cave::Map::applyGenomMovement(const int& index) {
+	using G = Cave::Entity::Genom;
+	switch (G::movement(caveEntities[index])) {
+	case G::MOVE_TURN_LEFT:
+		tryWallFollowEmpty(index, false);
+		return;
+	case G::MOVE_TURN_RIGHT:
+		tryWallFollowEmpty(index, true);
+		return;
+	case G::MOVE_STRAIGHT: {
+		Cave::Entity::Direction dir = getEntityDirection(index);
+		if (!tryMoveEnemy(index, Cave::Entity::Trait::Empty, dir))
+			setEntityDirection(index, Cave::Entity::getRandomDirection());
+		return;
+	}
+	case G::MOVE_MAGNET: {
+		const int prey = nearestJimIndex(index);
+		if (prey == OUT_OF_BOUNDS_INDEX) {
+			setEntityMoving(index, false);
+			return;
+		}
+		const int ex = index % width, ey = index / width;
+		const int jx = prey % width, jy = prey / width;
+		if (ex > jx && tryMoveEnemy(index, Cave::Entity::Trait::Empty, Cave::Entity::Direction::LEFT)) return;
+		if (ex < jx && tryMoveEnemy(index, Cave::Entity::Trait::Empty, Cave::Entity::Direction::RIGHT)) return;
+		if (ey > jy && tryMoveEnemy(index, Cave::Entity::Trait::Empty, Cave::Entity::Direction::UP)) return;
+		if (ey < jy && tryMoveEnemy(index, Cave::Entity::Trait::Empty, Cave::Entity::Direction::DOWN)) return;
+		setEntityMoving(index, false);
+		return;
+	}
+	case G::MOVE_HUNT: {
+		const int prey = nearestJimIndex(index);
+		if (prey == OUT_OF_BOUNDS_INDEX) {
+			setEntityMoving(index, false);
+			return;
+		}
+		const Cave::Entity::Direction path = findPathToJim(index);
+		if (path != Cave::Entity::Direction::NO_DIRECTION) {
+			tryMoveEnemy(index, Cave::Entity::Trait::Empty, path);
+			return;
+		}
+		const int ex = index % width, ey = index / width;
+		const int jx = prey % width, jy = prey / width;
+		if (ex > jx && tryMoveEnemy(index, Cave::Entity::Trait::Empty, Cave::Entity::Direction::LEFT)) return;
+		if (ex < jx && tryMoveEnemy(index, Cave::Entity::Trait::Empty, Cave::Entity::Direction::RIGHT)) return;
+		if (ey > jy && tryMoveEnemy(index, Cave::Entity::Trait::Empty, Cave::Entity::Direction::UP)) return;
+		if (ey < jy && tryMoveEnemy(index, Cave::Entity::Trait::Empty, Cave::Entity::Direction::DOWN)) return;
+		setEntityMoving(index, false);
+		return;
+	}
+	case G::MOVE_HORIZONTAL: {
+		Cave::Entity::Direction dir = getEntityDirection(index);
+		if (dir != Cave::Entity::Direction::LEFT && dir != Cave::Entity::Direction::RIGHT) {
+			dir = Utils::randomInteger(0, 1) == 0
+				? Cave::Entity::Direction::LEFT : Cave::Entity::Direction::RIGHT;
+			setEntityDirection(index, dir);
+		}
+		if (tryMoveEnemy(index, Cave::Entity::Trait::Empty, dir)) return;
+		setEntityDirection(index, Cave::Entity::oppositeDirection(dir));
+		setEntityMoving(index, false);
+		return;
+	}
+	case G::MOVE_VERTICAL: {
+		Cave::Entity::Direction dir = getEntityDirection(index);
+		if (dir != Cave::Entity::Direction::UP && dir != Cave::Entity::Direction::DOWN) {
+			dir = Utils::randomInteger(0, 1) == 0
+				? Cave::Entity::Direction::UP : Cave::Entity::Direction::DOWN;
+			setEntityDirection(index, dir);
+		}
+		if (tryMoveEnemy(index, Cave::Entity::Trait::Empty, dir)) return;
+		setEntityDirection(index, Cave::Entity::oppositeDirection(dir));
+		setEntityMoving(index, false);
+		return;
+	}
+	default:
+		wanderTowardRandomEmpty(index, G::HOLD_TICKS);
+		return;
+	}
 }
 
 void Cave::Map::updateGenom(const int& index) {
@@ -9423,6 +9590,8 @@ void Cave::Map::updateGenom(const int& index) {
 		const int partner = G::mateCell(caveEntities[index]);
 		const bool partnerOk = inBounds(partner)
 			&& getEntityType(partner) == Cave::Entity::Type::Genom
+			&& G::canBreed(caveEntities[index])
+			&& G::canBreed(caveEntities[partner])
 			&& isAdjacentCell(index, partner);
 		if (!partnerOk) {
 			G::resetBreed(caveEntities[index]);
@@ -9436,8 +9605,15 @@ void Cave::Map::updateGenom(const int& index) {
 		if (index < partner) {
 			const int babyLook = G::mixLooks(
 				caveEntities[index].spawnCredit, caveEntities[partner].spawnCredit);
+			const int babyMove = G::mixMovements(
+				G::movement(caveEntities[index]), G::movement(caveEntities[partner]));
+			const bool babyBreed = G::mixCanBreed(
+				G::canBreed(caveEntities[index]), G::canBreed(caveEntities[partner]));
+			const bool babyDrop = G::mixDropsDiamonds(
+				G::dropsDiamonds(caveEntities[index]), G::dropsDiamonds(caveEntities[partner]));
 			G::setBreedState(caveEntities[index], G::MODE_PREGNANT, 0);
 			G::setPregnancyLook(caveEntities[index], babyLook);
+			G::setPregnancyBehaviour(caveEntities[index], babyMove, babyBreed, babyDrop);
 			caveEntities[index].targetIndex = OUT_OF_BOUNDS_INDEX;
 			caveEntities[index].extra = 0;
 			G::resetBreed(caveEntities[partner]);
@@ -9472,15 +9648,14 @@ void Cave::Map::updateGenom(const int& index) {
 
 			if (timer > 0) {
 				G::setBreedState(caveEntities[index], G::MODE_PREGNANT, timer - 1);
-				// Same wander as Jelly — keep goal/hold across cooldown ticks.
-				wanderTowardRandomEmpty(index, G::HOLD_TICKS);
+				applyGenomMovement(index);
 				return;
 			}
 			nest = findGenomEggNest(index);
 			caveEntities[index].targetIndex = nest;
 			if (!inBounds(nest)) {
 				G::setBreedState(caveEntities[index], G::MODE_PREGNANT, G::SEARCH_RETRY_TICKS);
-				wanderTowardRandomEmpty(index, G::HOLD_TICKS);
+				applyGenomMovement(index);
 				return;
 			}
 			G::setBreedState(caveEntities[index], G::MODE_PREGNANT, 0);
@@ -9491,7 +9666,7 @@ void Cave::Map::updateGenom(const int& index) {
 		if (!inBounds(stand) || (stand != index && !isMonsterWalkable(stand))) {
 			caveEntities[index].targetIndex = OUT_OF_BOUNDS_INDEX;
 			G::setBreedState(caveEntities[index], G::MODE_PREGNANT, G::SEARCH_RETRY_TICKS);
-			wanderTowardRandomEmpty(index, G::HOLD_TICKS);
+			applyGenomMovement(index);
 			return;
 		}
 		if (index == stand && tryLayGenomEgg(index))
@@ -9517,9 +9692,15 @@ void Cave::Map::updateGenom(const int& index) {
 	}
 
 	if (mode == G::MODE_BREED) {
+		if (!G::canBreed(caveEntities[index])) {
+			G::resetBreed(caveEntities[index]);
+			applyGenomMovement(index);
+			return;
+		}
 		int partner = G::mateCell(caveEntities[index]);
 		const bool partnerOk = inBounds(partner)
 			&& getEntityType(partner) == Cave::Entity::Type::Genom
+			&& G::canBreed(caveEntities[partner])
 			&& (G::breedMode(caveEntities[partner]) == G::MODE_BREED
 				|| G::breedMode(caveEntities[partner]) == G::MODE_COURT)
 			&& G::mateCell(caveEntities[partner]) == index;
@@ -9527,14 +9708,13 @@ void Cave::Map::updateGenom(const int& index) {
 			G::clearMateCell(caveEntities[index]);
 			if (timer > 0) {
 				G::setBreedState(caveEntities[index], G::MODE_BREED, timer - 1);
-				// Jelly-style wander while waiting to re-scan — do not wipe the goal.
-				wanderTowardRandomEmpty(index, G::HOLD_TICKS);
+				applyGenomMovement(index);
 				return;
 			}
 			partner = findGenomBreedPartner(index);
 			if (!inBounds(partner)) {
 				G::setBreedState(caveEntities[index], G::MODE_BREED, G::SEARCH_RETRY_TICKS);
-				wanderTowardRandomEmpty(index, G::HOLD_TICKS);
+				applyGenomMovement(index);
 				return;
 			}
 			// Mutual lock: one seeker walks, the other waits — stops head-on oscillation.
@@ -9598,23 +9778,23 @@ void Cave::Map::updateGenom(const int& index) {
 			}
 			G::clearMateCell(caveEntities[index]);
 			G::setBreedState(caveEntities[index], G::MODE_BREED, G::SEARCH_RETRY_TICKS);
-			wanderTowardRandomEmpty(index, G::HOLD_TICKS);
+			applyGenomMovement(index);
 			return;
 		}
 		setEntityMoving(index, false);
 		return;
 	}
 
-	// MODE_IDLE: same wander as Jelly/Grouper; breed roll does not reset goal/hold.
+	// MODE_IDLE: inheritable movement; breed roll does not reset goal/hold.
 	if (timer > 0) {
 		G::setBreedState(caveEntities[index], G::MODE_IDLE, timer - 1);
 	}
 	else {
 		G::setBreedState(caveEntities[index], G::MODE_IDLE, G::BREED_CHECK_TICKS);
-		if (Utils::randomInteger(0, 1) == 0)
+		if (G::canBreed(caveEntities[index]) && Utils::randomInteger(0, 1) == 0)
 			G::setBreedState(caveEntities[index], G::MODE_BREED, 0);
 	}
-	wanderTowardRandomEmpty(index, G::HOLD_TICKS);
+	applyGenomMovement(index);
 }
 
 Cave::Entity::Direction Cave::Map::caterpillarHuntStep(const int& index) {
@@ -10831,6 +11011,13 @@ void Cave::Map::updateFireball(const int& index) {
 	if (editorIdle()) return;
 	if (getEntityTransitioning(index)) return;
 
+	// Under water: underlay + extinguish with a 1x1 water explosion (not a 3x3 blast).
+	if (isWaterCell(index)) {
+		setEntity(index, Cave::Entity::Explosion(true));
+		m_game->soundManager.play(Sound::Effect::Explosion);
+		return;
+	}
+
 	const Cave::Entity::Direction dir = getEntityDirection(index);
 	const int dest = getIndex(index, dir);
 	if (!inBounds(dest)) {
@@ -11289,6 +11476,8 @@ void Cave::Map::updateWell(const int& index) {
 	updateEntityAnimation(index);
 	if (editorIdle()) return;
 	if (m_state != Cave::State::Play && m_state != Cave::State::Pass) return;
+	// Hive-birth style: hold summons while the away underlay is still sliding out.
+	if (getEntityTransitioning(index)) return;
 
 	using W = Cave::Entity::Well;
 	const int packed = caveEntities[index].targetIndex;
@@ -11299,27 +11488,40 @@ void Cave::Map::updateWell(const int& index) {
 	credit += rateH;
 	if (credit < W::RATE_TICK_THRESHOLD) return;
 
-	std::vector<int> empties;
-	empties.reserve(8);
-	for (int offset : m_explosionOffsets) {
-		if (offset == 0) continue;
-		const int cell = index + offset;
+	struct Exit {
+		int cell = OUT_OF_BOUNDS_INDEX;
+		Cave::Entity::Direction dir = Cave::Entity::Direction::NO_DIRECTION;
+	};
+	Exit exits[4];
+	int exitCount = 0;
+	for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+		const int cell = getIndex(index, dir);
 		if (!inBounds(cell) || getEntityTransitioning(cell)) continue;
-		if (hasTrait(Cave::Entity::Trait::Empty, cell))
-			empties.push_back(cell);
+		if (!hasTrait(Cave::Entity::Trait::Empty, cell)) continue;
+		exits[exitCount++] = Exit{ cell, dir };
 	}
-	if (empties.empty()) {
+	if (exitCount <= 0) {
 		credit = W::RATE_TICK_THRESHOLD;
 		return;
 	}
 	credit -= W::RATE_TICK_THRESHOLD;
 	if (credit > W::RATE_TICK_THRESHOLD) credit = W::RATE_TICK_THRESHOLD;
-	const int dest = empties[static_cast<size_t>(Utils::randomInteger(0, static_cast<int>(empties.size()) - 1))];
-	setEntity(dest, monsterFromType(W::unpackMonster(packed)));
+
+	const Exit& pick = exits[Utils::randomInteger(0, exitCount - 1)];
+	const int dest = pick.cell;
+	const Cave::Entity::Direction dir = pick.dir;
+
+	Cave::Entity::Base spawned = monsterFromType(W::unpackMonster(packed));
+	Cave::Entity::Animation monsterAnim = spawned.getAnimation();
+	Cave::Entity::Animation spaceAnim = Cave::Entity::Space().getAnimation();
+	setEntity(dest, std::move(spawned));
 	if (getEntityType(dest) == Cave::Entity::Type::GallopQueen) {
 		caveEntities[dest].targetIndex = dest;
 		caveEntities[dest].spawnCredit = Cave::Entity::GallopQueen::MODE_NEST;
 	}
+	// Monster underlaid under the well (away previous) slides into the empty neighbour.
+	caveEntities[dest].applyIntoTransition(dir, spaceAnim);
+	caveEntities[index].applyAwayTransition(dir, monsterAnim);
 }
 
 bool Cave::Map::animateBoulderToMonster(const int& cell) {
@@ -12304,12 +12506,41 @@ void Cave::Map::updatePyram(const int& index) {
 			mem = 0;
 			return;
 		}
-		if (tryMoveEnemy(index, Cave::Entity::Trait::Empty, rush)) {
-			const int dest = getIndex(index, rush);
+		const int dest = getIndex(index, rush);
+		auto finishRushStep = [&]() {
+			// index is still the vacated cell; dest holds Pyram after the move.
 			caveEntities[index].setTransitionDisplacementIncrement(8);
 			if (dest != OUT_OF_BOUNDS_INDEX)
 				caveEntities[dest].setTransitionDisplacementIncrement(8);
+		};
+		// Crush through Jim / hunt targets instead of stopping one tile short.
+		if (dest != OUT_OF_BOUNDS_INDEX && Cave::Entity::isHuntTarget(getEntityType(dest))) {
+			if (!(getEntityType(dest) == Cave::Entity::Type::Jim && isJimInvincible(dest))) {
+				createExplosion(index);
+				return;
+			}
+		}
+		if (tryMoveEnemy(index, Cave::Entity::Trait::Empty, rush)) {
+			finishRushStep();
 			return;
+		}
+		// Jim fleeing on the rush line leaves an away-slide ghost that blocks
+		// moveEntity until the slide ends — clear it so the charge can enter.
+		if (dest != OUT_OF_BOUNDS_INDEX && getEntityTransitioning(dest)) {
+			const bool walkableGhost = hasTrait(Cave::Entity::Trait::Empty, dest)
+				|| isPassableGate(dest);
+			if (walkableGhost
+				&& (caveEntities[dest].isAwayTransition()
+					|| getEntityType(dest) == Cave::Entity::Type::Space
+					|| isPassableGate(dest))) {
+				Cave::Entity::Base saved = caveEntities[dest];
+				caveEntities[dest].clearTransition();
+				if (tryMoveEnemy(index, Cave::Entity::Trait::Empty, rush)) {
+					finishRushStep();
+					return;
+				}
+				caveEntities[dest] = std::move(saved);
+			}
 		}
 		mem = P::MODE_PAUSE + P::PAUSE_TICKS;
 		setEntityMoving(index, false);
@@ -14015,6 +14246,16 @@ bool Cave::Map::handleEnemyDeath(const int& index) {
 	const Cave::Entity::Type type = getEntityType(index);
 	if (type == Cave::Entity::Type::Singularity)
 		return false;
+
+	// Fire-aligned monsters extinguish in water (1x1 water burst, no pyrozo rebirth).
+	if ((Cave::Entity::isPyrozoVariant(type)
+			|| type == Cave::Entity::Type::Hellgull
+			|| type == Cave::Entity::Type::Charia)
+		&& isWaterCell(index)) {
+		setEntity(index, Cave::Entity::Explosion(true));
+		m_game->soundManager.play(Sound::Effect::Explosion);
+		return true;
+	}
 	int pufferCenter = OUT_OF_BOUNDS_INDEX;
 	if (type == Cave::Entity::Type::Puffer) {
 		pufferCenter = index;
@@ -14029,6 +14270,7 @@ bool Cave::Map::handleEnemyDeath(const int& index) {
 	if (type != Cave::Entity::Type::God
 		&& type != Cave::Entity::Type::Compressor
 		&& type != Cave::Entity::Type::Coral
+		&& type != Cave::Entity::Type::Parasite
 		&& isAdjacentToJimlin(index)) {
 		if (shadeStealthed) {
 			// Invisible Shade does not explode on Jimlin contact (would kill the player).

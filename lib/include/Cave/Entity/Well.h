@@ -8,9 +8,10 @@ namespace Cave::Entity {
 
     /**
      * @class Well
-     * @brief Animated well that summons monsters into adjacent empty tiles.
-     * Stable ground (nothing slips off). Destroyed by explosions.
-     * Spawn type and rate are packed into targetIndex.
+     * @brief Animated well that summons monsters from inside its tile.
+     * Spawned monsters are underlaid under the well and slide out into a
+     * cardinal empty neighbour. Stable ground (nothing slips off).
+     * Destroyed by explosions. Spawn type and rate are packed into targetIndex.
      */
     class Well : public Base {
     public:

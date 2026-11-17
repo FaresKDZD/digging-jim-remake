@@ -1,6 +1,7 @@
 #pragma once
 #include <map>
 #include <optional>
+#include <string>
 #include <SFML/Graphics.hpp>
 #include "Cave/Entity/Entity.h"
 #include "Cave/Entity/Type.h"
@@ -66,6 +67,7 @@ namespace HUD::Editor {
         static constexpr int JimlinBlockSlotX = 1, JimlinBlockSlotY = 13;
         static constexpr int JimlinShipSlotX = 0, JimlinShipSlotY = 13;
         static constexpr int SpaceSlotX = 0, SpaceSlotY = 0;
+        static constexpr int DirtSlotX = 1, DirtSlotY = 0;
         static constexpr int PyrozoSlotX = 0, PyrozoSlotY = 21;
         static constexpr int GenomSlotX = 1, GenomSlotY = 27;
         static constexpr int HiveMatriarchSlotX = 1, HiveMatriarchSlotY = 28;
@@ -107,6 +109,15 @@ namespace HUD::Editor {
 
         /// @brief Switch the God palette slot to God or Chaos and select it.
         void setGodType(Cave::Entity::Type type);
+
+        /// @brief True if this palette cell is the shared Dirt/Gravel slot.
+        bool isDirtSlot(const int& x, const int& y) const;
+
+        /// @brief Current Dirt-slot tile painted by the shared palette cell.
+        Cave::Entity::Type getDirtType() const { return m_dirtType; }
+
+        /// @brief Switch the Dirt palette slot to Dirt or Gravel and select it.
+        void setDirtType(Cave::Entity::Type type);
 
         /// @brief True if this palette cell is the shared Jimlin slot.
         bool isJimlinSlot(const int& x, const int& y) const;
@@ -177,8 +188,29 @@ namespace HUD::Editor {
         int getGenomLook() const { return m_genomLook; }
         void setGenomLook(int look);
 
+        /// @brief Exclusive movement behaviour for placed Genoms (Genom::MOVE_*).
+        int getGenomMovement() const { return m_genomMove; }
+        void setGenomMovement(int move);
+
+        /// @brief When false, placed Genoms neither breed nor get courted.
+        bool getGenomCanBreed() const { return m_genomCanBreed; }
+        void setGenomCanBreed(bool enabled);
+
+        /// @brief When true, placed Genoms leave diamond explosions on death.
+        bool getGenomDropsDiamonds() const { return m_genomDropsDiamonds; }
+        void setGenomDropsDiamonds(bool enabled);
+
         /// @brief Current look drawn on the Genom palette cell (custom or random sample).
         int getGenomPaletteLook() const;
+
+        /// @brief Movement shown in the Genom props popup (custom or random sample).
+        int getGenomPaletteMovement() const;
+
+        /// @brief Breeding flag shown in the Genom props popup (custom or random sample).
+        bool getGenomPaletteCanBreed() const;
+
+        /// @brief Diamond-drop flag shown in the Genom props popup (custom or random sample).
+        bool getGenomPaletteDropsDiamonds() const;
 
         /// @brief When true, each placed Fish gets a fresh randomLook().
         bool getFishRandomize() const { return m_fishRandomize; }
@@ -203,6 +235,13 @@ namespace HUD::Editor {
         /// @brief Map a palette grid position to the corresponding entity type.
         /// @param x Column (0–2). @param y Row (0–19).
         Cave::Entity::Type getType(const int& x, const int& y) const;
+
+        /// @brief Display name for a palette cell (current variant for multi-type slots).
+        std::string getPaletteSlotName(const int& x, const int& y) const;
+
+        /// @brief Hit-test a virtual-screen point against a filled palette cell.
+        bool getPaletteSlotAt(sf::Vector2f vp, float panelX, float toolbarH,
+            int& outX, int& outY) const;
 
         /// @brief Construct a fresh entity instance for the given type.
         Cave::Entity::Base getNewEntity(Cave::Entity::Type type);
@@ -333,6 +372,7 @@ namespace HUD::Editor {
         Cave::Entity::Type        m_fusionType   = Cave::Entity::Type::Fusion1;
         Cave::Entity::Type        m_pyrozoType   = Cave::Entity::Type::Pyrozo;
         Cave::Entity::Type        m_godType      = Cave::Entity::Type::God;
+        Cave::Entity::Type        m_dirtType     = Cave::Entity::Type::Dirt;
         Cave::Entity::Type        m_jimlinType   = Cave::Entity::Type::Jimlin1;
         Cave::Entity::Type        m_gateType     = Cave::Entity::Type::Gate;
         Cave::Entity::Type        m_jimlinBlockType = Cave::Entity::Type::JimlinBlock;
@@ -340,9 +380,12 @@ namespace HUD::Editor {
         Cave::Entity::Type        m_hiveMatriarchType = Cave::Entity::Type::HiveMatriarch;
         Cave::Entity::Type        m_hiveWallType = Cave::Entity::Type::HiveWall;
 
-        /// @brief Genom palette: randomize-on-place vs fixed packed look.
+        /// @brief Genom palette: randomize-on-place vs fixed packed look / movement.
         bool                      m_genomRandomize = true;
         int                       m_genomLook = 0;
+        int                       m_genomMove = Cave::Entity::Genom::MOVE_WANDER;
+        bool                      m_genomCanBreed = true;
+        bool                      m_genomDropsDiamonds = true;
 
         void syncGenomPaletteEntity();
 

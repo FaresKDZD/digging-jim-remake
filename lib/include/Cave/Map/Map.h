@@ -312,8 +312,51 @@ namespace Cave {
         bool isLocalJimParasiteInfested() const { return m_jimParasiteFrames > 0; }
         /// @brief True if any water overlays are queued for the current visible frame.
         bool hasWaterOverlays() const { return !m_waterDraws.empty(); }
+        /// @brief True if any lava tiles are queued for the liquid wave mask.
+        bool hasLavaTiles() const { return !m_lavaDraws.empty(); }
+        /// @brief True if the water/lava wave post-FX pass should run.
+        bool hasLiquidWaveFx() const { return hasWaterOverlays() || hasLavaTiles(); }
+
+        /// @brief One inventory row: placeable type, or TrapFull + contained monster/look.
+        struct InventorySlot {
+            Cave::Entity::Type type = Cave::Entity::Type::NoType;
+            int trapMonster = 0;
+            int trapLook = 0;
+
+            bool operator==(const InventorySlot& other) const {
+                return type == other.type
+                    && trapMonster == other.trapMonster
+                    && trapLook == other.trapLook;
+            }
+            bool operator!=(const InventorySlot& other) const { return !(*this == other); }
+        };
+
+        /// @brief Full trap payload Jim is carrying (also used while sliding under an occupant).
+        struct FullTrapPayload {
+            int monsterType = 0;
+            int look = 0;
+            Cave::Entity::Direction facing = Cave::Entity::Direction::NO_DIRECTION;
+        };
+
+        /// @brief Inventory (carried placeables / keys) in first-collect order.
+        const std::vector<InventorySlot>& inventoryOrder() const { return m_inventoryOrder; }
+        int inventoryCount(Cave::Entity::Type type) const;
+        int inventoryCount(const InventorySlot& slot) const;
+        int inventorySelectedIndex() const { return m_inventorySelected; }
+        void setInventorySelectedIndex(int index);
+        InventorySlot inventorySelectedSlot() const;
+        Cave::Entity::Type inventorySelectedType() const;
+        void noteInventoryCollect(Cave::Entity::Type type);
+        void noteInventoryCollectTrap(const FullTrapPayload& payload);
+        void pruneInventoryOrder();
+        /// @brief Place the currently selected inventory item into an empty cell, if possible.
+        bool tryPlaceSelectedInventory(const int& cell);
+        /// @brief Construct a default monster entity for a type (inventory / trap icons).
+        Cave::Entity::Base monsterFromType(Cave::Entity::Type type) const;
         /// @brief Draw opaque white quads at water cell positions (for a screen-space wave mask).
         void drawWaterMask(sf::RenderTarget& target) const;
+        /// @brief Draw blue quads at lava cell positions (B channel of the liquid wave mask).
+        void drawLavaMask(sf::RenderTarget& target) const;
         /// @brief Draw water tile sprites only (for edge-gap fill during the water wave pass).
         void drawWaterOverlays(sf::RenderTarget& target, sf::RenderStates states) const;
         /// @brief True during spawn / death-cover / respawn loading-tile animation.
@@ -811,6 +854,9 @@ namespace Cave {
          * @return True if push was successful, false otherwise.
          */
         bool handleJimPush(const int& index, const int& inFront, const bool& collectMode, const Cave::Entity::Direction& direction);
+
+        /// @brief Push into Gravel to dig it over DIG_TICKS; progress persists if push stops.
+        bool handleJimDigGravel(const int& index, const int& inFront, const Cave::Entity::Facing& facing);
         
         /**
          * @brief Handles Jim interacting with detonators.
@@ -1204,10 +1250,14 @@ namespace Cave {
         /// @brief Keep a seated/mounting parasite glued to Jim when he steps.
         void transferParasiteOver(const int& from, const int& to);
         bool parasiteCanDetectJim(const int& index, const int& jim);
+        /// @brief Nearest Jim or foot-Jimlin for parasite chase (skips ships / already-infested).
+        int nearestParasiteHost(const int& from) const;
         bool isJimParasiteInfested(const int& index) const;
         void infestJimWithParasite(const int& jim);
         void clearJimParasiteInfestation(const int& jim);
         void updateJimParasiteInfestation();
+        void ensureJimlinParasiteSize();
+        void transferJimlinParasite(const int& from, const int& to);
         void updateFish(const int& index);
         void updateCoral(const int& index);
         void updateCoralBud(const int& index);
@@ -1217,6 +1267,8 @@ namespace Cave {
         bool coralBudCanEnter(const int& cell) const;
         void popCoralBudAt(const int& index);
         void updateGenom(const int& index);
+        /// @brief Idle locomotion driven by the Genom's inheritable movement behaviour.
+        void applyGenomMovement(const int& index);
         int findGenomBreedPartner(const int& index);
         bool isGenomEggNest(const int& cell) const;
         int findGenomEggNest(const int& from);
@@ -1683,7 +1735,6 @@ namespace Cave {
         bool petrifyJim();
         bool animateBoulderToMonster(const int& cell);
         Cave::Entity::Base randomMonsterExceptGod() const;
-        Cave::Entity::Base monsterFromType(Cave::Entity::Type type) const;
         void updateWell(const int& index);
         void wanderGod(const int& index);
         bool tryEscapeGod(const int& index, bool attack = true);
@@ -2214,7 +2265,7 @@ namespace Cave {
         void createHorizontalExplosion(const int& index);
         void createRubyExplosion(const int& index);
         void createSingularityExplosion(const int& index);
-        void detonateCells(const int& origin, const std::vector<int>& cells, bool caveGullExplosion, bool rubyExplosion = false);
+        void detonateCells(const int& origin, const std::vector<int>& cells, bool caveGullExplosion, bool rubyExplosion = false, bool pyrozoExplosion = false);
 
         /// @brief Intact obsidian cracks instead of exploding. Returns true if the cell absorbed the blast.
         bool absorbObsidianExplosion(const int& index);
@@ -2307,6 +2358,10 @@ namespace Cave {
         /// @brief True if Jim changed tiles during the current tick.
         bool m_jimMovedThisTick = false;
 
+        /// @brief Inventory entries in first-collect order (excludes score gems / pyrobes).
+        std::vector<InventorySlot> m_inventoryOrder;
+        int m_inventorySelected = 0;
+
         /// @brief Hollow diamonds currently carried by Jim.
         int m_hollowCarried = 0;
 
@@ -2327,11 +2382,6 @@ namespace Cave {
         int m_emptyTrapsCarried = 0;
 
         /// @brief Full traps Jim is carrying (FIFO): monster type + look + fish facing.
-        struct FullTrapPayload {
-            int monsterType = 0;
-            int look = 0;
-            Cave::Entity::Direction facing = Cave::Entity::Direction::NO_DIRECTION;
-        };
         std::vector<FullTrapPayload> m_fullTrapsCarried;
         /// @brief Contained monster for TrapFull still sliding under an into/push occupant.
         std::vector<FullTrapPayload> m_trapSlideUnder;
@@ -2340,8 +2390,11 @@ namespace Cave {
         int m_jimInvincibleFrames = 0;
         int m_jimPyrobeFrames = 0;
         /// @brief Remaining frames of parasite infestation (inverted controls + overlay).
+        /// Player-only: drives the screen infection filter via isLocalJimParasiteInfested().
         int m_jimParasiteFrames = 0;
         int m_jimParasiteOverlayFrame = -1;
+        /// @brief Per-cell Jimlin infestation countdown (does not affect the screen filter).
+        std::vector<int> m_jimlinParasiteFrames;
 
         /// @brief Magma dig overheat (0..Jim::MAGMA_HEAT_MAX). Cools at 4× when not digging magma.
         int m_jimMagmaHeat = 0;
@@ -2369,6 +2422,8 @@ namespace Cave {
             sf::Color tint = sf::Color::White;
         };
         std::vector<WaterDraw> m_waterDraws;
+        /// @brief Lava cells for the liquid-wave B-channel mask (world px; frame unused).
+        std::vector<WaterDraw> m_lavaDraws;
         std::vector<WaterDraw> m_breathDraws;
         /// @brief Gates drawn above water and above occupants standing on open gates.
         std::vector<WaterDraw> m_gateDraws;
@@ -2382,6 +2437,10 @@ namespace Cave {
         std::vector<WaterDraw> m_trapMonsterDraws;
         /// @brief Transparent trap cage drawn above the contained monster underlay.
         std::vector<WaterDraw> m_trapCageDraws;
+        /// @brief Gravel break overlays (progress > 0), drawn above the gravel tile.
+        std::vector<WaterDraw> m_gravelBreakDraws;
+        /// @brief Gravel cells that finished digging last tick — cleared next frame so overlay shows.
+        std::vector<int> m_gravelClearPending;
 
         /// @brief Space and a direction into a gate were both held on the previous Jim tick.
         bool m_jimGateComboHeld = false;

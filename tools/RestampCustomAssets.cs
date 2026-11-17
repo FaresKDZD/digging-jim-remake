@@ -139,6 +139,14 @@ class RestampCustomAssets {
             StampLockKeyOntoCurrent();
             return;
         }
+        if (args.Length > 0 && args[0] == "--pyrozo-form") {
+            StampPyrozoFormOntoCurrent();
+            return;
+        }
+        if (args.Length > 0 && args[0] == "--gravel") {
+            StampGravelOntoCurrent();
+            return;
+        }
 
         string clean = Path.Combine(Root, "tools", "_restore", "tiles_github_oct3.png");
         if (!File.Exists(clean))
@@ -278,6 +286,9 @@ class RestampCustomAssets {
             StampStrip(tiles, "hellgull.png", 1359, 8);
             StampStrip(tiles, "charia.png", 1367, 8);
             StampStrip(tiles, "pyrozo_extinguished.png", 1376, 8);
+            // PyrozoExplosion form strip (after Key 2020–2035; CoralBud owns 1996–2002).
+            StampStrip(tiles, "pyrozo_form.png", 2036, 4);
+            StampStrip(tiles, "gravel.png", 2040, 16);
             StampStrip(tiles, "obsidian_wall.png", 1384, 8);
             StampStrip(tiles, "obsidian_wall_cracked.png", 1392, 8);
             StampStrip(tiles, "worm.png", 1400, 8);
@@ -1233,6 +1244,90 @@ class RestampCustomAssets {
         foreach (var line in log) Console.WriteLine(line);
 
         VerifyExact("water_explosion.png", waterBoom);
+        using (var tiles = LoadPngExact(TilesPath)) {
+            if (tiles.GetPixel(0, 0).ToArgb() != dirtBefore)
+                throw new Exception("DIRT PIXEL CHANGED - abort, sheet was re-encoded badly");
+        }
+        Console.WriteLine("VERIFY OK dirt untouched");
+        Console.WriteLine("DONE");
+    }
+
+    static void StampPyrozoFormOntoCurrent() {
+        if (!File.Exists(TilesPath)) throw new Exception("Missing " + TilesPath);
+        // After Key (2020–2035). CoralBud owns 1996–2002.
+        const int formBase = 2036;
+        const int lastFrame = formBase + 3;
+        int dirtBefore;
+        using (Bitmap tiles = LoadPngExact(TilesPath)) {
+            dirtBefore = tiles.GetPixel(0, 0).ToArgb();
+            int needH = FrameBottom(lastFrame);
+            Bitmap work = tiles;
+            Bitmap expanded = null;
+            if (tiles.Height < needH) {
+                expanded = ExpandExact(tiles, SHEET_W_CONST(), needH);
+                work = expanded;
+                Console.WriteLine("Expanded tiles to " + work.Width + "x" + work.Height);
+            }
+
+            StampStrip(work, "pyrozo_form.png", formBase, 4);
+
+            string outPath = TilesPath + ".restamped.png";
+            work.Save(outPath, ImageFormat.Png);
+            Console.WriteLine("Wrote " + outPath);
+            if (expanded != null) expanded.Dispose();
+        }
+
+        File.Copy(TilesPath + ".restamped.png", TilesPath, true);
+        File.Delete(TilesPath + ".restamped.png");
+        Console.WriteLine("Replaced " + TilesPath);
+
+        Console.WriteLine("Stamped=" + stamped + " skipped=" + skipped);
+        foreach (var line in log) Console.WriteLine(line);
+
+        VerifyExact("pyrozo_form.png", formBase);
+        using (var tiles = LoadPngExact(TilesPath)) {
+            if (tiles.GetPixel(0, 0).ToArgb() != dirtBefore)
+                throw new Exception("DIRT PIXEL CHANGED - abort, sheet was re-encoded badly");
+        }
+        Console.WriteLine("VERIFY OK dirt untouched");
+        Console.WriteLine("DONE");
+    }
+
+    static void StampGravelOntoCurrent() {
+        if (!File.Exists(TilesPath)) throw new Exception("Missing " + TilesPath);
+        // After pyrozo_form (2036–2039).
+        const int gravelBase = 2040;
+        const int lastFrame = gravelBase + 15;
+        int dirtBefore;
+        using (Bitmap tiles = LoadPngExact(TilesPath)) {
+            dirtBefore = tiles.GetPixel(0, 0).ToArgb();
+            int needH = FrameBottom(lastFrame);
+            Bitmap work = tiles;
+            Bitmap expanded = null;
+            if (tiles.Height < needH) {
+                expanded = ExpandExact(tiles, SHEET_W_CONST(), needH);
+                work = expanded;
+                Console.WriteLine("Expanded tiles to " + work.Width + "x" + work.Height);
+            }
+
+            StampStrip(work, "gravel.png", gravelBase, 16);
+
+            string outPath = TilesPath + ".restamped.png";
+            work.Save(outPath, ImageFormat.Png);
+            Console.WriteLine("Wrote " + outPath);
+            if (expanded != null) expanded.Dispose();
+        }
+
+        File.Copy(TilesPath + ".restamped.png", TilesPath, true);
+        File.Delete(TilesPath + ".restamped.png");
+        Console.WriteLine("Replaced " + TilesPath);
+
+        StampMiniIconFromCustom("gravel.png", 137);
+
+        Console.WriteLine("Stamped=" + stamped + " skipped=" + skipped);
+        foreach (var line in log) Console.WriteLine(line);
+
+        VerifyExact("gravel.png", gravelBase);
         using (var tiles = LoadPngExact(TilesPath)) {
             if (tiles.GetPixel(0, 0).ToArgb() != dirtBefore)
                 throw new Exception("DIRT PIXEL CHANGED - abort, sheet was re-encoded badly");

@@ -8,6 +8,7 @@ namespace Cave::Entity {
      * @class Lock
      * @brief Solid metal-like barrier. Jim unlocks it with Space+direction while
      * holding a Key; the sheet plays open then the cell becomes Space.
+     * Water-loggable: draws above water and is excluded from water wave FX.
      */
     class Lock : public Base {
     public:

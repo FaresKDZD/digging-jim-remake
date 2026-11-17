@@ -1,5 +1,6 @@
 #pragma once
 #include "Cave/Entity/Base.h"
+#include "Cave/Entity/Type.h"
 #include "Utils/Random.h"
 
 namespace Cave::Entity {
@@ -8,6 +9,7 @@ namespace Cave::Entity {
      * @class Dirt
      * @brief The most common formation.
      * Jim can dig through it, but it stops everything else except amoeba.
+     * Shares a palette slot with Gravel (right-click variant picker).
      */
     class Dirt : public Base {
     public:
@@ -17,5 +19,15 @@ namespace Cave::Entity {
             addTrait(Trait::Free);
             addTrait(Trait::Traversable);
         }
+
+        struct VariantOption {
+            const char* label;
+            Type type;
+        };
+
+        static constexpr VariantOption VARIANTS[] = {
+            { "Dirt", Type::Dirt },
+            { "Gravel", Type::Gravel },
+        };
     };
 }

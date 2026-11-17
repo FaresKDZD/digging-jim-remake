@@ -189,6 +189,8 @@ namespace Cave::Entity {
         Parasite,
         Lock,
         Key,
+        Gravel,
+        PyrozoExplosion,
     };
 
     inline bool isLandmine(Type type) {
@@ -293,6 +295,10 @@ namespace Cave::Entity {
 
     inline bool isGodVariant(Type type) {
         return type == Type::God || type == Type::Chaos;
+    }
+
+    inline bool isDirtVariant(Type type) {
+        return type == Type::Dirt || type == Type::Gravel;
     }
 
     inline bool isCosmic(Type type) {

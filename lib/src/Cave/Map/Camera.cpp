@@ -64,7 +64,7 @@ sf::Vector2f Cave::Map::updateCameraLocation(Camera& camera, const sf::Vector2f&
 	}
 
 	camera.setCentre(location);
-	if (snapped) updateVisibleTiles(camera);
+	// Caller rebuilds visible tiles after camera settles (avoids a snap + loop double rebuild).
 
 	return { targetX, targetY };
 }

@@ -151,9 +151,13 @@ bool Cave::Map::tryCaptureMonsterInTrap(const int& trapIndex) {
 
 		int look = 0;
 		Cave::Entity::Direction face = Cave::Entity::Direction::NO_DIRECTION;
+		int behaviour = Cave::Entity::Genom::packBehaviour(
+			Cave::Entity::Genom::MOVE_WANDER, true);
 		if (type == Cave::Entity::Type::Genom
-			&& Cave::Entity::Genom::hasLook(caveEntities[monster]))
+			&& Cave::Entity::Genom::hasLook(caveEntities[monster])) {
 			look = caveEntities[monster].spawnCredit;
+			behaviour = Cave::Entity::Genom::behaviourPacked(caveEntities[monster]);
+		}
 		else if (type == Cave::Entity::Type::Fish) {
 			if (Cave::Entity::Fish::hasLook(caveEntities[monster]))
 				look = caveEntities[monster].spawnCredit;
@@ -169,6 +173,7 @@ bool Cave::Map::tryCaptureMonsterInTrap(const int& trapIndex) {
 		setEntity(trapIndex, Cave::Entity::TrapFilling());
 		caveEntities[trapIndex].spawnCredit = static_cast<int>(type);
 		caveEntities[trapIndex].extra = look;
+		caveEntities[trapIndex].stuckTicks = behaviour;
 		caveEntities[trapIndex].direction = face;
 		m_game->soundManager.play(Sound::Effect::Drop);
 		return true;
@@ -181,14 +186,17 @@ void Cave::Map::releaseTrapMonster(const int& index) {
 		return;
 	const auto contained = static_cast<Cave::Entity::Type>(caveEntities[index].spawnCredit);
 	const int look = caveEntities[index].extra;
+	const int behaviour = caveEntities[index].stuckTicks;
 	const Cave::Entity::Direction face = caveEntities[index].direction;
 	if (Cave::Entity::isTrapCapturable(contained))
 		setEntity(index, monsterFromType(contained));
 	else
 		setEntity(index, Cave::Entity::Protozo());
-	if (getEntityType(index) == Cave::Entity::Type::Genom
-		&& (look & Cave::Entity::Genom::LOOK_VALID) != 0)
-		caveEntities[index].spawnCredit = look;
+	if (getEntityType(index) == Cave::Entity::Type::Genom) {
+		if ((look & Cave::Entity::Genom::LOOK_VALID) != 0)
+			caveEntities[index].spawnCredit = look;
+		Cave::Entity::Genom::setBehaviourPacked(caveEntities[index], behaviour);
+	}
 	if (getEntityType(index) == Cave::Entity::Type::Fish) {
 		if ((look & Cave::Entity::Fish::LOOK_VALID) != 0)
 			caveEntities[index].spawnCredit = look;
@@ -399,10 +407,12 @@ void Cave::Map::updateTrapFilling(const int& index) {
 	}
 	const auto contained = static_cast<Cave::Entity::Type>(caveEntities[index].spawnCredit);
 	const int look = caveEntities[index].extra;
+	const int behaviour = caveEntities[index].stuckTicks;
 	const Cave::Entity::Direction face = caveEntities[index].direction;
 	setEntity(index, Cave::Entity::TrapFull(
 		Cave::Entity::isTrapCapturable(contained) ? contained : Cave::Entity::Type::Protozo,
 		look));
+	caveEntities[index].stuckTicks = behaviour;
 	caveEntities[index].direction = face;
 }
 
@@ -459,14 +469,17 @@ void Cave::Map::beginCompressorEat(const int& compressor, const int& trapCell) {
 
 	const auto contained = static_cast<Cave::Entity::Type>(caveEntities[trapCell].spawnCredit);
 	const int look = caveEntities[trapCell].extra;
+	const int behaviour = caveEntities[trapCell].stuckTicks;
 	const Cave::Entity::Direction face = caveEntities[trapCell].direction;
 	if (Cave::Entity::isTrapCapturable(contained))
 		setEntity(trapCell, monsterFromType(contained));
 	else
 		setEntity(trapCell, Cave::Entity::Protozo());
-	if (getEntityType(trapCell) == Cave::Entity::Type::Genom
-		&& (look & Cave::Entity::Genom::LOOK_VALID) != 0)
-		caveEntities[trapCell].spawnCredit = look;
+	if (getEntityType(trapCell) == Cave::Entity::Type::Genom) {
+		if ((look & Cave::Entity::Genom::LOOK_VALID) != 0)
+			caveEntities[trapCell].spawnCredit = look;
+		Cave::Entity::Genom::setBehaviourPacked(caveEntities[trapCell], behaviour);
+	}
 	if (getEntityType(trapCell) == Cave::Entity::Type::Fish) {
 		if ((look & Cave::Entity::Fish::LOOK_VALID) != 0)
 			caveEntities[trapCell].spawnCredit = look;
@@ -979,11 +992,13 @@ bool Cave::Map::isWaterLoggable(const Cave::Entity::Base& entity) const {
 	case T::Coral:
 	case T::CoralBud:
 	case T::Landmine:
+	case T::Fireball:
 	case T::StartDoor:
 	case T::StartDoorOpen:
 	case T::Explosion:
 	case T::CaveGullExplosion:
 	case T::ChaosExplosion:
+	case T::PyrozoExplosion:
 	case T::SingularityExplosion:
 	case T::Detonator:
 	case T::DetonatorTriggered:

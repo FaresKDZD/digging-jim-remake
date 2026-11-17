@@ -8,10 +8,11 @@ namespace Cave::Entity {
 
     /**
      * @class Parasite
-     * @brief Protozo-like wall-follower. When Jim is path-reachable inside a 15x15
-     * box it chases at double speed, mounts him, then infest for 10s (inverted
-     * controls). Afterward it detaches and idles (same wall-follow as wander) for
-     * 5s before it can chase again.
+     * @brief Protozo-like wall-follower. When Jim or a Jimlin is path-reachable
+     * inside a 15x15 box it chases at double speed, mounts them, then infest for
+     * 10s (inverted controls). Screen infection filters apply only when the player
+     * is infested. Afterward it detaches and idles (same wall-follow as wander)
+     * for 5s before it can chase again.
      *
      * spawnCredit = mode, extra = post-detach cooldown ticks, targetIndex unused
      * while wandering.

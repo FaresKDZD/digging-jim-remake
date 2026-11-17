@@ -21,6 +21,7 @@ add_library(DiggingJimLib STATIC
     src/HUD/Developer/FPSCounter.cpp
     src/HUD/Developer/PositionDisplay.cpp
     src/HUD/Level/Panel.cpp
+    src/HUD/Level/InventoryMenu.cpp
     src/HUD/Level/PauseMenu.cpp
     src/HUD/MainMenu/MainMenu.cpp
     src/Image/Manager.cpp

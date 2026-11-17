@@ -10,6 +10,7 @@ void Image::Manager::loadAllImages() {
     loadTexture(Image::Texture::CaveNumbers, "./assets/textures/Cave/numbers.png");
     loadTexture(Image::Texture::CaveTiles, "./assets/textures/Cave/tiles.png");
     loadTexture(Image::Texture::CaveFireOverlay, "./assets/textures/Cave/fire_overlay.png");
+    loadTexture(Image::Texture::CaveBreakOverlay, "./assets/textures/Cave/break_overlay.png");
     loadTexture(Image::Texture::CaveBreathOverlay, "./assets/textures/Cave/breath_overlay.png");
     loadTexture(Image::Texture::CaveParasiteOverlay, "./assets/textures/Cave/parasite_overlay.png");
     loadTexture(Image::Texture::CaveParasiteOverlayRight, "./assets/textures/Cave/parasite_overlay_right.png");
@@ -32,6 +33,7 @@ void Image::Manager::loadAllImages() {
     loadTexture(Image::Texture::EditorTestButton, "./assets/textures/Editor/test_button.png");
     loadTexture(Image::Texture::EditorSelect, "./assets/textures/Editor/select.png");
     loadTexture(Image::Texture::EditorMiniTiles, "./assets/textures/Editor/mini_tiles.png");
+    loadTexture(Image::Texture::InventoryBorder, "./assets/custom_assets/inventory_border.png");
 }
 
 void Image::Manager::loadEditorImages() {

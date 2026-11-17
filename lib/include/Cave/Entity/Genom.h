@@ -11,7 +11,7 @@ namespace Cave::Entity {
 
     /**
      * @class Genom
-     * @brief Jelly-style wanderer drawn from stacked B&W layers.
+     * @brief Layered wanderer with inheritable look + exclusive movement behaviour.
      *
      * Layer order (back to front): bg, wings, legs, spikes, body, eyes, mouth,
      * then an optional breeding-particle overlay while MODE_COURT.
@@ -19,12 +19,35 @@ namespace Cave::Entity {
      * A shared random hue colorizes every layer except spikes / breeding.
      * Wings / eyes / mouth keep light whites via highlight-preserve tint.
      *
-     * Jelly AI fields: targetIndex = wander goal, extra = hold ticks.
-     * Look packed in spawnCredit.
+     * AI fields: targetIndex = wander goal, extra = hold ticks.
+     * Look packed in spawnCredit. Movement mode stored in stuckTicks (GENM v2).
+     * Pregnancy baby movement is stashed in homeIndex bits 17–19.
      */
     class Genom : public Base {
     public:
         static constexpr int FRAME_COUNT = 8;
+
+        /// @brief Exclusive movement behaviours (exactly one active).
+        static constexpr int MOVE_TURN_LEFT = 0;   ///< Protozo-like wall follow.
+        static constexpr int MOVE_TURN_RIGHT = 1;  ///< Gull-like wall follow.
+        static constexpr int MOVE_STRAIGHT = 2;    ///< Cilia-like straight lines.
+        static constexpr int MOVE_MAGNET = 3;      ///< Aggressor-like axis chase.
+        static constexpr int MOVE_HUNT = 4;        ///< Tetrapus-like path chase.
+        static constexpr int MOVE_WANDER = 5;      ///< Jelly-like random wander (default).
+        static constexpr int MOVE_HORIZONTAL = 6;  ///< Fish-like left/right only.
+        static constexpr int MOVE_VERTICAL = 7;    ///< Up/down only.
+        static constexpr int MOVE_COUNT = 8;
+        /// @brief stuckTicks bit 3: when set, this Genom will not breed or be courted.
+        /// Absent on legacy GENM values 0–7 so old caves keep breeding enabled.
+        static constexpr int BEHAVIOUR_STERILE_BIT = 1 << 3;
+        /// @brief stuckTicks bit 4: when set, death leaves CaveGullExplosion diamonds.
+        /// Absent on legacy GENM values so old caves keep non-diamond deaths.
+        static constexpr int BEHAVIOUR_DROP_DIAMOND_BIT = 1 << 4;
+        static constexpr int BEHAVIOUR_MASK = 0x1F;
+        static constexpr int PREG_MOVE_SHIFT = 17;
+        static constexpr int PREG_MOVE_MASK = 0x7 << PREG_MOVE_SHIFT;
+        static constexpr int PREG_STERILE_BIT = 1 << 20;
+        static constexpr int PREG_DROP_DIAMOND_BIT = 1 << 21;
 
         static constexpr int BG_BASE = 1605;
         static constexpr int WINGS_BASE = 1613;
@@ -79,11 +102,156 @@ namespace Cave::Entity {
             addTrait(Trait::Crushable);
             direction = Cave::Entity::getRandomDirection();
             spawnCredit = randomLook();
+            stuckTicks = packBehaviour(MOVE_WANDER, true, true);
             targetIndex = -1;
             dutyTicks = -1;
             // Stagger first wander / breed roll so crowds don't all BFS the same tick.
             extra = Utils::randomInteger(0, HOLD_TICKS);
             setBreedState(*this, MODE_IDLE, Utils::randomInteger(1, BREED_CHECK_TICKS));
+        }
+
+        static const char* movementName(int move) {
+            switch (clampMovement(move)) {
+            case MOVE_TURN_LEFT: return "turn left";
+            case MOVE_TURN_RIGHT: return "turn right";
+            case MOVE_STRAIGHT: return "straight lines";
+            case MOVE_MAGNET: return "magnet";
+            case MOVE_HUNT: return "hunt";
+            case MOVE_HORIZONTAL: return "horizontal";
+            case MOVE_VERTICAL: return "vertical";
+            default: return "wander";
+            }
+        }
+
+        static int clampMovement(int move) {
+            if (move < 0 || move >= MOVE_COUNT) return MOVE_WANDER;
+            return move;
+        }
+
+        static int packBehaviour(int move, bool canBreedFlag, bool dropDiamondsFlag = false) {
+            return clampMovement(move)
+                | (canBreedFlag ? 0 : BEHAVIOUR_STERILE_BIT)
+                | (dropDiamondsFlag ? BEHAVIOUR_DROP_DIAMOND_BIT : 0);
+        }
+
+        static int behaviourPacked(const Base& entity) {
+            return entity.stuckTicks & BEHAVIOUR_MASK;
+        }
+
+        static void setBehaviourPacked(Base& entity, int packed) {
+            entity.stuckTicks = packBehaviour(
+                packed & (MOVE_COUNT - 1),
+                (packed & BEHAVIOUR_STERILE_BIT) == 0,
+                (packed & BEHAVIOUR_DROP_DIAMOND_BIT) != 0);
+        }
+
+        static int movement(const Base& entity) {
+            return clampMovement(entity.stuckTicks & (MOVE_COUNT - 1));
+        }
+
+        static void setMovement(Base& entity, int move) {
+            entity.stuckTicks = packBehaviour(move, canBreed(entity), dropsDiamonds(entity));
+        }
+
+        static bool canBreed(const Base& entity) {
+            return (entity.stuckTicks & BEHAVIOUR_STERILE_BIT) == 0;
+        }
+
+        static void setCanBreed(Base& entity, bool enabled) {
+            entity.stuckTicks = packBehaviour(movement(entity), enabled, dropsDiamonds(entity));
+        }
+
+        static bool dropsDiamonds(const Base& entity) {
+            return (entity.stuckTicks & BEHAVIOUR_DROP_DIAMOND_BIT) != 0;
+        }
+
+        static void setDropsDiamonds(Base& entity, bool enabled) {
+            entity.stuckTicks = packBehaviour(movement(entity), canBreed(entity), enabled);
+        }
+
+        static int randomMovement() {
+            return Utils::randomInteger(0, MOVE_COUNT - 1);
+        }
+
+        static bool randomCanBreed() {
+            // Prefer fertile when randomizing (~75%).
+            return Utils::randomInteger(0, 3) != 0;
+        }
+
+        static bool randomDropsDiamonds() {
+            // Prefer diamond-drop when randomizing (~75%).
+            return Utils::randomInteger(0, 3) != 0;
+        }
+
+        /// @brief Coin-flip parents; 1/20 chance of a novel movement neither parent has.
+        static int mixMovements(int a, int b) {
+            int move = Utils::randomInteger(0, 1) ? clampMovement(a) : clampMovement(b);
+            if (Utils::randomInteger(1, 20) == 1
+                && canMutateValue(0, MOVE_COUNT - 1, clampMovement(a), clampMovement(b)))
+                move = mutateValue(0, MOVE_COUNT - 1, clampMovement(a), clampMovement(b));
+            return clampMovement(move);
+        }
+
+        /// @brief Coin-flip parents' fertility; 1/20 chance to flip away from both.
+        static bool mixCanBreed(bool a, bool b) {
+            bool breed = Utils::randomInteger(0, 1) ? a : b;
+            if (Utils::randomInteger(1, 20) == 1 && a == b)
+                breed = !a;
+            return breed;
+        }
+
+        /// @brief Coin-flip parents' diamond-drop; 1/20 chance to flip away from both.
+        static bool mixDropsDiamonds(bool a, bool b) {
+            bool drop = Utils::randomInteger(0, 1) ? a : b;
+            if (Utils::randomInteger(1, 20) == 1 && a == b)
+                drop = !a;
+            return drop;
+        }
+
+        static int pregnancyMovement(const Base& entity) {
+            if (entity.homeIndex < 0 || (entity.homeIndex & LOOK_VALID) != 0)
+                return MOVE_WANDER;
+            return clampMovement((entity.homeIndex >> PREG_MOVE_SHIFT) & 0x7);
+        }
+
+        static bool pregnancyCanBreed(const Base& entity) {
+            if (entity.homeIndex < 0 || (entity.homeIndex & LOOK_VALID) != 0)
+                return true;
+            return (entity.homeIndex & PREG_STERILE_BIT) == 0;
+        }
+
+        static bool pregnancyDropsDiamonds(const Base& entity) {
+            if (entity.homeIndex < 0 || (entity.homeIndex & LOOK_VALID) != 0)
+                return true;
+            return (entity.homeIndex & PREG_DROP_DIAMOND_BIT) != 0;
+        }
+
+        static void setPregnancyMovement(Base& entity, int move) {
+            if (entity.homeIndex < 0 || (entity.homeIndex & LOOK_VALID) != 0) return;
+            entity.homeIndex = (entity.homeIndex & ~PREG_MOVE_MASK)
+                | ((clampMovement(move) & 0x7) << PREG_MOVE_SHIFT);
+        }
+
+        static void setPregnancyCanBreed(Base& entity, bool enabled) {
+            if (entity.homeIndex < 0 || (entity.homeIndex & LOOK_VALID) != 0) return;
+            if (enabled)
+                entity.homeIndex &= ~PREG_STERILE_BIT;
+            else
+                entity.homeIndex |= PREG_STERILE_BIT;
+        }
+
+        static void setPregnancyDropsDiamonds(Base& entity, bool enabled) {
+            if (entity.homeIndex < 0 || (entity.homeIndex & LOOK_VALID) != 0) return;
+            if (enabled)
+                entity.homeIndex |= PREG_DROP_DIAMOND_BIT;
+            else
+                entity.homeIndex &= ~PREG_DROP_DIAMOND_BIT;
+        }
+
+        static void setPregnancyBehaviour(Base& entity, int move, bool breed, bool dropDiamonds = true) {
+            setPregnancyMovement(entity, move);
+            setPregnancyCanBreed(entity, breed);
+            setPregnancyDropsDiamonds(entity, dropDiamonds);
         }
 
         static bool hasLook(const Base& entity) {
@@ -119,7 +287,11 @@ namespace Cave::Entity {
                 r = (entity.homeIndex >= 0 && (entity.homeIndex & LOOK_VALID) == 0)
                     ? ((entity.homeIndex >> ROLE_SHIFT) & 1) : BREED_SEEKER;
             }
-            entity.homeIndex = ((timer & 0xFFF) << 4) | (mode & MODE_MASK) | ((r & 1) << ROLE_SHIFT);
+            // Keep stashed baby movement / fertility / diamond-drop across breed-state rewrites while pregnant.
+            const int keepPreg = (entity.homeIndex >= 0 && (entity.homeIndex & LOOK_VALID) == 0)
+                ? (entity.homeIndex & (PREG_MOVE_MASK | PREG_STERILE_BIT | PREG_DROP_DIAMOND_BIT)) : 0;
+            entity.homeIndex = ((timer & 0xFFF) << 4) | (mode & MODE_MASK)
+                | ((r & 1) << ROLE_SHIFT) | keepPreg;
         }
 
         static void resetBreed(Base& entity) {
@@ -127,6 +299,7 @@ namespace Cave::Entity {
             entity.targetIndex = -1;
             entity.extra = 0;
             entity.dutyTicks = -1;
+            entity.homeIndex &= ~(PREG_MOVE_MASK | PREG_STERILE_BIT | PREG_DROP_DIAMOND_BIT);
         }
 
         static int mateCell(const Base& entity) {

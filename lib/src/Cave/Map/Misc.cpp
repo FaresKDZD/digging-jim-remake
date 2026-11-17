@@ -33,30 +33,20 @@ void Cave::Map::createExplosion(const int& index) {
 		|| getEntityType(index) == Cave::Entity::Type::SaturatedSludg
 		|| getEntityType(index) == Cave::Entity::Type::GallopQueen
 		|| getEntityType(index) == Cave::Entity::Type::Gallop
-		|| getEntityType(index) == Cave::Entity::Type::Butterfly;
+		|| getEntityType(index) == Cave::Entity::Type::Butterfly
+		|| (getEntityType(index) == Cave::Entity::Type::Genom
+			&& Cave::Entity::Genom::dropsDiamonds(caveEntities[index]));
 	createExplosion(index, caveGullExplosion);
 }
 
 void Cave::Map::createExplosion(const int& index, bool caveGullExplosion) {
-	const bool spawnPyrozos = getEntityType(index) == Cave::Entity::Type::Pyrozo;
+	const bool pyrozoExplosion = getEntityType(index) == Cave::Entity::Type::Pyrozo;
 	std::vector<int> cells;
 	cells.reserve(m_explosionOffsets.size());
 	for (int offset : m_explosionOffsets) {
 		cells.push_back(index + offset);
 	}
-	detonateCells(index, cells, caveGullExplosion);
-	if (!spawnPyrozos) return;
-	std::vector<int> spots;
-	spots.reserve(cells.size());
-	for (int cell : cells) {
-		if (inBounds(cell) && getEntityType(cell) == Cave::Entity::Type::Explosion)
-			spots.push_back(cell);
-	}
-	while (spots.size() > 2) {
-		spots.erase(spots.begin() + static_cast<size_t>(Utils::randomInteger(0, static_cast<int>(spots.size()) - 1)));
-	}
-	for (int cell : spots)
-		caveEntities[cell].extra = Cave::Entity::Explosion::SPAWN_EXTINGUISHED;
+	detonateCells(index, cells, caveGullExplosion, false, pyrozoExplosion);
 }
 
 void Cave::Map::createRubyExplosion(const int& index) {
@@ -191,7 +181,7 @@ bool Cave::Map::absorbObsidianExplosion(const int& index) {
 	return true;
 }
 
-void Cave::Map::detonateCells(const int& origin, const std::vector<int>& cells, bool caveGullExplosion, bool rubyExplosion) {
+void Cave::Map::detonateCells(const int& origin, const std::vector<int>& cells, bool caveGullExplosion, bool rubyExplosion, bool pyrozoExplosion) {
 	std::vector<int> bombIndices;
 	std::vector<int> fusion2Indices;
 	std::vector<int> wormFollowup;
@@ -257,6 +247,8 @@ void Cave::Map::detonateCells(const int& origin, const std::vector<int>& cells, 
 			setEntity(explosionIndex, Cave::Entity::ChaosExplosion());
 		else if (caveGullExplosion)
 			setEntity(explosionIndex, Cave::Entity::CaveGullExplosion());
+		else if (pyrozoExplosion)
+			setEntity(explosionIndex, Cave::Entity::PyrozoExplosion());
 		else {
 			// Check before setEntity covers water under the blast.
 			const bool underwater = isWaterCell(explosionIndex);

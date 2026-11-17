@@ -20,10 +20,12 @@ namespace Cave {
         int32_t packed = 0;
     };
 
-    /// @brief Per-Genom layer/hue look packed alongside cave tile data.
+    /// @brief Per-Genom layer/hue look + movement behaviour alongside cave tile data.
+    /// GENM v1 stored only `packed`; v2 adds `behaviour` (movement mode).
     struct GenomRecord {
         uint16_t index = 0;
         int32_t packed = 0;
+        int32_t behaviour = 0; ///< Cave::Entity::Genom movement mode (MOVE_*).
     };
 
     /// @brief Cell index of a hive-hunter-bubbled monster (packed unused, WELL-style chunk).

@@ -3,6 +3,175 @@
 #include "Cave/Entity/Magma.h"
 #include <algorithm>
 
+int Cave::Map::inventoryCount(Cave::Entity::Type type) const {
+	using T = Cave::Entity::Type;
+	switch (type) {
+	case T::HollowDiamond:  return m_hollowCarried;
+	case T::TimeBomb:       return m_timeBombsCarried;
+	case T::Landmine:       return m_landminesCarried;
+	case T::Key:            return m_keysCarried;
+	case T::MacowEgg:       return m_macowEggsCarried;
+	case T::MacowEggCooked: return m_macowCookedEggsCarried;
+	case T::TrapEmpty:      return m_emptyTrapsCarried;
+	case T::TrapFull:       return static_cast<int>(m_fullTrapsCarried.size());
+	default:                return 0;
+	}
+}
+
+int Cave::Map::inventoryCount(const InventorySlot& slot) const {
+	using T = Cave::Entity::Type;
+	if (slot.type == T::TrapFull) {
+		int n = 0;
+		for (const FullTrapPayload& p : m_fullTrapsCarried) {
+			if (p.monsterType == slot.trapMonster && p.look == slot.trapLook)
+				++n;
+		}
+		return n;
+	}
+	return inventoryCount(slot.type);
+}
+
+void Cave::Map::setInventorySelectedIndex(int index) {
+	const int n = static_cast<int>(m_inventoryOrder.size());
+	if (n <= 0) {
+		m_inventorySelected = 0;
+		return;
+	}
+	if (index < 0) index = n - 1;
+	if (index >= n) index = 0;
+	m_inventorySelected = index;
+}
+
+Cave::Map::InventorySlot Cave::Map::inventorySelectedSlot() const {
+	if (m_inventoryOrder.empty()) return {};
+	const int i = std::clamp(m_inventorySelected, 0, static_cast<int>(m_inventoryOrder.size()) - 1);
+	return m_inventoryOrder[static_cast<size_t>(i)];
+}
+
+Cave::Entity::Type Cave::Map::inventorySelectedType() const {
+	return inventorySelectedSlot().type;
+}
+
+void Cave::Map::noteInventoryCollect(Cave::Entity::Type type) {
+	using T = Cave::Entity::Type;
+	switch (type) {
+	case T::HollowDiamond:
+	case T::TimeBomb:
+	case T::Landmine:
+	case T::Key:
+	case T::MacowEgg:
+	case T::MacowEggCooked:
+	case T::TrapEmpty:
+		break;
+	default:
+		return;
+	}
+	const InventorySlot slot{ type, 0, 0 };
+	for (const InventorySlot& existing : m_inventoryOrder) {
+		if (existing == slot) return;
+	}
+	m_inventoryOrder.push_back(slot);
+	if (m_inventoryOrder.size() == 1)
+		m_inventorySelected = 0;
+}
+
+void Cave::Map::noteInventoryCollectTrap(const FullTrapPayload& payload) {
+	const InventorySlot slot{
+		Cave::Entity::Type::TrapFull,
+		payload.monsterType,
+		payload.look
+	};
+	for (const InventorySlot& existing : m_inventoryOrder) {
+		if (existing == slot) return;
+	}
+	m_inventoryOrder.push_back(slot);
+	if (m_inventoryOrder.size() == 1)
+		m_inventorySelected = 0;
+}
+
+void Cave::Map::pruneInventoryOrder() {
+	const InventorySlot keep = inventorySelectedSlot();
+	std::vector<InventorySlot> next;
+	next.reserve(m_inventoryOrder.size());
+	for (const InventorySlot& slot : m_inventoryOrder) {
+		if (inventoryCount(slot) > 0)
+			next.push_back(slot);
+	}
+	m_inventoryOrder = std::move(next);
+	m_inventorySelected = 0;
+	for (int i = 0; i < static_cast<int>(m_inventoryOrder.size()); ++i) {
+		if (m_inventoryOrder[static_cast<size_t>(i)] == keep) {
+			m_inventorySelected = i;
+			break;
+		}
+	}
+}
+
+bool Cave::Map::tryPlaceSelectedInventory(const int& cell) {
+	if (!inBounds(cell) || !hasTrait(Cave::Entity::Trait::Empty, cell)) return false;
+	pruneInventoryOrder();
+	const InventorySlot slot = inventorySelectedSlot();
+	if (slot.type == Cave::Entity::Type::NoType || inventoryCount(slot) <= 0) return false;
+
+	using T = Cave::Entity::Type;
+	switch (slot.type) {
+	case T::TimeBomb:
+		m_timeBombsCarried--;
+		setEntity(cell, Cave::Entity::TimeBomb());
+		caveEntities[cell].targetIndex = Cave::Entity::TimeBomb::FUSE_TICKS;
+		m_game->soundManager.play(Sound::Effect::Drop);
+		break;
+	case T::Landmine:
+		m_landminesCarried--;
+		setEntity(cell, Cave::Entity::Landmine());
+		m_game->soundManager.play(Sound::Effect::Drop);
+		break;
+	case T::HollowDiamond:
+		m_hollowCarried--;
+		setEntity(cell, Cave::Entity::HollowDiamond());
+		m_game->soundManager.play(Sound::Effect::DiamondDrop);
+		break;
+	case T::MacowEgg:
+		m_macowEggsCarried--;
+		setEntity(cell, Cave::Entity::MacowEgg());
+		m_game->soundManager.play(Sound::Effect::Drop);
+		break;
+	case T::MacowEggCooked:
+		m_macowCookedEggsCarried--;
+		setEntity(cell, Cave::Entity::MacowEggCooked());
+		m_game->soundManager.play(Sound::Effect::Drop);
+		break;
+	case T::TrapEmpty:
+		m_emptyTrapsCarried--;
+		setEntity(cell, Cave::Entity::TrapEmpty());
+		m_game->soundManager.play(Sound::Effect::Drop);
+		break;
+	case T::TrapFull: {
+		auto it = std::find_if(m_fullTrapsCarried.begin(), m_fullTrapsCarried.end(),
+			[&](const FullTrapPayload& p) {
+				return p.monsterType == slot.trapMonster && p.look == slot.trapLook;
+			});
+		if (it == m_fullTrapsCarried.end()) return false;
+		const FullTrapPayload payload = *it;
+		m_fullTrapsCarried.erase(it);
+		const auto monster = static_cast<Cave::Entity::Type>(payload.monsterType);
+		setEntity(cell, Cave::Entity::TrapFull(
+			Cave::Entity::isTrapCapturable(monster) ? monster : Cave::Entity::Type::Protozo,
+			payload.look));
+		caveEntities[cell].direction = payload.facing;
+		m_game->soundManager.play(Sound::Effect::Drop);
+		break;
+	}
+	case T::Key:
+		return false;
+	default:
+		return false;
+	}
+	notifyFusion5Stimulus(cell);
+	pruneInventoryOrder();
+	return true;
+}
+
 void Cave::Map::killPlayerAt(const int& index) {
 	if (!inBounds(index)) return;
 	const int pid = caveEntities[index].spawnCredit;
@@ -425,7 +594,22 @@ void Cave::Map::updateJimMovement(const int& index, const Cave::Entity::Facing& 
 
 	if (handleJimPush(index, inFront, collectMode, direction)) return;
 
+	if (handleJimDigGravel(index, inFront, facing)) return;
+
 	if (handleJimTraverse(index, inFront, collectMode, facing, direction)) return;
+}
+
+bool Cave::Map::handleJimDigGravel(const int& index, const int& inFront, const Cave::Entity::Facing& facing) {
+	if (getEntityType(inFront) != Cave::Entity::Type::Gravel) return false;
+	using G = Cave::Entity::Gravel;
+	(facing == Cave::Entity::Facing::NEUTRAL) ? setJimMoveAmination(index) : setJimPushAmination(index);
+	if (caveEntities[index].isTransitioning()) return true;
+	int& progress = caveEntities[inFront].extra;
+	if (progress < G::DIG_TICKS)
+		progress++;
+	if (progress >= G::DIG_TICKS)
+		m_gravelClearPending.push_back(inFront);
+	return true;
 }
 
 bool Cave::Map::handleJimBorderWrap(const int& index, const int& inFront, const bool& collectMode, const Cave::Entity::Facing& facing, const Cave::Entity::Direction& direction) {
@@ -597,35 +781,43 @@ bool Cave::Map::handleJimTraverse(const int& index, const int& inFront, const bo
 			}
 			else if (hollow) {
 				m_hollowCarried++;
+				noteInventoryCollect(Cave::Entity::Type::HollowDiamond);
 				m_game->soundManager.play(Sound::Effect::Collect);
 				notifyFusion5Stimulus(inFront);
 			}
 			else if (timeBomb) {
 				m_timeBombsCarried++;
+				noteInventoryCollect(Cave::Entity::Type::TimeBomb);
 				m_game->soundManager.play(Sound::Effect::Drop);
 			}
 			else if (key) {
 				m_keysCarried++;
+				noteInventoryCollect(Cave::Entity::Type::Key);
 				m_game->soundManager.play(Sound::Effect::Collect);
 			}
 			else if (landmine) {
 				m_landminesCarried++;
+				noteInventoryCollect(Cave::Entity::Type::Landmine);
 				m_game->soundManager.play(Sound::Effect::Drop);
 			}
 			else if (macowEgg) {
 				m_macowEggsCarried++;
+				noteInventoryCollect(Cave::Entity::Type::MacowEgg);
 				m_game->soundManager.play(Sound::Effect::Drop);
 			}
 			else if (macowCooked) {
 				m_macowCookedEggsCarried++;
+				noteInventoryCollect(Cave::Entity::Type::MacowEggCooked);
 				m_game->soundManager.play(Sound::Effect::Drop);
 			}
 			else if (trapEmpty) {
 				m_emptyTrapsCarried++;
+				noteInventoryCollect(Cave::Entity::Type::TrapEmpty);
 				m_game->soundManager.play(Sound::Effect::Drop);
 			}
 			else if (trapFull) {
 				m_fullTrapsCarried.push_back(trapPayload);
+				noteInventoryCollectTrap(trapPayload);
 				m_game->soundManager.play(Sound::Effect::Drop);
 			}
 			else if (digging) {
@@ -633,59 +825,7 @@ bool Cave::Map::handleJimTraverse(const int& index, const int& inFront, const bo
 				if (diggingMagma)
 					noteJimMagmaDig();
 			}
-			else if (m_timeBombsCarried > 0 && hasTrait(Cave::Entity::Trait::Empty, inFront)) {
-				m_timeBombsCarried--;
-				setEntity(inFront, Cave::Entity::TimeBomb());
-				caveEntities[inFront].targetIndex = Cave::Entity::TimeBomb::FUSE_TICKS;
-				m_game->soundManager.play(Sound::Effect::Drop);
-				notifyFusion5Stimulus(inFront);
-				return true;
-			}
-			else if (m_landminesCarried > 0 && hasTrait(Cave::Entity::Trait::Empty, inFront)) {
-				m_landminesCarried--;
-				setEntity(inFront, Cave::Entity::Landmine());
-				m_game->soundManager.play(Sound::Effect::Drop);
-				notifyFusion5Stimulus(inFront);
-				return true;
-			}
-			else if (m_hollowCarried > 0 && hasTrait(Cave::Entity::Trait::Empty, inFront)) {
-				m_hollowCarried--;
-				setEntity(inFront, Cave::Entity::HollowDiamond());
-				m_game->soundManager.play(Sound::Effect::DiamondDrop);
-				notifyFusion5Stimulus(inFront);
-				return true;
-			}
-			else if (m_macowEggsCarried > 0 && hasTrait(Cave::Entity::Trait::Empty, inFront)) {
-				m_macowEggsCarried--;
-				setEntity(inFront, Cave::Entity::MacowEgg());
-				m_game->soundManager.play(Sound::Effect::Drop);
-				notifyFusion5Stimulus(inFront);
-				return true;
-			}
-			else if (m_macowCookedEggsCarried > 0 && hasTrait(Cave::Entity::Trait::Empty, inFront)) {
-				m_macowCookedEggsCarried--;
-				setEntity(inFront, Cave::Entity::MacowEggCooked());
-				m_game->soundManager.play(Sound::Effect::Drop);
-				notifyFusion5Stimulus(inFront);
-				return true;
-			}
-			else if (m_emptyTrapsCarried > 0 && hasTrait(Cave::Entity::Trait::Empty, inFront)) {
-				m_emptyTrapsCarried--;
-				setEntity(inFront, Cave::Entity::TrapEmpty());
-				m_game->soundManager.play(Sound::Effect::Drop);
-				notifyFusion5Stimulus(inFront);
-				return true;
-			}
-			else if (!m_fullTrapsCarried.empty() && hasTrait(Cave::Entity::Trait::Empty, inFront)) {
-				const Cave::Map::FullTrapPayload payload = m_fullTrapsCarried.front();
-				m_fullTrapsCarried.erase(m_fullTrapsCarried.begin());
-				const auto type = static_cast<Cave::Entity::Type>(payload.monsterType);
-				setEntity(inFront, Cave::Entity::TrapFull(
-					Cave::Entity::isTrapCapturable(type) ? type : Cave::Entity::Type::Protozo,
-					payload.look));
-				caveEntities[inFront].direction = payload.facing;
-				m_game->soundManager.play(Sound::Effect::Drop);
-				notifyFusion5Stimulus(inFront);
+			else if (tryPlaceSelectedInventory(inFront)) {
 				return true;
 			}
 			// Spacebar collect digs dirt / clears empties — never erase bare water.
@@ -718,35 +858,43 @@ bool Cave::Map::handleJimTraverse(const int& index, const int& inFront, const bo
 		}
 		else if (hollow) {
 			m_hollowCarried++;
+			noteInventoryCollect(Cave::Entity::Type::HollowDiamond);
 			m_game->soundManager.play(Sound::Effect::Collect);
 			notifyFusion5Stimulus(inFront);
 		}
 		else if (timeBomb) {
 			m_timeBombsCarried++;
+			noteInventoryCollect(Cave::Entity::Type::TimeBomb);
 			m_game->soundManager.play(Sound::Effect::Drop);
 		}
 		else if (key) {
 			m_keysCarried++;
+			noteInventoryCollect(Cave::Entity::Type::Key);
 			m_game->soundManager.play(Sound::Effect::Collect);
 		}
 		else if (landmine) {
 			m_landminesCarried++;
+			noteInventoryCollect(Cave::Entity::Type::Landmine);
 			m_game->soundManager.play(Sound::Effect::Drop);
 		}
 		else if (macowEgg) {
 			m_macowEggsCarried++;
+			noteInventoryCollect(Cave::Entity::Type::MacowEgg);
 			m_game->soundManager.play(Sound::Effect::Drop);
 		}
 		else if (macowCooked) {
 			m_macowCookedEggsCarried++;
+			noteInventoryCollect(Cave::Entity::Type::MacowEggCooked);
 			m_game->soundManager.play(Sound::Effect::Drop);
 		}
 		else if (trapEmpty) {
 			m_emptyTrapsCarried++;
+			noteInventoryCollect(Cave::Entity::Type::TrapEmpty);
 			m_game->soundManager.play(Sound::Effect::Drop);
 		}
 		else if (trapFull) {
 			m_fullTrapsCarried.push_back(trapPayload);
+			noteInventoryCollectTrap(trapPayload);
 			// Keep the contained monster glued under the cage while it slides under Jim.
 			const size_t n = static_cast<size_t>(width * height);
 			if (m_trapSlideUnder.size() != n)
@@ -863,6 +1011,7 @@ bool Cave::Map::handleJimUseLock(const int& index, const int& inFront, const boo
 
 	if (!m_jimGateComboHeld) {
 		m_keysCarried--;
+		pruneInventoryOrder();
 		lock.spawnCredit = Cave::Entity::Lock::MODE_UNLOCKING;
 		lock.setAnimation(Cave::Entity::Lock::unlockAnimation());
 		m_game->soundManager.play(Sound::Effect::Drop);

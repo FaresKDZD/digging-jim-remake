@@ -20,6 +20,8 @@ namespace Input {
         Confirm,
         /// @brief Whilst held, Jim will be in collect mode.
         Collect,
+        /// @brief Toggle the in-cave inventory slide-out menu.
+        ToggleInventory,
         /// @brief Pause the game.
         Pause,
         /// @brief Trigger Jim self-destruction.
@@ -207,6 +209,7 @@ namespace Input {
             {sf::Keyboard::Scan::Right,   Input::Action::MoveRight},
             {sf::Keyboard::Scan::Enter,   Input::Action::Confirm},
             {sf::Keyboard::Scan::Space,   Input::Action::Collect},
+            {sf::Keyboard::Scan::E,       Input::Action::ToggleInventory},
             {sf::Keyboard::Scan::P,       Input::Action::Pause},
             {sf::Keyboard::Scan::Tab,     Input::Action::SelfDestruct},
             {sf::Keyboard::Scan::Escape,  Input::Action::Quit},

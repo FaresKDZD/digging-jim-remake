@@ -883,6 +883,21 @@ void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>
                 && entity.isAwayTransition()
                 && prevTex == Cave::Entity::GallopEgg::FRAME_BASE_FETUS;
 
+            // Well summon: monster slides out under a full well (any cardinal).
+            const bool wellSummonAway = entity.getType() == Cave::Entity::Type::Well
+                && entity.isAwayTransition()
+                && prevTex != Cave::Entity::NO_TEXTURE_INDEX;
+
+            // Magic wall: boulder/diamond (etc.) slides through under a full wall.
+            const bool magicWallAway = Cave::Entity::isMagicWall(entity.getType())
+                && entity.isAwayTransition()
+                && prevTex != Cave::Entity::NO_TEXTURE_INDEX;
+
+            // Jimlin block: diamond slides through under a full block.
+            const bool jimlinBlockAway = entity.getType() == Cave::Entity::Type::JimlinBlock
+                && entity.isAwayTransition()
+                && prevTex != Cave::Entity::NO_TEXTURE_INDEX;
+
             using HC = Cave::Entity::HiveCollector;
             // Hauler / builder drop: cargo slides out under a full body.
             const bool collectorDropAway = Cave::Entity::isHiveDepositSpitter(entity.getType())
@@ -936,12 +951,44 @@ void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>
             int collectorDropNeighbor = -1;
             float collectorDropOx = 0.f;
             float collectorDropOy = 0.f;
+            // Well summon may slide any cardinal out of the well.
+            int wellSummonNeighbor = -1;
+            float wellSummonOx = 0.f;
+            float wellSummonOy = 0.f;
+            // Magic wall / Jimlin block exit into-slides (vertical primarily).
+            int magicWallNeighbor = -1;
+            float magicWallOx = 0.f;
+            float magicWallOy = 0.f;
+            int jimlinBlockNeighbor = -1;
+            float jimlinBlockOx = 0.f;
+            float jimlinBlockOy = 0.f;
             if (entity.isIntoTransition()) {
                 const auto td = entity.getTransitionDirection();
                 auto collectorAwayAt = [&](int ni, Cave::Entity::Direction awayDir) -> bool {
                     if (ni < 0 || ni >= cellCount) return false;
                     const auto& c = entities[static_cast<size_t>(ni)];
                     return Cave::Entity::isHiveDepositSpitter(c.getType())
+                        && c.isAwayTransition()
+                        && c.getTransitionDirection() == awayDir;
+                };
+                auto wellAwayAt = [&](int ni, Cave::Entity::Direction awayDir) -> bool {
+                    if (ni < 0 || ni >= cellCount) return false;
+                    const auto& c = entities[static_cast<size_t>(ni)];
+                    return c.getType() == Cave::Entity::Type::Well
+                        && c.isAwayTransition()
+                        && c.getTransitionDirection() == awayDir;
+                };
+                auto magicWallAwayAt = [&](int ni, Cave::Entity::Direction awayDir) -> bool {
+                    if (ni < 0 || ni >= cellCount) return false;
+                    const auto& c = entities[static_cast<size_t>(ni)];
+                    return Cave::Entity::isMagicWall(c.getType())
+                        && c.isAwayTransition()
+                        && c.getTransitionDirection() == awayDir;
+                };
+                auto jimlinBlockAwayAt = [&](int ni, Cave::Entity::Direction awayDir) -> bool {
+                    if (ni < 0 || ni >= cellCount) return false;
+                    const auto& c = entities[static_cast<size_t>(ni)];
+                    return c.getType() == Cave::Entity::Type::JimlinBlock
                         && c.isAwayTransition()
                         && c.getTransitionDirection() == awayDir;
                 };
@@ -964,8 +1011,43 @@ void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>
                     collectorDropNeighbor = index - 1;
                     collectorDropOx = -(float)m_tilesize.x;
                 }
+                if (td == Cave::Entity::Direction::DOWN && wellAwayAt(aboveIndex, td)) {
+                    wellSummonNeighbor = aboveIndex;
+                    wellSummonOy = -(float)m_tilesize.y;
+                }
+                else if (td == Cave::Entity::Direction::UP
+                    && wellAwayAt(index + viewW, td)) {
+                    wellSummonNeighbor = index + viewW;
+                    wellSummonOy = (float)m_tilesize.y;
+                }
+                else if (td == Cave::Entity::Direction::LEFT
+                    && wellAwayAt(index + 1, td)) {
+                    wellSummonNeighbor = index + 1;
+                    wellSummonOx = (float)m_tilesize.x;
+                }
+                else if (td == Cave::Entity::Direction::RIGHT
+                    && wellAwayAt(index - 1, td)) {
+                    wellSummonNeighbor = index - 1;
+                    wellSummonOx = -(float)m_tilesize.x;
+                }
+                if (td == Cave::Entity::Direction::DOWN && magicWallAwayAt(aboveIndex, td)) {
+                    magicWallNeighbor = aboveIndex;
+                    magicWallOy = -(float)m_tilesize.y;
+                }
+                else if (td == Cave::Entity::Direction::UP
+                    && magicWallAwayAt(index + viewW, td)) {
+                    magicWallNeighbor = index + viewW;
+                    magicWallOy = (float)m_tilesize.y;
+                }
+                if (td == Cave::Entity::Direction::DOWN && jimlinBlockAwayAt(aboveIndex, td)) {
+                    jimlinBlockNeighbor = aboveIndex;
+                    jimlinBlockOy = -(float)m_tilesize.y;
+                }
             }
             const bool collectorDropInto = collectorDropNeighbor >= 0;
+            const bool wellSummonInto = wellSummonNeighbor >= 0;
+            const bool magicWallInto = magicWallNeighbor >= 0;
+            const bool jimlinBlockInto = jimlinBlockNeighbor >= 0;
 
             auto writeLayer = [&](sf::Vertex* dest, int tex, const sf::IntRect& ep, const sf::IntRect& tp) {
                 if (tex == Cave::Entity::NO_TEXTURE_INDEX) {
@@ -1004,17 +1086,59 @@ void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>
             };
 
             sf::Vertex* tri2 = &m_vertices[index * 12 + 6];
-            if (hiveBirthAway || macowLayAway || gallopLayAway || collectorDropAway) {
-                // Cargo/larva/egg away crop underneath; solid body stamped over it.
+            if (hiveBirthAway || macowLayAway || gallopLayAway || collectorDropAway
+                || wellSummonAway || magicWallAway || jimlinBlockAway) {
+                // Cargo/larva/egg/well-summon/magic-wall/jimlin-block away crop underneath;
+                // solid host stamped over it.
                 const sf::IntRect pep = entity.getPreviousPosition();
                 const sf::IntRect ptp = entity.getPreviousTextureCoords();
                 const int dropLook = Cave::Entity::hiveHaulerCargoLook(entity);
                 const bool dropGenom = dropLook != 0
                     && Cave::Entity::Genom::isGenomTexture(prevTex);
+                int wellLook = 0;
+                if (wellSummonAway) {
+                    const auto td = entity.getTransitionDirection();
+                    int destIdx = -1;
+                    if (td == Cave::Entity::Direction::DOWN) destIdx = index + viewW;
+                    else if (td == Cave::Entity::Direction::UP) destIdx = aboveIndex;
+                    else if (td == Cave::Entity::Direction::LEFT) destIdx = index - 1;
+                    else if (td == Cave::Entity::Direction::RIGHT) destIdx = index + 1;
+                    if (destIdx >= 0 && destIdx < cellCount) {
+                        const auto& destEnt = entities[static_cast<size_t>(destIdx)];
+                        if (Cave::Entity::Genom::hasLook(destEnt))
+                            wellLook = destEnt.spawnCredit;
+                        else if (Cave::Entity::Fish::hasLook(destEnt))
+                            wellLook = destEnt.spawnCredit;
+                    }
+                }
+                const bool wellGenom = wellLook != 0
+                    && (wellLook & Cave::Entity::Genom::LOOK_VALID) != 0
+                    && Cave::Entity::Genom::isGenomTexture(prevTex);
                 if (dropGenom) {
                     const int frame = Cave::Entity::Genom::frameFromBgTexture(prevTex);
                     clearTileVerts(tri, 6);
                     pushGenomLayers(entity, dropLook, frame, baseX, baseY, pep, ptp, index);
+                }
+                else if (wellGenom) {
+                    const int frame = Cave::Entity::Genom::frameFromBgTexture(prevTex);
+                    clearTileVerts(tri, 6);
+                    pushGenomLayers(entity, wellLook, frame, baseX, baseY, pep, ptp, index);
+                }
+                else if (wellSummonAway && wellLook != 0
+                    && Cave::Entity::Fish::isFishTexture(prevTex)) {
+                    // Fish look is on the dest; tint the away wedge under the well.
+                    clearTileVerts(tri, 6);
+                    const sf::Color fishTint = Cave::Entity::Fish::spriteTint(wellLook);
+                    const sf::Vector2i textureCoords = { prevTex % m_tilesetCols, prevTex / m_tilesetCols };
+                    const float px1 = baseX + pep.position.x;
+                    const float py1 = baseY + pep.position.y;
+                    const float px2 = baseX + pep.position.x + pep.size.x;
+                    const float py2 = baseY + pep.position.y + pep.size.y;
+                    const float tx1 = textureCoords.x * m_tilesize.x + ptp.position.x;
+                    const float ty1 = textureCoords.y * m_tilesize.y + ptp.position.y;
+                    const float tx2 = textureCoords.x * m_tilesize.x + ptp.position.x + ptp.size.x;
+                    const float ty2 = textureCoords.y * m_tilesize.y + ptp.position.y + ptp.size.y;
+                    writeTileQuad(tri, px1, py1, px2, py2, tx1, ty1, tx2, ty2, fishTint);
                 }
                 else {
                     writeLayer(tri, prevTex, pep, ptp);
@@ -1183,6 +1307,22 @@ void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>
                     }
                     pushSpriteOverlay(baseX + collectorDropOx, baseY + collectorDropOy,
                         collector.getCurrentTextureIndex(), index);
+                }
+                if (wellSummonInto) {
+                    const auto& well = entities[static_cast<size_t>(wellSummonNeighbor)];
+                    // Keep the opaque well over the overlapping into-wedge.
+                    pushSpriteOverlay(baseX + wellSummonOx, baseY + wellSummonOy,
+                        well.getCurrentTextureIndex(), index);
+                }
+                if (magicWallInto) {
+                    const auto& wall = entities[static_cast<size_t>(magicWallNeighbor)];
+                    pushSpriteOverlay(baseX + magicWallOx, baseY + magicWallOy,
+                        wall.getCurrentTextureIndex(), index);
+                }
+                if (jimlinBlockInto) {
+                    const auto& block = entities[static_cast<size_t>(jimlinBlockNeighbor)];
+                    pushSpriteOverlay(baseX + jimlinBlockOx, baseY + jimlinBlockOy,
+                        block.getCurrentTextureIndex(), index);
                 }
             }
 

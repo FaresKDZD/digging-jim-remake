@@ -1231,13 +1231,18 @@ bool Cave::Map::tryJimlinKingOpenIfNeeded(const int& index, int goal) {
 
 bool Cave::Map::tryJimlinStep(const int& index, const Cave::Entity::Direction& direction, bool pushing) {
 	if (direction == Cave::Entity::Direction::NO_DIRECTION) return false;
-	setEntityDirection(index, direction);
-	setJimlinFacingFromDir(index, direction);
+	Cave::Entity::Direction stepDir = direction;
+	// Parasite infestation inverts intended movement the same way it does for Jim.
+	if (isJimParasiteInfested(index))
+		stepDir = Cave::Entity::oppositeDirection(stepDir);
+	if (stepDir == Cave::Entity::Direction::NO_DIRECTION) return false;
+	setEntityDirection(index, stepDir);
+	setJimlinFacingFromDir(index, stepDir);
 
-	const int inFront = getIndex(index, direction);
+	const int inFront = getIndex(index, stepDir);
 	if (inFront == OUT_OF_BOUNDS_INDEX) return false;
 
-	const int pipeDest = findBlobPipeExit(index, direction);
+	const int pipeDest = findBlobPipeExit(index, stepDir);
 	if (pipeDest != OUT_OF_BOUNDS_INDEX) {
 		if (jimlinHasCrushAbove(pipeDest) || jimlinCellTouchesLava(pipeDest)) {
 			setJimlinAnimation(index, false, false);
@@ -1245,7 +1250,7 @@ bool Cave::Map::tryJimlinStep(const int& index, const Cave::Entity::Direction& d
 		}
 		setJimlinAnimation(index, true, false);
 		const int from = index;
-		if (warpEntity(index, direction)) {
+		if (warpEntity(index, stepDir)) {
 			setEntityMoving(pipeDest, true);
 			m_game->soundManager.play(Sound::Effect::Tube);
 			notifyFusion5Stimulus(pipeDest);
@@ -1286,7 +1291,7 @@ bool Cave::Map::tryJimlinStep(const int& index, const Cave::Entity::Direction& d
 		&& jimlinLook(index) == Cave::Entity::Type::JimlinKing
 		&& !jimlinInShip(index)) {
 		tryPressVaultButton(inFront);
-		setJimlinFacingFromDir(index, direction);
+		setJimlinFacingFromDir(index, stepDir);
 		setJimlinAnimation(index, false, true);
 		return true;
 	}
@@ -1303,7 +1308,7 @@ bool Cave::Map::tryJimlinStep(const int& index, const Cave::Entity::Direction& d
 		}
 		setJimlinAnimation(index, true, false);
 		const int from = index;
-		if (moveEntity(index, direction)) {
+		if (moveEntity(index, stepDir)) {
 			m_game->soundManager.play(Sound::Effect::Collect);
 			notifyFusion5Stimulus(inFront);
 			setEntityMoving(inFront, true);
@@ -1325,10 +1330,10 @@ bool Cave::Map::tryJimlinStep(const int& index, const Cave::Entity::Direction& d
 	}
 
 	if (pushing && isJimlinPushable(inFront)
-		&& (direction == Cave::Entity::Direction::LEFT || direction == Cave::Entity::Direction::RIGHT)
-		&& hasTrait(Cave::Entity::Trait::Empty, inFront, direction)
-		&& !jimlinPushDestOnJimlinBlock(inFront, direction)
-		&& !jimlinPushDestIsPit(inFront, direction)) {
+		&& (stepDir == Cave::Entity::Direction::LEFT || stepDir == Cave::Entity::Direction::RIGHT)
+		&& hasTrait(Cave::Entity::Trait::Empty, inFront, stepDir)
+		&& !jimlinPushDestOnJimlinBlock(inFront, stepDir)
+		&& !jimlinPushDestIsPit(inFront, stepDir)) {
 		int cooldown = jimlinPushCooldown(index);
 		if (cooldown > 0) {
 			setJimlinPushCooldown(index, cooldown - 1);
@@ -1336,7 +1341,7 @@ bool Cave::Map::tryJimlinStep(const int& index, const Cave::Entity::Direction& d
 			return true;
 		}
 		setJimlinAnimation(index, false, true);
-		if (pushEntity(index, direction)) {
+		if (pushEntity(index, stepDir)) {
 			setJimlinPushCooldown(inFront, Cave::Entity::Jimlin::PUSH_INTERVAL);
 			m_game->soundManager.play(Sound::Effect::Drop);
 			notifyFusion5Stimulus(inFront);
@@ -1352,7 +1357,7 @@ bool Cave::Map::tryJimlinStep(const int& index, const Cave::Entity::Direction& d
 
 	setJimlinAnimation(index, true, false);
 	const int from = index;
-	if (moveEntity(index, direction, digSlideInc(inFront))) {
+	if (moveEntity(index, stepDir, digSlideInc(inFront))) {
 		setEntityMoving(inFront, true);
 		jimlinCloseGateBehind(from);
 		return true;

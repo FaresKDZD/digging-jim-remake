@@ -4,6 +4,7 @@
 #include "HUD/Developer/FPSCounter.h"
 #include "HUD/Developer/CameraCenter.h"
 #include "HUD/Level/Panel.h"
+#include "HUD/Level/InventoryMenu.h"
 #include "HUD/Level/PauseMenu.h"
 #include "HUD/MainMenu/MainMenu.h"
 
@@ -482,6 +483,7 @@ void Game::mainGameLoop() {
 
     HUD::MainMenu::MainMenu mainMenu(this);
     HUD::Level::Panel levelPanel(this);
+    HUD::Level::InventoryMenu inventoryMenu(this);
     HUD::Level::PauseMenu pauseMenu(this);
     HUD::Developer::PositionDisplay jimPositionDisplay;
     HUD::Developer::PositionDisplay cameraPositionDisplay;
@@ -500,6 +502,7 @@ void Game::mainGameLoop() {
     });
 
     levelPanel.load();
+    inventoryMenu.load();
     pauseMenu.load();
     mainMenu.load();
 
@@ -688,7 +691,8 @@ void Game::mainGameLoop() {
     while (window.isOpen())
     {
         inputSystem.setIgnoreWasd(
-            m_gameState == GameState::MainMenu || m_gameIsPaused || m_quitConfirmOpen);
+            m_gameState == GameState::MainMenu || m_gameIsPaused || m_quitConfirmOpen
+            || inventoryMenu.isOpen());
 
         if (showtrigger) {
             showtrigger = false;
@@ -750,7 +754,16 @@ void Game::mainGameLoop() {
         }
 
         if (m_closeWindow) {
+#ifdef _WIN32
+            if (m_editorMode) {
+                // Let the parent editor reclaim focus immediately on quit.
+                LockSetForegroundWindow(LSFW_UNLOCK);
+                AllowSetForegroundWindow(ASFW_ANY);
+            }
+#endif
             window.close();
+            if (m_editorMode)
+                break;
         }
 
         window.setMouseCursorVisible(showProps || !acceptInput);
@@ -850,6 +863,7 @@ void Game::mainGameLoop() {
 
             shaderManager.update();
             levelPanel.update(camera);
+            inventoryMenu.update(camera, map, caveActive);
             pauseMenu.update(camera);
             mainMenu.update();
 
@@ -910,13 +924,14 @@ void Game::mainGameLoop() {
                 { 0.f, 0.f },
                 { static_cast<float>(SCREEN_WIDTH), static_cast<float>(SCREEN_HEIGHT) }));
             const float fxTime = static_cast<float>(globalCounter) * 0.14f;
-            const bool wantWaterWave = waterWaveOk && map.hasWaterOverlays();
+            const bool wantLiquidWave = waterWaveOk && map.hasLiquidWaveFx();
 
-            // Horizontal wave on water-covered tiles only (cave preview, before HUD).
-            if (wantWaterWave) {
+            // Water caustic/distort + lava distort-only wave (cave preview, before HUD).
+            if (wantLiquidWave) {
                 waterMaskRt.setView(camera.view());
                 waterMaskRt.clear(sf::Color::Black);
                 map.drawWaterMask(waterMaskRt);
+                map.drawLavaMask(waterMaskRt);
                 waterMaskRt.display();
 
                 {
@@ -1004,6 +1019,8 @@ void Game::mainGameLoop() {
         }
         if (!caveActive) rt.draw(mainMenu, shaderManager.defaultShader());
 
+        // Inventory draws its own chrome without tint.frag (outline/bg/numbers).
+        rt.draw(inventoryMenu, shaderManager.defaultShader());
         rt.draw(levelPanel, shaderManager.defaultShader());
         rt.draw(pauseMenu, shaderManager.defaultShader());
 

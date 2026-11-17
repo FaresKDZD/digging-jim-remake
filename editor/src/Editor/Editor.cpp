@@ -528,6 +528,7 @@ static char entityTypeToTile(Cave::Entity::Type type)
     case Cave::Entity::Type::Parasite:            return 142;
     case Cave::Entity::Type::Lock:                return 143;
     case Cave::Entity::Type::Key:                 return 144;
+    case Cave::Entity::Type::Gravel:              return 145;
     default:                                      return 0;
     }
 }
@@ -1620,10 +1621,11 @@ bool Editor::run()
             map.drawLoadingOverlays(caveSceneRt);
 
         const sf::Texture* caveTex = &caveSceneRt.getTexture();
-        if (waterWaveOk && map.hasWaterOverlays()) {
+        if (waterWaveOk && map.hasLiquidWaveFx()) {
             waterMaskRt.setView(worldView);
             waterMaskRt.clear(sf::Color::Black);
             map.drawWaterMask(waterMaskRt);
+            map.drawLavaMask(waterMaskRt);
             waterMaskRt.display();
 
             const sf::Vector2f c = caveCamera.getCenter();
@@ -1807,6 +1809,7 @@ bool Editor::run()
     bool         openFusionPicker = false;
     bool         openPyrozoPicker = false;
     bool         openGodPicker    = false;
+    bool         openDirtPicker   = false;
     bool         openJimlinPicker = false;
     bool         openGatePicker   = false;
     bool         openJimlinBlockPicker = false;
@@ -1818,6 +1821,9 @@ bool Editor::run()
     bool         openHiveWallPicker = false;
     bool         probeUndoSaved = false;
     int          wellPropsIndex   = -1;
+    int          paletteTipSlotX  = -1;
+    int          paletteTipSlotY  = -1;
+    sf::Clock    paletteTipHoverClock;
     ImVec2       tilePickerPos    = { 0.f, 0.f };
     float        vsbDragStartY    = 0.f;
     float        hsbDragStartX    = 0.f;
@@ -1936,6 +1942,8 @@ bool Editor::run()
                                     openPyrozoPicker = true;
                                 else if (Cave::Entity::isGodVariant(editorPanel.getSelectedType()))
                                     openGodPicker = true;
+                                else if (Cave::Entity::isDirtVariant(editorPanel.getSelectedType()))
+                                    openDirtPicker = true;
                                 else if (Cave::Entity::isJimlin(editorPanel.getSelectedType()))
                                     openJimlinPicker = true;
                                 else if (Cave::Entity::isGateVariant(editorPanel.getSelectedType()))
@@ -2506,6 +2514,25 @@ bool Editor::run()
         }
 
         {
+            if (openDirtPicker)
+            {
+                ImGui::SetNextWindowPos(tilePickerPos, ImGuiCond_Always, ImVec2(0.f, 0.f));
+                ImGui::OpenPopup("##dirt_variant");
+                openDirtPicker = false;
+            }
+            if (ImGui::BeginPopup("##dirt_variant"))
+            {
+                for (const auto& variant : Cave::Entity::Dirt::VARIANTS)
+                {
+                    const bool selected = editorPanel.getDirtType() == variant.type;
+                    if (ImGui::MenuItem(variant.label, nullptr, selected))
+                        editorPanel.setDirtType(variant.type);
+                }
+                ImGui::EndPopup();
+            }
+        }
+
+        {
             if (openJimlinPicker)
             {
                 ImGui::SetNextWindowPos(tilePickerPos, ImGuiCond_Always, ImVec2(0.f, 0.f));
@@ -2731,10 +2758,12 @@ bool Editor::run()
         }
 
         {
+            static bool genomBehavioursPage = false;
             if (openGenomProps)
             {
                 ImGui::SetNextWindowPos(tilePickerPos, ImGuiCond_Always, ImVec2(0.f, 0.f));
                 ImGui::OpenPopup("##genom_props");
+                genomBehavioursPage = false;
                 openGenomProps = false;
             }
             if (ImGui::IsPopupOpen("##genom_props"))
@@ -2743,8 +2772,9 @@ bool Editor::run()
             if (ImGui::BeginPopup("##genom_props"))
             {
                 using G = Cave::Entity::Genom;
+
                 bool randomize = editorPanel.getGenomRandomize();
-                ImGui::TextUnformatted("Genom");
+                ImGui::TextUnformatted(genomBehavioursPage ? "Genom Behaviours" : "Genom");
                 ImGui::Separator();
                 if (ImGui::Checkbox("Randomize", &randomize))
                     editorPanel.setGenomRandomize(randomize);
@@ -2759,57 +2789,91 @@ bool Editor::run()
                 int body = G::body(look);
                 int eyes = G::eyes(look);
                 int mouth = G::mouth(look);
+                // Palette entity holds the live sample while Randomize is on.
+                int move = editorPanel.getGenomPaletteMovement();
+                bool canBreed = editorPanel.getGenomPaletteCanBreed();
+                bool dropDiamonds = editorPanel.getGenomPaletteDropsDiamonds();
 
                 ImGui::Spacing();
-                ImGui::TextUnformatted("Preview");
                 {
-                    const sf::Texture& tiles = game.imageManager.getTexture(Image::Texture::CaveTiles);
-                    const int frame = static_cast<int>(ImGui::GetTime() * 8.0) % G::FRAME_COUNT;
-                    drawGenomLayerPreview(tiles, shaderManager.defaultShader(), look, frame, 2.f);
+                    ImGui::BeginGroup();
+                    ImGui::TextUnformatted("Preview");
+                    {
+                        const sf::Texture& tiles = game.imageManager.getTexture(Image::Texture::CaveTiles);
+                        const int frame = static_cast<int>(ImGui::GetTime() * 8.0) % G::FRAME_COUNT;
+                        drawGenomLayerPreview(tiles, shaderManager.defaultShader(), look, frame, 2.f);
+                    }
+                    ImGui::EndGroup();
+                    ImGui::SameLine();
+                    ImGui::BeginGroup();
+                    ImGui::Dummy(ImVec2(0.f, 18.f));
+                    if (ImGui::Button(genomBehavioursPage ? "Visuals" : "Behaviours",
+                            ImVec2(110.f, 0.f)))
+                        genomBehavioursPage = !genomBehavioursPage;
+                    ImGui::EndGroup();
                 }
                 ImGui::Spacing();
 
                 if (randomize)
                     ImGui::BeginDisabled();
 
-                bool changed = false;
-                changed |= drawGenomPartCombo("Body", "##genom_body", &body, G::BODY_VARIANTS, false);
-                changed |= drawGenomPartCombo("Eyes", "##genom_eyes", &eyes, G::EYES_VARIANTS, false);
-                changed |= drawGenomPartCombo("Mouth", "##genom_mouth", &mouth, G::MOUTH_VARIANTS, true);
-                changed |= drawGenomPartCombo("Wings", "##genom_wings", &wings, G::WINGS_VARIANTS, true);
-                changed |= drawGenomPartCombo("Legs", "##genom_legs", &legs, G::LEGS_VARIANTS, true);
-                changed |= drawGenomPartCombo("Spikes", "##genom_spikes", &spikes, G::SPIKES_VARIANTS, true);
+                if (genomBehavioursPage) {
+                    if (ImGui::Checkbox("breeding", &canBreed))
+                        editorPanel.setGenomCanBreed(canBreed);
+                    if (ImGui::Checkbox("drop diamonds on death", &dropDiamonds))
+                        editorPanel.setGenomDropsDiamonds(dropDiamonds);
 
-                ImGui::Spacing();
-                ImGui::TextUnformatted("Hue");
-                ImGui::BeginChild("##genom_hue_box",
-                    ImVec2(-1.f, ImGui::GetFrameHeightWithSpacing() + 16.f), true);
-                ImGui::Dummy(ImVec2(0.f, 4.f));
-                {
-                    float hueF = static_cast<float>(hue);
-                    if (drawWin98SliderFloat("##genom_hue", &hueF, 0.f, 255.f)) {
-                        hue = static_cast<int>(hueF + 0.5f);
-                        changed = true;
+                    ImGui::Spacing();
+                    ImGui::TextUnformatted("Movement");
+                    ImGui::Separator();
+                    for (int i = 0; i < G::MOVE_COUNT; ++i) {
+                        bool checked = (move == i);
+                        if (ImGui::Checkbox(G::movementName(i), &checked) && checked) {
+                            editorPanel.setGenomMovement(i);
+                            move = i;
+                        }
                     }
                 }
-                ImGui::EndChild();
+                else {
+                    bool changed = false;
+                    changed |= drawGenomPartCombo("Body", "##genom_body", &body, G::BODY_VARIANTS, false);
+                    changed |= drawGenomPartCombo("Eyes", "##genom_eyes", &eyes, G::EYES_VARIANTS, false);
+                    changed |= drawGenomPartCombo("Mouth", "##genom_mouth", &mouth, G::MOUTH_VARIANTS, true);
+                    changed |= drawGenomPartCombo("Wings", "##genom_wings", &wings, G::WINGS_VARIANTS, true);
+                    changed |= drawGenomPartCombo("Legs", "##genom_legs", &legs, G::LEGS_VARIANTS, true);
+                    changed |= drawGenomPartCombo("Spikes", "##genom_spikes", &spikes, G::SPIKES_VARIANTS, true);
 
-                ImGui::Spacing();
-                ImGui::TextUnformatted("Saturation");
-                ImGui::BeginChild("##genom_sat_box",
-                    ImVec2(-1.f, ImGui::GetFrameHeightWithSpacing() + 16.f), true);
-                ImGui::Dummy(ImVec2(0.f, 4.f));
-                if (drawWin98SliderFloat("##genom_sat", &sat, 0.125f, 1.f))
-                    changed = true;
-                ImGui::EndChild();
+                    ImGui::Spacing();
+                    ImGui::TextUnformatted("Hue");
+                    ImGui::BeginChild("##genom_hue_box",
+                        ImVec2(-1.f, ImGui::GetFrameHeightWithSpacing() + 16.f), true);
+                    ImGui::Dummy(ImVec2(0.f, 4.f));
+                    {
+                        float hueF = static_cast<float>(hue);
+                        if (drawWin98SliderFloat("##genom_hue", &hueF, 0.f, 255.f)) {
+                            hue = static_cast<int>(hueF + 0.5f);
+                            changed = true;
+                        }
+                    }
+                    ImGui::EndChild();
+
+                    ImGui::Spacing();
+                    ImGui::TextUnformatted("Saturation");
+                    ImGui::BeginChild("##genom_sat_box",
+                        ImVec2(-1.f, ImGui::GetFrameHeightWithSpacing() + 16.f), true);
+                    ImGui::Dummy(ImVec2(0.f, 4.f));
+                    if (drawWin98SliderFloat("##genom_sat", &sat, 0.125f, 1.f))
+                        changed = true;
+                    ImGui::EndChild();
+
+                    if (changed) {
+                        editorPanel.setGenomLook(G::enforceLook(
+                            hue, G::satByteFromSaturation(sat), wings, legs, spikes, body, eyes, mouth));
+                    }
+                }
 
                 if (randomize)
                     ImGui::EndDisabled();
-
-                if (changed) {
-                    editorPanel.setGenomLook(G::enforceLook(
-                        hue, G::satByteFromSaturation(sat), wings, legs, spikes, body, eyes, mouth));
-                }
 
                 ImGui::EndPopup();
             }
@@ -2912,6 +2976,66 @@ bool Editor::run()
 
         if (ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup))
             ImGui::GetIO().WantCaptureMouse = true;
+
+        // Palette slot hover tip ? 0.5s dwell, then follow the cursor until you leave.
+        if (!ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup))
+        {
+            sf::Vector2f tipVp = windowToVirtual(sf::Mouse::getPosition(window));
+            int tipX = 0, tipY = 0;
+            const bool overSlot = editorPanel.getPaletteSlotAt(tipVp, PANEL_X, TOOLBAR_H, tipX, tipY);
+            if (!overSlot)
+            {
+                paletteTipSlotX = -1;
+                paletteTipSlotY = -1;
+            }
+            else if (tipX != paletteTipSlotX || tipY != paletteTipSlotY)
+            {
+                paletteTipSlotX = tipX;
+                paletteTipSlotY = tipY;
+                paletteTipHoverClock.restart();
+            }
+            else if (paletteTipHoverClock.getElapsedTime().asSeconds() >= 0.5f)
+            {
+                const std::string tipName = editorPanel.getPaletteSlotName(tipX, tipY);
+                if (!tipName.empty())
+                {
+                    const ImVec2 mouse = ImGui::GetMousePos();
+                    // Far-right column: anchor tip to the left so it stays on-screen.
+                    if (tipX >= 2)
+                        ImGui::SetNextWindowPos(ImVec2(mouse.x - 14.f, mouse.y + 18.f),
+                            ImGuiCond_Always, ImVec2(1.f, 0.f));
+                    else
+                        ImGui::SetNextWindowPos(ImVec2(mouse.x + 14.f, mouse.y + 18.f),
+                            ImGuiCond_Always);
+                    ImGui::SetNextWindowBgAlpha(0.94f);
+                    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(1.f, 1.f, 0.85f, 1.f));
+                    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.f, 0.f, 0.f, 1.f));
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.f, 0.f, 0.f, 1.f));
+                    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6.f, 3.f));
+                    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.f);
+                    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.f);
+                    if (ImGui::Begin("##palette_slot_tip", nullptr,
+                            ImGuiWindowFlags_NoDecoration
+                            | ImGuiWindowFlags_NoInputs
+                            | ImGuiWindowFlags_AlwaysAutoResize
+                            | ImGuiWindowFlags_NoFocusOnAppearing
+                            | ImGuiWindowFlags_NoNav
+                            | ImGuiWindowFlags_NoSavedSettings
+                            | ImGuiWindowFlags_NoMove))
+                    {
+                        ImGui::TextUnformatted(tipName.c_str());
+                    }
+                    ImGui::End();
+                    ImGui::PopStyleVar(3);
+                    ImGui::PopStyleColor(3);
+                }
+            }
+        }
+        else
+        {
+            paletteTipSlotX = -1;
+            paletteTipSlotY = -1;
+        }
 
         {
             sf::Vector2f vpf  = windowToVirtual(sf::Mouse::getPosition(window));
@@ -3026,11 +3150,13 @@ bool Editor::run()
                     map.update(caveCamera);
                     Utils::incrementGlobalCounter();
                 }
+                map.updateVisibleTiles(caveCamera);
             }
         }
         else if (settings.animation)
         {
             map.update(caveCamera);
+            map.updateVisibleTiles(caveCamera);
             Utils::incrementGlobalCounter();
         }
         else
@@ -3806,10 +3932,33 @@ bool Editor::run()
 
                     if (CreateProcessA(gamePath.c_str(), cmdBuf.data(), nullptr, nullptr, FALSE, 0, nullptr, exeDir.c_str(), &si, &pi))
                     {
+                        HWND editorHwnd = static_cast<HWND>(window.getNativeHandle());
+                        const bool wasZoomed = editorHwnd && IsZoomed(editorHwnd);
                         window.setVisible(false);
-                        WaitForSingleObject(pi.hProcess, INFINITE);
+                        if (editorHwnd)
+                            ShowWindow(editorHwnd, SW_HIDE);
+
+                        // Keep the editor responsive and avoid a "stuck" restore after
+                        // the game exits (INFINITE wait without a message pump).
+                        while (WaitForSingleObject(pi.hProcess, 50) == WAIT_TIMEOUT) {
+                            MSG msg;
+                            while (PeekMessageA(&msg, nullptr, 0, 0, PM_REMOVE)) {
+                                TranslateMessage(&msg);
+                                DispatchMessageA(&msg);
+                            }
+                            while (const std::optional event = window.pollEvent()) {
+                                (void)event;
+                            }
+                        }
                         CloseHandle(pi.hProcess);
                         CloseHandle(pi.hThread);
+
+                        AllowSetForegroundWindow(ASFW_ANY);
+                        if (editorHwnd) {
+                            ShowWindow(editorHwnd, wasZoomed ? SW_SHOWMAXIMIZED : SW_SHOW);
+                            SetForegroundWindow(editorHwnd);
+                            BringWindowToTop(editorHwnd);
+                        }
                         window.setVisible(true);
                     }
                     else

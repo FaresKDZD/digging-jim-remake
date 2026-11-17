@@ -218,6 +218,7 @@ void HUD::Editor::Toolbar::drawToolItems(HUD::Editor::Panel* editorPanel)
             || (Cave::Entity::isFusion(type) && Cave::Entity::isFusion(selType))
             || (Cave::Entity::isPyrozoVariant(type) && Cave::Entity::isPyrozoVariant(selType))
             || (Cave::Entity::isGodVariant(type) && Cave::Entity::isGodVariant(selType))
+            || (Cave::Entity::isDirtVariant(type) && Cave::Entity::isDirtVariant(selType))
             || (Cave::Entity::isJimlin(type) && Cave::Entity::isJimlin(selType))
             || (Cave::Entity::isGateVariant(type) && Cave::Entity::isGateVariant(selType))
             || (Cave::Entity::isJimlinBlockVariant(type) && Cave::Entity::isJimlinBlockVariant(selType))
@@ -233,7 +234,7 @@ void HUD::Editor::Toolbar::drawToolItems(HUD::Editor::Panel* editorPanel)
     };
 
     tool("Space",                    "1", 0, 0, Cave::Entity::Type::Space);
-    tool("Dirt",                     "2", 1, 0, Cave::Entity::Type::Dirt);
+    tool("Dirt",                     "2", HUD::Editor::Panel::DirtSlotX, HUD::Editor::Panel::DirtSlotY, Cave::Entity::Type::Dirt);
     tool("Boulder",                  "3", 2, 0, Cave::Entity::Type::Boulder);
     tool("Diamond",                  "4", 0, 1, Cave::Entity::Type::Diamond);
     tool("Wall",                     "5", 0, 2, Cave::Entity::Type::Wall);
