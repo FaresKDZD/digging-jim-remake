@@ -240,6 +240,7 @@ namespace Cave::Entity {
             { "Fish", Type::Fish },
             { "Coral", Type::Coral },
             { "Parasite", Type::Parasite },
+            { "Agent", Type::Agent },
         };
 
         static constexpr int VITUS_OPTION_COUNT =

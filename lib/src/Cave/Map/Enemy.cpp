@@ -584,10 +584,8 @@ void Cave::Map::updateNihilusSolo(const int& index) {
 			caveEntities[previousIndex].terminatePreviousTransition();
 		caveEntities[cell].terminateCurrentTransition();
 		setEntity(cell, Cave::Entity::Space());
-		if (killJim && m_state != Cave::State::Fail) {
-			m_game->sendSignal(GameSignal::CaveFail);
-			m_state = Cave::State::Fail;
-		}
+		if (killJim && m_state != Cave::State::Fail)
+			notifyPlayerKilled();
 	}
 	setEntityMoving(index, false);
 }
@@ -2313,6 +2311,139 @@ void Cave::Map::updateGrouper(const int& index) {
 	}
 
 	wanderTowardRandomEmpty(index, G::HOLD_TICKS);
+}
+
+void Cave::Map::agentDetonateMovers(const int& index) {
+	using A = Cave::Entity::Agent;
+	if (!inBounds(index) || !A::isAggroWaving(caveEntities[index]))
+		return;
+	const int ax = index % width;
+	const int ay = index / width;
+	std::vector<int> boom;
+	boom.reserve(16);
+	for (int dy = -A::AREA_HALF; dy < A::AREA_HALF; ++dy) {
+		for (int dx = -A::AREA_HALF; dx < A::AREA_HALF; ++dx) {
+			const int nx = ax + dx;
+			const int ny = ay + dy;
+			if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+			const int cell = ny * width + nx;
+			if (cell == index) continue;
+			// Catch mid-slide or just-started moves (moving flag can linger a tick).
+			if (!getEntityTransitioning(cell) && !getEntityMoving(cell)) continue;
+			const Cave::Entity::Type type = getEntityType(cell);
+			if (A::waveImmune(type)) continue;
+			const bool prey = Cave::Entity::isMonster(type)
+				|| Cave::Entity::isPlayer(type)
+				|| Cave::Entity::isJimlin(type)
+				|| Cave::Entity::isActiveJimlinShip(type);
+			if (!prey) continue;
+			boom.push_back(cell);
+		}
+	}
+	for (int cell : boom) {
+		if (!inBounds(cell)) continue;
+		const Cave::Entity::Type type = getEntityType(cell);
+		if (A::waveImmune(type)) continue;
+		if (!(Cave::Entity::isMonster(type)
+			|| Cave::Entity::isPlayer(type)
+			|| Cave::Entity::isJimlin(type)
+			|| Cave::Entity::isActiveJimlinShip(type)))
+			continue;
+		createExplosion(cell);
+	}
+}
+
+void Cave::Map::updateAgentWaveKills() {
+	if (editorIdle()) return;
+	if (m_state != Cave::State::Play && m_state != Cave::State::Pass) return;
+	using A = Cave::Entity::Agent;
+	for (int i = 0; i < width * height; ++i) {
+		if (getEntityType(i) != Cave::Entity::Type::Agent) continue;
+		if (!A::isAggroWaving(caveEntities[static_cast<size_t>(i)])) continue;
+		agentDetonateMovers(i);
+		// Agent itself may have been caught in a neighbour blast.
+		if (!inBounds(i) || getEntityType(i) != Cave::Entity::Type::Agent)
+			continue;
+	}
+}
+
+void Cave::Map::updateAgent(const int& index) {
+	using A = Cave::Entity::Agent;
+	int& mode = caveEntities[index].spawnCredit;
+	int& timer = caveEntities[index].extra;
+
+	if (mode == A::MODE_WATCH_IN) {
+		if (handleEnemyDeath(index)) return;
+		if (getEntityTransitioning(index)) return;
+		updateEntityAnimation(index);
+		if (caveEntities[index].animationLoopCompleted()
+			|| caveEntities[index].getAnimation().currentFrame >= A::WATCH_COUNT - 1) {
+			mode = A::MODE_AGGRO;
+			timer = 0;
+			caveEntities[index].setAnimation(A::watchHoldAnimation());
+		}
+		setEntityMoving(index, false);
+		return;
+	}
+
+	if (mode == A::MODE_WATCH_OUT) {
+		if (handleEnemyDeath(index)) return;
+		if (getEntityTransitioning(index)) return;
+		updateEntityAnimation(index);
+		if (caveEntities[index].animationLoopCompleted()
+			|| caveEntities[index].getAnimation().currentFrame <= 0) {
+			mode = A::MODE_CALM;
+			timer = 0;
+			caveEntities[index].setAnimation(A::idleAnimation());
+		}
+		setEntityMoving(index, false);
+		return;
+	}
+
+	if (mode == A::MODE_AGGRO) {
+		if (editorIdle()) return;
+		if (handleEnemyDeath(index)) return;
+		if (getEntityTransitioning(index)) return;
+		updateEntityAnimation(index);
+		// Advance first so grace (extra >= GRACE_TICKS) lines up with wave FX.
+		const bool wasEmitting = timer >= A::GRACE_TICKS;
+		if (timer < A::PHASE_TICKS)
+			timer++;
+		if (!wasEmitting && timer >= A::GRACE_TICKS)
+			m_game->soundManager.play(Sound::Effect::Agent);
+		// Kills run in updateAgentWaveKills after every entity has moved this tick
+		// (in-update scans miss movers below the Agent due to top-to-bottom order).
+		if (!inBounds(index) || getEntityType(index) != Cave::Entity::Type::Agent)
+			return;
+		if (timer >= A::PHASE_TICKS) {
+			mode = A::MODE_WATCH_OUT;
+			caveEntities[index].setAnimation(A::watchAnimation(true));
+			caveEntities[index].setAnimationReverse(true);
+			caveEntities[index].setAnimationFrame(A::WATCH_COUNT - 1);
+			setEntityMoving(index, false);
+			return;
+		}
+		setEntityMoving(index, false);
+		return;
+	}
+
+	// MODE_CALM — Cave Gull wall-follow for PHASE_TICKS, then watch-in.
+	// Phase timer advances every tick (including mid-slide) so 5s is real time.
+	if (editorIdle()) return;
+	if (handleEnemyDeath(index)) return;
+	updateEntityAnimation(index);
+	if (timer < A::PHASE_TICKS)
+		timer++;
+	if (timer >= A::PHASE_TICKS) {
+		mode = A::MODE_WATCH_IN;
+		caveEntities[index].setAnimation(A::watchAnimation(false));
+		caveEntities[index].setAnimationReverse(false);
+		caveEntities[index].setAnimationFrame(0);
+		setEntityMoving(index, false);
+		return;
+	}
+	if (getEntityTransitioning(index)) return;
+	tryWallFollowEmpty(index, true);
 }
 
 void Cave::Map::updateShade(const int& index) {
@@ -10014,10 +10145,8 @@ bool Cave::Map::tryMovePredator(const int& index, const Cave::Entity::Direction&
 	if (prey) {
 		m_game->soundManager.play(Sound::Effect::Drop);
 		notifyFusion5Stimulus(dest);
-		if (atePlayer) {
-			m_game->sendSignal(GameSignal::CaveFail);
-			m_state = Cave::State::Fail;
-		}
+		if (atePlayer)
+			notifyPlayerKilled();
 	}
 	return true;
 }
@@ -11210,10 +11339,8 @@ bool Cave::Map::petrifyAt(const int& cell) {
 	if (!jim && !Cave::Entity::isJimlin(type)) return false;
 	setEntity(cell, Cave::Entity::Boulder());
 	m_game->soundManager.play(Sound::Effect::Drop);
-	if (jim) {
-		m_game->sendSignal(GameSignal::CaveFail);
-		m_state = Cave::State::Fail;
-	}
+	if (jim)
+		notifyPlayerKilled();
 	return true;
 }
 
@@ -11444,6 +11571,7 @@ Cave::Entity::Base Cave::Map::monsterFromType(Cave::Entity::Type type) const {
 	case Cave::Entity::Type::Coral: return Cave::Entity::Coral();
 	case Cave::Entity::Type::CoralBud: return Cave::Entity::CoralBud();
 	case Cave::Entity::Type::Parasite: return Cave::Entity::Parasite();
+	case Cave::Entity::Type::Agent: return Cave::Entity::Agent();
 	case Cave::Entity::Type::Compressor: return Cave::Entity::Compressor();
 	case Cave::Entity::Type::HiveMatriarch: return Cave::Entity::HiveMatriarch();
 	case Cave::Entity::Type::HiveLarva: return Cave::Entity::HiveLarva();
@@ -13509,6 +13637,7 @@ static bool isWanderMonster(Cave::Entity::Type type) {
 	case Cave::Entity::Type::Coral:
 	case Cave::Entity::Type::CoralBud:
 	case Cave::Entity::Type::Parasite:
+	case Cave::Entity::Type::Agent:
 		return true;
 	default:
 		return false;
@@ -14071,6 +14200,7 @@ bool Cave::Map::isPathfindMonster(const int& index) const {
 	case Cave::Entity::Type::Coral:
 	case Cave::Entity::Type::CoralBud:
 	case Cave::Entity::Type::Parasite:
+	case Cave::Entity::Type::Agent:
 		return true;
 	default:
 		return false;
@@ -14159,6 +14289,10 @@ bool Cave::Map::isFallableEntity(const int& index) const {
 	case Cave::Entity::Type::Ruby:
 	case Cave::Entity::Type::Pyrobe:
 	case Cave::Entity::Type::Key:
+	case Cave::Entity::Type::Spinel:
+	case Cave::Entity::Type::Hourglass:
+	case Cave::Entity::Type::Emerald:
+	case Cave::Entity::Type::Lapis:
 	case Cave::Entity::Type::GallopEgg:
 	case Cave::Entity::Type::MacowEgg:
 	case Cave::Entity::Type::MacowEggCooked:

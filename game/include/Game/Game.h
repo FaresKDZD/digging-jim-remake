@@ -148,6 +148,22 @@ public:
     /// @brief Get the number of player lives remaining.
     int getLives() const;
 
+    /// @brief Add (or remove) lives without changing game state.
+    void addLives(int amount);
+
+    /// @brief Add whole seconds to the remaining cave timer.
+    void addTimeSeconds(int seconds);
+
+    /// @brief Raw cave timer ticks (64 ticks = 1 second).
+    int getTimeTicks() const;
+    void setTimeTicks(int ticks);
+
+    /// @brief Set diamonds collected this cave (checkpoint restore).
+    void setCollected(int count);
+
+    /// @brief Set the score value (checkpoint restore).
+    void setScore(int score);
+
     /// @brief Get the current score.
     int getScore() const;
 

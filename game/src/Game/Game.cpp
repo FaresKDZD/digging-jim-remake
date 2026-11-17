@@ -317,6 +317,12 @@ void Game::handleCavePlay(const GameSignal& signal) {
         m_score += 100;
         break;
 
+    case GameSignal::CaveCheckpointResume:
+        m_gameState = GameState::CavePlay;
+        m_gameIsPaused = false;
+        m_quitConfirmOpen = false;
+        break;
+
     case GameSignal::CavePause:
         m_gameIsPaused = true;
         break;
@@ -384,6 +390,12 @@ void Game::handleCaveFail(const GameSignal& signal) {
             break;
         }
         resetCaveState();
+        break;
+
+    case GameSignal::CaveCheckpointResume:
+        m_gameState = GameState::CavePlay;
+        m_gameIsPaused = false;
+        m_quitConfirmOpen = false;
         break;
 
     case GameSignal::GotoMainMenu:
@@ -674,6 +686,38 @@ void Game::mainGameLoop() {
             static_cast<float>(SCREEN_WIDTH), static_cast<float>(SCREEN_HEIGHT) });
     }
 
+    sf::Shader agentWaveShader;
+    bool agentWaveOk = agentWaveShader.loadFromFile(
+        "./assets/shaders/agent_wave.frag", sf::Shader::Type::Fragment);
+    if (agentWaveOk) {
+        agentWaveShader.setUniform("time", 0.f);
+        agentWaveShader.setUniform("viewCenter", sf::Glsl::Vec2{ 0.f, 0.f });
+        agentWaveShader.setUniform("viewSize", sf::Glsl::Vec2{
+            static_cast<float>(SCREEN_WIDTH), static_cast<float>(SCREEN_HEIGHT) });
+        agentWaveShader.setUniform("rtSize", sf::Glsl::Vec2{
+            static_cast<float>(SCREEN_WIDTH), static_cast<float>(SCREEN_HEIGHT) });
+        agentWaveShader.setUniform("centerCount", 0);
+        for (int i = 0; i < Cave::Entity::Agent::WAVE_CENTER_CAP; ++i) {
+            agentWaveShader.setUniform(
+                ("center" + std::to_string(i)).c_str(),
+                sf::Glsl::Vec2{ 0.f, 0.f });
+        }
+    }
+
+    auto bindAgentWaveCenters = [&](sf::Shader& shader, const Cave::Map& m) {
+        const auto& centers = m.agentWaveCenters();
+        const int n = std::min(static_cast<int>(centers.size()),
+            Cave::Entity::Agent::WAVE_CENTER_CAP);
+        shader.setUniform("centerCount", n);
+        for (int i = 0; i < Cave::Entity::Agent::WAVE_CENTER_CAP; ++i) {
+            const sf::Vector2f c = (i < n) ? centers[static_cast<size_t>(i)]
+                : sf::Vector2f{ 0.f, 0.f };
+            shader.setUniform(
+                ("center" + std::to_string(i)).c_str(),
+                sf::Glsl::Vec2{ c.x, c.y });
+        }
+    };
+
     // View that maps the virtual screen (640x480) to fill the entire window.
     auto makeWindowView = [&]() -> sf::View {
         return sf::View(sf::FloatRect(sf::Vector2f(0.f, 0.f),
@@ -925,6 +969,7 @@ void Game::mainGameLoop() {
                 { static_cast<float>(SCREEN_WIDTH), static_cast<float>(SCREEN_HEIGHT) }));
             const float fxTime = static_cast<float>(globalCounter) * 0.14f;
             const bool wantLiquidWave = waterWaveOk && map.hasLiquidWaveFx();
+            const bool wantAgentWave = agentWaveOk && map.hasAgentWaveFx();
 
             // Water caustic/distort + lava distort-only wave (cave preview, before HUD).
             if (wantLiquidWave) {
@@ -958,6 +1003,28 @@ void Game::mainGameLoop() {
                 parasiteColorRt.setView(screenView);
                 parasiteColorRt.clear(sf::Color::Black);
                 parasiteColorRt.draw(sf::Sprite(rt.getTexture()), &waterWaveShader);
+                parasiteColorRt.display();
+
+                rt.setView(screenView);
+                rt.clear(sf::Color::Black);
+                rt.draw(sf::Sprite(parasiteColorRt.getTexture()));
+            }
+
+            // Aggro Agent expanding square distort (centre-out Chebyshev front).
+            if (wantAgentWave) {
+                {
+                    const sf::Vector2f c = camera.getCenter();
+                    const sf::Vector2f s = camera.getSize();
+                    agentWaveShader.setUniform("viewCenter", sf::Glsl::Vec2{ c.x, c.y });
+                    agentWaveShader.setUniform("viewSize", sf::Glsl::Vec2{ s.x, s.y });
+                }
+                agentWaveShader.setUniform("time", fxTime);
+                bindAgentWaveCenters(agentWaveShader, map);
+
+                rt.display();
+                parasiteColorRt.setView(screenView);
+                parasiteColorRt.clear(sf::Color::Black);
+                parasiteColorRt.draw(sf::Sprite(rt.getTexture()), &agentWaveShader);
                 parasiteColorRt.display();
 
                 rt.setView(screenView);
@@ -1158,6 +1225,35 @@ void Game::setTime(const int& seconds) {
 
 int Game::getLives() const {
     return m_lives;
+}
+
+void Game::addLives(int amount) {
+    if (amount == 0) return;
+    m_lives = std::max(0, m_lives + amount);
+}
+
+void Game::addTimeSeconds(int seconds) {
+    if (seconds == 0) return;
+    if (m_gameState == GameState::GameDone || m_gameState == GameState::GameOver) return;
+    if (unlimitedCaveTime()) return;
+    m_time = std::max(0, m_time + seconds * 64);
+}
+
+int Game::getTimeTicks() const {
+    return m_time;
+}
+
+void Game::setTimeTicks(int ticks) {
+    if (m_gameState == GameState::GameDone || m_gameState == GameState::GameOver) return;
+    m_time = std::max(0, ticks);
+}
+
+void Game::setCollected(int count) {
+    m_collected = std::max(0, count);
+}
+
+void Game::setScore(int score) {
+    m_score = std::max(0, score);
 }
 
 int Game::getScore() const {

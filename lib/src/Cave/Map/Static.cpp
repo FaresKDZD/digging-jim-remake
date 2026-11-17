@@ -980,6 +980,10 @@ bool Cave::Map::isWaterLoggable(const Cave::Entity::Base& entity) const {
 	case T::TrapFull:
 	case T::Ruby:
 	case T::Pyrobe:
+	case T::Spinel:
+	case T::Hourglass:
+	case T::Emerald:
+	case T::Lapis:
 	case T::GallopEgg:
 	case T::MacowEgg:
 	case T::MacowEggCooked:

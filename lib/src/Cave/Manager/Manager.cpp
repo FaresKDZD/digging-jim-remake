@@ -85,6 +85,8 @@ bool Cave::Manager::startCave(const int& fileIndex, const int& caveNumber, Cave:
 
     // Construct the map
     map->generateMap(properties, data.tileData, data.wells, data.portals, data.cosmics, data.genoms, data.hiveBubbles, data.waterUnders, data.trapFulls);
+    map->syncSpinelPersistence(index, caveNumber);
+    map->purgeCollectedSpinels();
 
     return true;
 }

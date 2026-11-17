@@ -96,6 +96,8 @@ void Cave::Map::createSingularityExplosion(const int& origin) {
 		}
 	}
 
+	m_explosionDepth++;
+	bool killedPlayer = false;
 	for (int dy = -1; dy <= 1; ++dy) {
 		for (int dx = -1; dx <= 1; ++dx) {
 			const int nx = ox + dx;
@@ -137,10 +139,8 @@ void Cave::Map::createSingularityExplosion(const int& origin) {
 			setEntity(explosionIndex, Cave::Entity::SingularityExplosion(
 				Cave::Entity::Cosmic::burstSpawnAt(dx, dy)));
 
-			if (type == Cave::Entity::Type::Jim || playerPilotShip) {
-				m_game->sendSignal(GameSignal::CaveFail);
-				m_state = Cave::State::Fail;
-			}
+			if (type == Cave::Entity::Type::Jim || playerPilotShip)
+				killedPlayer = true;
 		}
 	}
 
@@ -161,6 +161,14 @@ void Cave::Map::createSingularityExplosion(const int& origin) {
 			if (Cave::Entity::isWorm(type))
 				createExplosion(part);
 		}
+	}
+
+	if (killedPlayer)
+		m_playerKillPending = true;
+	m_explosionDepth--;
+	if (m_explosionDepth == 0 && m_playerKillPending) {
+		m_playerKillPending = false;
+		notifyPlayerKilled();
 	}
 }
 
@@ -185,6 +193,8 @@ void Cave::Map::detonateCells(const int& origin, const std::vector<int>& cells, 
 	std::vector<int> bombIndices;
 	std::vector<int> fusion2Indices;
 	std::vector<int> wormFollowup;
+	m_explosionDepth++;
+	bool killedPlayer = false;
 
 	for (int explosionIndex : cells) {
 		if (!inBounds(explosionIndex)) continue;
@@ -257,10 +267,8 @@ void Cave::Map::detonateCells(const int& origin, const std::vector<int>& cells, 
 		}
 		clearMimicTurnOverlay(explosionIndex);
 
-		if (type == Cave::Entity::Type::Jim || playerPilotShip) {
-			m_game->sendSignal(GameSignal::CaveFail);
-			m_state = Cave::State::Fail;
-		}
+		if (type == Cave::Entity::Type::Jim || playerPilotShip)
+			killedPlayer = true;
 	}
 
 	caveGullExplosion ? m_game->soundManager.play(Sound::Effect::CaveGullExplosion) : m_game->soundManager.play(Sound::Effect::Explosion);
@@ -282,6 +290,14 @@ void Cave::Map::detonateCells(const int& origin, const std::vector<int>& cells, 
 			if (Cave::Entity::isWorm(type))
 				createExplosion(part);
 		}
+	}
+
+	if (killedPlayer)
+		m_playerKillPending = true;
+	m_explosionDepth--;
+	if (m_explosionDepth == 0 && m_playerKillPending) {
+		m_playerKillPending = false;
+		notifyPlayerKilled();
 	}
 }
 

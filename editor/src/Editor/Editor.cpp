@@ -529,6 +529,11 @@ static char entityTypeToTile(Cave::Entity::Type type)
     case Cave::Entity::Type::Lock:                return 143;
     case Cave::Entity::Type::Key:                 return 144;
     case Cave::Entity::Type::Gravel:              return 145;
+    case Cave::Entity::Type::Spinel:              return 146;
+    case Cave::Entity::Type::Hourglass:           return 147;
+    case Cave::Entity::Type::Emerald:             return 148;
+    case Cave::Entity::Type::Lapis:               return 149;
+    case Cave::Entity::Type::Agent:               return 150;
     default:                                      return 0;
     }
 }
@@ -1612,6 +1617,36 @@ bool Editor::run()
         waterWaveShader.setUniform("rtSize", sf::Glsl::Vec2{ MAP_W, MAP_H });
     }
 
+    sf::Shader agentWaveShader;
+    bool agentWaveOk = agentWaveShader.loadFromFile(
+        "./assets/shaders/agent_wave.frag", sf::Shader::Type::Fragment);
+    if (agentWaveOk) {
+        agentWaveShader.setUniform("time", 0.f);
+        agentWaveShader.setUniform("viewCenter", sf::Glsl::Vec2{ 0.f, 0.f });
+        agentWaveShader.setUniform("viewSize", sf::Glsl::Vec2{ MAP_W, MAP_H });
+        agentWaveShader.setUniform("rtSize", sf::Glsl::Vec2{ MAP_W, MAP_H });
+        agentWaveShader.setUniform("centerCount", 0);
+        for (int i = 0; i < Cave::Entity::Agent::WAVE_CENTER_CAP; ++i) {
+            agentWaveShader.setUniform(
+                ("center" + std::to_string(i)).c_str(),
+                sf::Glsl::Vec2{ 0.f, 0.f });
+        }
+    }
+
+    auto bindAgentWaveCenters = [&](sf::Shader& shader) {
+        const auto& centers = map.agentWaveCenters();
+        const int n = std::min(static_cast<int>(centers.size()),
+            Cave::Entity::Agent::WAVE_CENTER_CAP);
+        shader.setUniform("centerCount", n);
+        for (int i = 0; i < Cave::Entity::Agent::WAVE_CENTER_CAP; ++i) {
+            const sf::Vector2f c = (i < n) ? centers[static_cast<size_t>(i)]
+                : sf::Vector2f{ 0.f, 0.f };
+            shader.setUniform(
+                ("center" + std::to_string(i)).c_str(),
+                sf::Glsl::Vec2{ c.x, c.y });
+        }
+    };
+
     auto blitCavePreview = [&](sf::RenderTarget& target) {
         const sf::View worldView = caveCamera.view();
         caveSceneRt.setView(worldView);
@@ -1619,8 +1654,14 @@ bool Editor::run()
         caveSceneRt.draw(map, shaderManager.currentShader());
         if (map.hasLoadingOverlays())
             map.drawLoadingOverlays(caveSceneRt);
+        caveSceneRt.display();
 
+        // Track which RT holds the latest cave image so post-FX never samples itself.
+        bool fromScene = true;
         const sf::Texture* caveTex = &caveSceneRt.getTexture();
+        const sf::View screenView(sf::FloatRect(
+            { 0.f, 0.f }, { MAP_W, MAP_H }));
+
         if (waterWaveOk && map.hasLiquidWaveFx()) {
             waterMaskRt.setView(worldView);
             waterMaskRt.clear(sf::Color::Black);
@@ -1645,17 +1686,30 @@ bool Editor::run()
             waterWaveShader.setUniform("time", static_cast<float>(globalCounter) * 0.14f);
             waterWaveShader.setUniform("waterMask", waterMaskRt.getTexture());
 
-            caveSceneRt.display();
-            const sf::View screenView(sf::FloatRect(
-                { 0.f, 0.f }, { MAP_W, MAP_H }));
             waterFxRt.setView(screenView);
             waterFxRt.clear(sf::Color::Black);
-            waterFxRt.draw(sf::Sprite(caveSceneRt.getTexture()), &waterWaveShader);
+            waterFxRt.draw(sf::Sprite(*caveTex), &waterWaveShader);
             waterFxRt.display();
             caveTex = &waterFxRt.getTexture();
+            fromScene = false;
         }
-        else {
-            caveSceneRt.display();
+
+        if (agentWaveOk && map.hasAgentWaveFx()) {
+            const sf::Vector2f c = caveCamera.getCenter();
+            const sf::Vector2f s = caveCamera.getSize();
+            agentWaveShader.setUniform("viewCenter", sf::Glsl::Vec2{ c.x, c.y });
+            agentWaveShader.setUniform("viewSize", sf::Glsl::Vec2{ s.x, s.y });
+            agentWaveShader.setUniform("time", static_cast<float>(globalCounter) * 0.14f);
+            bindAgentWaveCenters(agentWaveShader);
+
+            // Always draw into the other RT ? sampling caveSceneRt into itself was black.
+            sf::RenderTexture& destRt = fromScene ? waterFxRt : caveSceneRt;
+            destRt.setView(screenView);
+            destRt.clear(sf::Color::Black);
+            destRt.draw(sf::Sprite(*caveTex), &agentWaveShader);
+            destRt.display();
+            caveTex = &destRt.getTexture();
+            fromScene = !fromScene;
         }
 
         sf::Sprite caveSpr(*caveTex);
@@ -1809,7 +1863,6 @@ bool Editor::run()
     bool         openFusionPicker = false;
     bool         openPyrozoPicker = false;
     bool         openGodPicker    = false;
-    bool         openDirtPicker   = false;
     bool         openJimlinPicker = false;
     bool         openGatePicker   = false;
     bool         openJimlinBlockPicker = false;
@@ -1942,8 +1995,6 @@ bool Editor::run()
                                     openPyrozoPicker = true;
                                 else if (Cave::Entity::isGodVariant(editorPanel.getSelectedType()))
                                     openGodPicker = true;
-                                else if (Cave::Entity::isDirtVariant(editorPanel.getSelectedType()))
-                                    openDirtPicker = true;
                                 else if (Cave::Entity::isJimlin(editorPanel.getSelectedType()))
                                     openJimlinPicker = true;
                                 else if (Cave::Entity::isGateVariant(editorPanel.getSelectedType()))
@@ -2508,25 +2559,6 @@ bool Editor::run()
                     const bool selected = editorPanel.getGodType() == variant.type;
                     if (ImGui::MenuItem(variant.label, nullptr, selected))
                         editorPanel.setGodType(variant.type);
-                }
-                ImGui::EndPopup();
-            }
-        }
-
-        {
-            if (openDirtPicker)
-            {
-                ImGui::SetNextWindowPos(tilePickerPos, ImGuiCond_Always, ImVec2(0.f, 0.f));
-                ImGui::OpenPopup("##dirt_variant");
-                openDirtPicker = false;
-            }
-            if (ImGui::BeginPopup("##dirt_variant"))
-            {
-                for (const auto& variant : Cave::Entity::Dirt::VARIANTS)
-                {
-                    const bool selected = editorPanel.getDirtType() == variant.type;
-                    if (ImGui::MenuItem(variant.label, nullptr, selected))
-                        editorPanel.setDirtType(variant.type);
                 }
                 ImGui::EndPopup();
             }

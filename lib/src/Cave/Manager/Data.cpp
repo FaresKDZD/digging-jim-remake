@@ -145,6 +145,11 @@ Cave::Entity::Base Cave::Data::getTileEntity(const char& tile) {
 	case 143: return Cave::Entity::Lock();
 	case 144: return Cave::Entity::Key();
 	case 145: return Cave::Entity::Gravel();
+	case 146: return Cave::Entity::Spinel();
+	case 147: return Cave::Entity::Hourglass();
+	case 148: return Cave::Entity::Emerald();
+	case 149: return Cave::Entity::Lapis();
+	case 150: return Cave::Entity::Agent();
 	default:
 		return Cave::Entity::Space();
 	}

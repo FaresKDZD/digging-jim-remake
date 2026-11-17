@@ -9,7 +9,8 @@ namespace Cave::Entity {
      * @class PrivateGate
      * @brief Gate variant that ignores Space. Vault buttons open it; it stays
      * passable for one second, then closes on its own. Same open/close sheet
-     * stepping as a regular gate.
+     * stepping as a regular gate. Transparent frames restamp like Gate (underlay
+     * for occupants, water-loggable, water under, excluded from water wave FX).
      */
     class PrivateGate : public Base {
     public:

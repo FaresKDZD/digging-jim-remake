@@ -287,6 +287,8 @@ void Cave::Map::updateActiveEntity(const std::vector<int> indicies) {
 		}
 	}
 	updateOverlayCosmics();
+	// After Jim / fallables / monsters have all stepped — full 10x10 coverage.
+	updateAgentWaveKills();
 	if (!m_quotaReached && m_game->caveQuotaReached()) {
 		// If Jim was ever in this cave, play the unlock sound when quota is reached
 		if (m_jimIndex != OUT_OF_BOUNDS_INDEX) m_game->soundManager.play(Sound::Effect::Unlock);
@@ -429,6 +431,7 @@ void Cave::Map::initEntityUpdateMaps() {
 	m_entityUpdateMap[Cave::Entity::Type::GenomEgg] = [this](int i) { updateGenomEgg(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Mimic] = [this](int i) { updateMimic(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Shade] = [this](int i) { updateShade(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Agent] = [this](int i) { updateAgent(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Grouper] = [this](int i) { updateGrouper(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Hellgull] = [this](int i) { updateHellgull(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Worm] = [this](int i) { updateWorm(i); };
@@ -498,6 +501,10 @@ void Cave::Map::initEntityUpdateMaps() {
 	m_entityUpdateMap[Cave::Entity::Type::FragileDiamond] = [this](int i) { updateFallableEntity(i); };
 	m_entityUpdateMap[Cave::Entity::Type::HollowDiamond] = [this](int i) { updateFallableEntity(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Ruby] = [this](int i) { updateFallableEntity(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Spinel] = [this](int i) { updateFallableEntity(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Hourglass] = [this](int i) { updateFallableEntity(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Emerald] = [this](int i) { updateFallableEntity(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Lapis] = [this](int i) { updateFallableEntity(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Pyrobe] = [this](int i) { updateFallableEntity(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Ore] = [this](int i) { updateFallableEntity(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Boulder] = [this](int i) { updateFallableEntity(i); };
@@ -637,6 +644,9 @@ void Cave::Map::update(Camera camera) {
 	if (m_state == Cave::State::Play && m_jimPyrobeFrames > 0) {
 		m_jimPyrobeFrames--;
 	}
+	if (m_state == Cave::State::Play && m_jimLapisFrames > 0) {
+		m_jimLapisFrames--;
+	}
 	updateJimMagmaOverheat();
 	updateJimBreath();
 	updateJimParasiteInfestation();
@@ -646,11 +656,14 @@ void Cave::Map::update(Camera camera) {
 				m_playerInvincible[static_cast<size_t>(i)]--;
 			if (m_playerPyrobe[static_cast<size_t>(i)] > 0)
 				m_playerPyrobe[static_cast<size_t>(i)]--;
+			if (m_playerLapis[static_cast<size_t>(i)] > 0)
+				m_playerLapis[static_cast<size_t>(i)]--;
 		}
 		const int local = m_game->mpLocalId();
 		if (local >= 0 && local < Net::MaxPlayers) {
 			m_jimInvincibleFrames = m_playerInvincible[static_cast<size_t>(local)];
 			m_jimPyrobeFrames = m_playerPyrobe[static_cast<size_t>(local)];
+			m_jimLapisFrames = m_playerLapis[static_cast<size_t>(local)];
 		}
 	}
 
@@ -717,6 +730,23 @@ void Cave::Map::updateVisibleTiles(Camera camera) {
 	m_trapMonsterDraws.clear();
 	m_trapCageDraws.clear();
 	m_gravelBreakDraws.clear();
+	m_agentWaveCenters.clear();
+	// Aggro Agents (past grace) contribute tile centres for the expanding-square wave FX.
+	{
+		using A = Cave::Entity::Agent;
+		for (int i = 0; i < width * height; ++i) {
+			if (!A::isAggroWaving(caveEntities[static_cast<size_t>(i)]))
+				continue;
+			if (static_cast<int>(m_agentWaveCenters.size()) >= A::WAVE_CENTER_CAP)
+				break;
+			const int ax = i % width;
+			const int ay = i / width;
+			m_agentWaveCenters.push_back({
+				static_cast<float>(ax * 32 + 16),
+				static_cast<float>(ay * 32 + 16)
+			});
+		}
+	}
 	ensureCosmicUnder();
 	{
 		const size_t n = static_cast<size_t>(width * height);
@@ -1208,6 +1238,7 @@ void Cave::Map::updateVisibleTiles(Camera camera) {
 
 	m_showInvincibleText = false;
 	m_showPyrobeText = false;
+	m_showLapisText = false;
 	if (m_jimIndex == OUT_OF_BOUNDS_INDEX
 		|| m_state == Cave::State::Load || m_state == Cave::State::End) {
 		m_jimMagmaFireDrawFrame = -1;
@@ -1241,32 +1272,29 @@ void Cave::Map::updateVisibleTiles(Camera camera) {
 			static_cast<float>(jimPy)
 		};
 
-		const bool showRuby = isJimInvincible();
-		const bool showPyrobe = isJimPyrobe();
-		if (showRuby) {
-			const int seconds = (m_jimInvincibleFrames + 63) / 64;
-			if (seconds > 0) {
-				const std::string label = std::to_string(seconds);
-				const int textW = static_cast<int>(label.size()) * 16;
-				const int px = jimPx + 16 - textW / 2;
-				const int py = jimPy + (showPyrobe ? -48 : -30);
-				m_invincibleText.updateText(px, py, label);
-				m_invincibleText.setColor(sf::Color::White);
-				m_showInvincibleText = true;
-			}
-		}
-		if (showPyrobe) {
-			const int seconds = (m_jimPyrobeFrames + 63) / 64;
-			if (seconds > 0) {
-				const std::string label = std::to_string(seconds);
-				const int textW = static_cast<int>(label.size()) * 16;
-				const int px = jimPx + 16 - textW / 2;
-				const int py = jimPy - 30;
-				m_pyrobeText.updateText(px, py, label);
-				m_pyrobeText.setColor(sf::Color(255, 160, 40));
-				m_showPyrobeText = true;
-			}
-		}
+		int buffStack = 0;
+		auto placeBuffSeconds = [&](Renderer::TextRenderer& text, bool& showFlag,
+			int frames, const sf::Color& color) {
+			const int seconds = (frames + 63) / 64;
+			if (seconds <= 0) return;
+			const std::string label = std::to_string(seconds);
+			const int textW = static_cast<int>(label.size()) * 16;
+			const int px = jimPx + 16 - textW / 2;
+			const int py = jimPy - 30 - buffStack * 18;
+			buffStack++;
+			text.updateText(px, py, label);
+			text.setColor(color);
+			showFlag = true;
+		};
+		if (isJimInvincible())
+			placeBuffSeconds(m_invincibleText, m_showInvincibleText,
+				m_jimInvincibleFrames, sf::Color::White);
+		if (isJimPyrobe())
+			placeBuffSeconds(m_pyrobeText, m_showPyrobeText,
+				m_jimPyrobeFrames, sf::Color(255, 160, 40));
+		if (isJimLapisBreath())
+			placeBuffSeconds(m_lapisText, m_showLapisText,
+				m_jimLapisFrames, sf::Color(80, 180, 255));
 	}
 
 	m_showPlayerName.assign(static_cast<size_t>(Net::MaxPlayers), false);
@@ -1327,6 +1355,7 @@ void Cave::Map::drawLavaMask(sf::RenderTarget& target) const {
 		target.draw(cell);
 	}
 }
+
 
 void Cave::Map::drawWaterOverlays(sf::RenderTarget& target, sf::RenderStates states) const {
 	if (m_waterDraws.empty()) return;
@@ -1618,6 +1647,9 @@ void Cave::Map::draw(sf::RenderTarget& target, sf::RenderStates states) const {
 	}
 	if (m_showPyrobeText) {
 		m_pyrobeText.render(target, noShaderStates);
+	}
+	if (m_showLapisText) {
+		m_lapisText.render(target, noShaderStates);
 	}
 	for (int i = 0; i < static_cast<int>(m_playerNameText.size()); ++i) {
 		if (i < static_cast<int>(m_showPlayerName.size()) && m_showPlayerName[static_cast<size_t>(i)])

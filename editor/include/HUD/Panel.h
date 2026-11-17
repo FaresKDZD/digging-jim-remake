@@ -59,20 +59,21 @@ namespace HUD::Editor {
         void pickEntityType(Cave::Entity::Type type);
 
         /// Variant palette cells after the door row. Tools menu and dropdowns use these.
-        static constexpr int PegulSlotX = 0, PegulSlotY = 15;
-        static constexpr int FusionSlotX = 1, FusionSlotY = 18;
-        static constexpr int GodSlotX = 2, GodSlotY = 18;
-        static constexpr int JimlinSlotX = 2, JimlinSlotY = 19;
-        static constexpr int GateSlotX = 1, GateSlotY = 11;
-        static constexpr int JimlinBlockSlotX = 1, JimlinBlockSlotY = 13;
-        static constexpr int JimlinShipSlotX = 0, JimlinShipSlotY = 13;
+        static constexpr int PegulSlotX = 2, PegulSlotY = 20;
+        static constexpr int FusionSlotX = 0, FusionSlotY = 24;
+        static constexpr int AgentSlotX = 0, AgentSlotY = 32;
+        static constexpr int GodSlotX = 1, GodSlotY = 32;
+        static constexpr int JimlinSlotX = 2, JimlinSlotY = 32;
+        static constexpr int GateSlotX = 0, GateSlotY = 17;
+        static constexpr int JimlinBlockSlotX = 1, JimlinBlockSlotY = 17;
+        static constexpr int JimlinShipSlotX = 2, JimlinShipSlotY = 17;
         static constexpr int SpaceSlotX = 0, SpaceSlotY = 0;
         static constexpr int DirtSlotX = 1, DirtSlotY = 0;
-        static constexpr int PyrozoSlotX = 0, PyrozoSlotY = 21;
-        static constexpr int GenomSlotX = 1, GenomSlotY = 27;
-        static constexpr int HiveMatriarchSlotX = 1, HiveMatriarchSlotY = 28;
-        static constexpr int HiveWallSlotX = 2, HiveWallSlotY = 28;
-        static constexpr int FishSlotX = 1, FishSlotY = 29;
+        static constexpr int PyrozoSlotX = 0, PyrozoSlotY = 25;
+        static constexpr int GenomSlotX = 2, GenomSlotY = 29;
+        static constexpr int HiveMatriarchSlotX = 1, HiveMatriarchSlotY = 30;
+        static constexpr int HiveWallSlotX = 2, HiveWallSlotY = 30;
+        static constexpr int FishSlotX = 0, FishSlotY = 31;
 
         /// @brief True if this palette cell is the shared Pegul slot.
         bool isPegulSlot(const int& x, const int& y) const;
@@ -110,13 +111,13 @@ namespace HUD::Editor {
         /// @brief Switch the God palette slot to God or Chaos and select it.
         void setGodType(Cave::Entity::Type type);
 
-        /// @brief True if this palette cell is the shared Dirt/Gravel slot.
+        /// @brief True if this palette cell is the Dirt slot.
         bool isDirtSlot(const int& x, const int& y) const;
 
-        /// @brief Current Dirt-slot tile painted by the shared palette cell.
+        /// @brief Current Dirt-slot tile (always Dirt).
         Cave::Entity::Type getDirtType() const { return m_dirtType; }
 
-        /// @brief Switch the Dirt palette slot to Dirt or Gravel and select it.
+        /// @brief Select the Dirt palette slot.
         void setDirtType(Cave::Entity::Type type);
 
         /// @brief True if this palette cell is the shared Jimlin slot.
@@ -400,7 +401,7 @@ namespace HUD::Editor {
 
         /// @brief Current scroll row offset for the entity palette.
         int                       m_scrollRow    = 0;
-        static constexpr int      TOTAL_PALETTE_ROWS   = 31;
+        static constexpr int      TOTAL_PALETTE_ROWS   = 33;
         static constexpr int      VISIBLE_PALETTE_ROWS = 10;
         static constexpr int      MAX_SCROLL_ROW       = TOTAL_PALETTE_ROWS - VISIBLE_PALETTE_ROWS;
 

@@ -35,6 +35,20 @@ bool Cave::Map::isJimPyrobe(const int& index) const {
 	return m_playerPyrobe[static_cast<size_t>(pid)] > 0;
 }
 
+bool Cave::Map::isJimLapisBreath() const {
+	return m_jimLapisFrames > 0;
+}
+
+bool Cave::Map::isJimLapisBreath(const int& index) const {
+	if (!inBounds(index)) return false;
+	if (getEntityType(index) != Cave::Entity::Type::Jim
+		&& !Cave::Entity::isActiveJimlinShip(getEntityType(index)))
+		return false;
+	const int pid = caveEntities[index].spawnCredit;
+	if (pid < 0 || pid >= Net::MaxPlayers) return m_jimLapisFrames > 0;
+	return m_playerLapis[static_cast<size_t>(pid)] > 0;
+}
+
 bool Cave::Map::isJimHazardImmune() const {
 	return isJimInvincible() || isJimPyrobe();
 }

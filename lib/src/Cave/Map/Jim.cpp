@@ -178,11 +178,13 @@ void Cave::Map::killPlayerAt(const int& index) {
 	if (pid >= 0 && pid < Net::MaxPlayers) {
 		m_playerInvincible[static_cast<size_t>(pid)] = 0;
 		m_playerPyrobe[static_cast<size_t>(pid)] = 0;
+		m_playerLapis[static_cast<size_t>(pid)] = 0;
 		m_playerPyrobeShootWait[static_cast<size_t>(pid)] = 0;
 		m_playerParasite[static_cast<size_t>(pid)] = 0;
 	}
 	m_jimInvincibleFrames = 0;
 	m_jimPyrobeFrames = 0;
+	m_jimLapisFrames = 0;
 	m_jimParasiteFrames = 0;
 	m_jimParasiteOverlayFrame = -1;
 	m_jimMagmaHeat = 0;
@@ -427,8 +429,8 @@ void Cave::Map::updateJimBreath() {
 	if (inBounds(jim) && (Cave::Entity::isPlayer(getEntityType(jim))
 		|| Cave::Entity::isJimlinShip(getEntityType(jim))
 		|| Cave::Entity::isJimlinShipVariant(getEntityType(jim)))) {
-		// Ruby invincibility cancels drowning and clears the breath overlay.
-		if (isJimInvincible(jim)) {
+		// Ruby invincibility / Lapis water-breathing cancel drowning and clear the meter.
+		if (isJimInvincible(jim) || isJimLapisBreath(jim)) {
 			m_jimBreath = {};
 		}
 		else if (!frozen && advanceBreathMeter(m_jimBreath, isJimBreathable(jim))) {
@@ -683,7 +685,8 @@ bool Cave::Map::tryJimWrapWalk(const int& index, const int& dest, const Cave::En
 	const bool inShip = Cave::Entity::isActiveJimlinShip(getEntityType(index));
 	if (inShip && (hasTrait(Cave::Entity::Trait::Collectable, dest)
 		|| getEntityType(dest) == Cave::Entity::Type::Ruby
-		|| getEntityType(dest) == Cave::Entity::Type::Pyrobe))
+		|| getEntityType(dest) == Cave::Entity::Type::Pyrobe
+		|| Cave::Entity::isBonusCollectible(getEntityType(dest))))
 		return false;
 	const bool intoFire = getEntityType(dest) == Cave::Entity::Type::Fire;
 	const bool intoPyrobe = getEntityType(dest) == Cave::Entity::Type::Pyrobe;
@@ -703,12 +706,16 @@ bool Cave::Map::tryJimWrapWalk(const int& index, const int& dest, const Cave::En
 }
 
 void Cave::Map::applyJimWrapLandingEffects(const int& dest) {
+	const Cave::Entity::Type destType = getEntityType(dest);
 	if (hasTrait(Cave::Entity::Trait::Collectable, dest)) {
 		m_game->soundManager.play(Sound::Effect::Collect);
 		m_game->sendSignal(GameSignal::CollectDiamond);
 		notifyFusion5Stimulus(dest);
 	}
-	else if (Cave::Entity::isDirtLike(getEntityType(dest))) {
+	else if (Cave::Entity::isBonusCollectible(destType)) {
+		collectBonusGem(destType, dest);
+	}
+	else if (Cave::Entity::isDirtLike(destType)) {
 		m_traversingDirt = true;
 	}
 }
@@ -752,14 +759,16 @@ bool Cave::Map::handleJimTraverse(const int& index, const int& inFront, const bo
 		: Cave::Map::FullTrapPayload{};
 	bool ruby = getEntityType(inFront) == Cave::Entity::Type::Ruby;
 	bool pyrobe = getEntityType(inFront) == Cave::Entity::Type::Pyrobe;
-	if (inShip && (collectable || ruby || pyrobe || hollow || timeBomb || key || landmine || macowEgg || macowCooked
+	const Cave::Entity::Type frontType = getEntityType(inFront);
+	const bool bonusGem = Cave::Entity::isBonusCollectible(frontType);
+	if (inShip && (collectable || ruby || pyrobe || bonusGem || hollow || timeBomb || key || landmine || macowEgg || macowCooked
 		|| trapEmpty || trapFull)) {
 		return true;
 	}
 	setJimMoveAmination(index);
-	bool digging = Cave::Entity::isDirtLike(getEntityType(inFront));
-	const bool diggingMagma = getEntityType(inFront) == Cave::Entity::Type::Magma;
-	const bool intoFire = getEntityType(inFront) == Cave::Entity::Type::Fire;
+	bool digging = Cave::Entity::isDirtLike(frontType);
+	const bool diggingMagma = frontType == Cave::Entity::Type::Magma;
+	const bool intoFire = frontType == Cave::Entity::Type::Fire;
 	if (collectMode) {
 		if (!getEntityTransitioning(inFront)) {
 			if (collectable) {
@@ -778,6 +787,12 @@ bool Cave::Map::handleJimTraverse(const int& index, const int& inFront, const bo
 			else if (pyrobe) {
 				grantPyrobe(index);
 				m_game->soundManager.play(Sound::Effect::Collect);
+			}
+			else if (bonusGem) {
+				const Cave::Entity::Type gemType = getEntityType(inFront);
+				setEntity(inFront, Cave::Entity::Space());
+				collectBonusGem(gemType, inFront);
+				return true;
 			}
 			else if (hollow) {
 				m_hollowCarried++;
@@ -856,6 +871,9 @@ bool Cave::Map::handleJimTraverse(const int& index, const int& inFront, const bo
 			grantPyrobe(inFront);
 			m_game->soundManager.play(Sound::Effect::Collect);
 		}
+		else if (bonusGem) {
+			collectBonusGem(frontType, inFront);
+		}
 		else if (hollow) {
 			m_hollowCarried++;
 			noteInventoryCollect(Cave::Entity::Type::HollowDiamond);
@@ -920,6 +938,181 @@ void Cave::Map::grantPyrobe(const int& jimIndex) {
 	const int pid = caveEntities[jimIndex].spawnCredit;
 	if (pid >= 0 && pid < Net::MaxPlayers)
 		m_playerPyrobe[static_cast<size_t>(pid)] = Cave::Entity::Pyrobe::ABILITY_FRAMES;
+}
+
+void Cave::Map::grantLapis(const int& jimIndex) {
+	m_jimLapisFrames = Cave::Entity::Lapis::BREATH_FRAMES;
+	m_jimBreath = {};
+	if (!inBounds(jimIndex)) return;
+	const int pid = caveEntities[jimIndex].spawnCredit;
+	if (pid >= 0 && pid < Net::MaxPlayers)
+		m_playerLapis[static_cast<size_t>(pid)] = Cave::Entity::Lapis::BREATH_FRAMES;
+}
+
+void Cave::Map::collectBonusGem(Cave::Entity::Type type, const int& cell) {
+	if (!Cave::Entity::isBonusCollectible(type)) return;
+	m_game->soundManager.play(Sound::Effect::Collect);
+	if (type == Cave::Entity::Type::Spinel) {
+		if (inBounds(cell))
+			m_spinelsTaken.insert(cell);
+		m_game->addLives(1);
+		return;
+	}
+	if (type == Cave::Entity::Type::Hourglass) {
+		m_game->addTimeSeconds(10);
+		return;
+	}
+	if (type == Cave::Entity::Type::Emerald) {
+		saveEmeraldCheckpoint(cell);
+		return;
+	}
+	if (type == Cave::Entity::Type::Lapis) {
+		const int jim = inBounds(m_jimIndex) ? m_jimIndex : cell;
+		grantLapis(jim);
+	}
+}
+
+void Cave::Map::syncSpinelPersistence(int fileIndex, int caveNumber) {
+	const int key = fileIndex * 100000 + caveNumber;
+	if (key != m_spinelPersistKey) {
+		m_spinelPersistKey = key;
+		m_spinelsTaken.clear();
+	}
+}
+
+void Cave::Map::purgeCollectedSpinels() {
+	for (int cell : m_spinelsTaken) {
+		if (!inBounds(cell)) continue;
+		if (getEntityType(cell) != Cave::Entity::Type::Spinel) continue;
+		setEntity(cell, Cave::Entity::Space());
+	}
+}
+
+void Cave::Map::saveEmeraldCheckpoint(const int& cell) {
+	EmeraldCheckpoint snap;
+	snap.active = true;
+	snap.respawnIndex = cell;
+	snap.entities = caveEntities;
+	snap.coveredGate = m_coveredGate;
+	snap.waterUnder = m_waterUnder;
+	snap.cosmicUnder = m_cosmicUnder;
+	snap.cosmicOver = m_cosmicOver;
+	snap.inventoryOrder = m_inventoryOrder;
+	snap.inventorySelected = m_inventorySelected;
+	snap.hollowCarried = m_hollowCarried;
+	snap.timeBombsCarried = m_timeBombsCarried;
+	snap.landminesCarried = m_landminesCarried;
+	snap.keysCarried = m_keysCarried;
+	snap.macowEggsCarried = m_macowEggsCarried;
+	snap.macowCookedEggsCarried = m_macowCookedEggsCarried;
+	snap.emptyTrapsCarried = m_emptyTrapsCarried;
+	snap.fullTrapsCarried = m_fullTrapsCarried;
+	snap.jimInvincibleFrames = m_jimInvincibleFrames;
+	snap.jimPyrobeFrames = m_jimPyrobeFrames;
+	snap.jimLapisFrames = m_jimLapisFrames;
+	snap.jimParasiteFrames = m_jimParasiteFrames;
+	snap.jimMagmaHeat = m_jimMagmaHeat;
+	snap.jimBreath = m_jimBreath;
+	snap.magicWallStarted = m_magicWallStarted;
+	snap.magicWallTimer = m_magicWallTimer;
+	snap.amoebaGrowthCount = m_amoebaGrowthCount;
+	snap.detonatorTriggered = m_detonatorTriggered;
+	snap.quotaReached = m_quotaReached;
+	snap.collected = m_game->getCollected();
+	snap.score = m_game->getScore();
+	snap.timeTicks = m_game->getTimeTicks();
+
+	// Ensure Jim sits on the emerald cell in the snapshot (collect-in-place or walk-on).
+	if (inBounds(cell)) {
+		const int jimNow = m_jimIndex;
+		Cave::Entity::Facing facing = Cave::Entity::Facing::RIGHT;
+		int spawnCredit = 0;
+		if (inBounds(jimNow) && getEntityType(jimNow) == Cave::Entity::Type::Jim) {
+			facing = getEntityFacing(jimNow);
+			spawnCredit = caveEntities[jimNow].spawnCredit;
+			if (jimNow != cell)
+				snap.entities[static_cast<size_t>(jimNow)] = Cave::Entity::Space();
+		}
+		snap.jimFacing = facing;
+		snap.entities[static_cast<size_t>(cell)] = Cave::Entity::Jim();
+		snap.entities[static_cast<size_t>(cell)].facing = facing;
+		snap.entities[static_cast<size_t>(cell)].spawnCredit = spawnCredit;
+		snap.entities[static_cast<size_t>(cell)].clearTransition();
+	}
+
+	m_emeraldCheckpoint = std::move(snap);
+}
+
+bool Cave::Map::tryEmeraldCheckpointRespawn() {
+	if (!m_emeraldCheckpoint.active) return false;
+	EmeraldCheckpoint snap = std::move(m_emeraldCheckpoint);
+	m_emeraldCheckpoint = {};
+
+	caveEntities = std::move(snap.entities);
+	m_coveredGate = std::move(snap.coveredGate);
+	m_waterUnder = std::move(snap.waterUnder);
+	m_cosmicUnder = std::move(snap.cosmicUnder);
+	m_cosmicOver = std::move(snap.cosmicOver);
+	m_inventoryOrder = std::move(snap.inventoryOrder);
+	m_inventorySelected = snap.inventorySelected;
+	m_hollowCarried = snap.hollowCarried;
+	m_timeBombsCarried = snap.timeBombsCarried;
+	m_landminesCarried = snap.landminesCarried;
+	m_keysCarried = snap.keysCarried;
+	m_macowEggsCarried = snap.macowEggsCarried;
+	m_macowCookedEggsCarried = snap.macowCookedEggsCarried;
+	m_emptyTrapsCarried = snap.emptyTrapsCarried;
+	m_fullTrapsCarried = std::move(snap.fullTrapsCarried);
+	m_trapSlideUnder.clear();
+	m_jimInvincibleFrames = snap.jimInvincibleFrames;
+	m_jimPyrobeFrames = snap.jimPyrobeFrames;
+	m_jimLapisFrames = snap.jimLapisFrames;
+	m_jimParasiteFrames = snap.jimParasiteFrames;
+	m_jimParasiteOverlayFrame = -1;
+	m_jimMagmaHeat = snap.jimMagmaHeat;
+	m_jimMagmaForcedHeatFrames = 0;
+	m_jimMagmaFireDrawFrame = -1;
+	m_jimBreath = snap.jimBreath;
+	m_magicWallStarted = snap.magicWallStarted;
+	m_magicWallTimer = snap.magicWallTimer;
+	m_amoebaGrowthCount = snap.amoebaGrowthCount;
+	m_detonatorTriggered = snap.detonatorTriggered;
+	m_quotaReached = snap.quotaReached;
+
+	const int cell = snap.respawnIndex;
+	if (inBounds(cell)) {
+		if (getEntityType(cell) != Cave::Entity::Type::Jim) {
+			caveEntities[static_cast<size_t>(cell)] = Cave::Entity::Jim();
+			caveEntities[static_cast<size_t>(cell)].facing = snap.jimFacing;
+		}
+		m_jimIndex = cell;
+		caveEntities[static_cast<size_t>(cell)].clearTransition();
+		setEntityFalling(cell, false);
+		const int pid = caveEntities[static_cast<size_t>(cell)].spawnCredit;
+		if (pid >= 0 && pid < Net::MaxPlayers) {
+			m_playerInvincible[static_cast<size_t>(pid)] = m_jimInvincibleFrames;
+			m_playerPyrobe[static_cast<size_t>(pid)] = m_jimPyrobeFrames;
+			m_playerLapis[static_cast<size_t>(pid)] = m_jimLapisFrames;
+		}
+	}
+
+	m_game->setCollected(snap.collected);
+	m_game->setScore(snap.score);
+	m_game->setTimeTicks(snap.timeTicks);
+	// Spinels taken after the emerald (or earlier) must stay gone — lives already granted.
+	purgeCollectedSpinels();
+	m_game->sendSignal(GameSignal::CaveCheckpointResume);
+	m_state = Cave::State::Play;
+	m_snapCameraToJim = true;
+	m_jimMovedThisTick = false;
+	return true;
+}
+
+void Cave::Map::notifyPlayerKilled() {
+	if (tryEmeraldCheckpointRespawn())
+		return;
+	m_game->sendSignal(GameSignal::CaveFail);
+	m_state = Cave::State::Fail;
 }
 
 bool Cave::Map::tryJimShootFireball(const int& index, const Cave::Entity::Direction& direction) {

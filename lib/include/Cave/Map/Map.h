@@ -2,6 +2,7 @@
 #include <array>
 #include <functional>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 #include <SFML/Graphics.hpp>
@@ -303,11 +304,18 @@ namespace Cave {
          */
         void prepareForPlay();
 
+        /// @brief Keep spinels removed across retries of the same cave; clear on cave change.
+        void syncSpinelPersistence(int fileIndex, int caveNumber);
+        /// @brief Replace taken spinels with Space (after generateMap / emerald restore).
+        void purgeCollectedSpinels();
+
         /// @brief True if Jim cannot currently be killed by explosions or falling objects.
         bool isJimInvincible() const;
         bool isJimInvincible(const int& index) const;
         bool isJimPyrobe() const;
         bool isJimPyrobe(const int& index) const;
+        bool isJimLapisBreath() const;
+        bool isJimLapisBreath(const int& index) const;
         /// @brief True while the local player's Jim is parasite-infested (overlay / view filter).
         bool isLocalJimParasiteInfested() const { return m_jimParasiteFrames > 0; }
         /// @brief True if any water overlays are queued for the current visible frame.
@@ -316,6 +324,10 @@ namespace Cave {
         bool hasLavaTiles() const { return !m_lavaDraws.empty(); }
         /// @brief True if the water/lava wave post-FX pass should run.
         bool hasLiquidWaveFx() const { return hasWaterOverlays() || hasLavaTiles(); }
+        /// @brief True if any aggro Agent wave centres are queued for the current frame.
+        bool hasAgentWaveFx() const { return !m_agentWaveCenters.empty(); }
+        /// @brief World-pixel centres of waving Agents (tile centres), capped for the shader.
+        const std::vector<sf::Vector2f>& agentWaveCenters() const { return m_agentWaveCenters; }
 
         /// @brief One inventory row: placeable type, or TrapFull + contained monster/look.
         struct InventorySlot {
@@ -833,6 +845,15 @@ namespace Cave {
          */
         bool handleJimTraverse(const int& index, const int& inFront, const bool& collectMode, const Cave::Entity::Facing& facing, const Cave::Entity::Direction& direction);
         void grantPyrobe(const int& jimIndex);
+        void grantLapis(const int& jimIndex);
+        /// @brief Collect Spinel / Hourglass / Emerald at cell (sound + effect).
+        void collectBonusGem(Cave::Entity::Type type, const int& cell);
+        /// @brief Snapshot cave/player progress for emerald soft-respawn.
+        void saveEmeraldCheckpoint(const int& cell);
+        /// @brief Soft-respawn from the last emerald if available. Returns true if restored.
+        bool tryEmeraldCheckpointRespawn();
+        /// @brief Fail the cave, or soft-respawn from emerald if one is armed.
+        void notifyPlayerKilled();
         bool tryJimShootFireball(const int& index, const Cave::Entity::Direction& direction);
 
         /// Walk off a border opening and appear in the matching hole on the opposite edge.
@@ -1275,6 +1296,10 @@ namespace Cave {
         bool tryLayGenomEgg(const int& index);
         void updateMimic(const int& index);
         void updateShade(const int& index);
+        void updateAgent(const int& index);
+        void agentDetonateMovers(const int& index);
+        /// @brief After all AI moves this tick: aggro Agents kill movers in their 10x10.
+        void updateAgentWaveKills();
         void updateGrouper(const int& index);
         bool grouperHasJimLineOfSight(const int& index) const;
         int findGrouperIndexById(int grouperId) const;
@@ -2324,12 +2349,15 @@ namespace Cave {
         Renderer::TextRenderer m_invincibleText;
         /// @brief Seconds remaining drawn above Jim during Pyrobe fire ability.
         Renderer::TextRenderer m_pyrobeText;
+        /// @brief Blue seconds remaining drawn above Jim during Lapis water-breathing.
+        Renderer::TextRenderer m_lapisText;
         std::vector<Renderer::TextRenderer> m_playerNameText;
         std::vector<bool> m_showPlayerName;
 
         /// @brief True when the invincibility countdown should be drawn this frame.
         bool m_showInvincibleText = false;
         bool m_showPyrobeText = false;
+        bool m_showLapisText = false;
 
         /// @brief Map tick counter.
         Utils::TickCounter m_TickCounter = Utils::TickCounter();
@@ -2362,6 +2390,49 @@ namespace Cave {
         std::vector<InventorySlot> m_inventoryOrder;
         int m_inventorySelected = 0;
 
+        /// @brief Emerald soft-respawn snapshot (last collected overwrites; one-shot).
+        struct EmeraldCheckpoint {
+            bool active = false;
+            int respawnIndex = OUT_OF_BOUNDS_INDEX;
+            std::vector<Cave::Entity::Base> entities;
+            std::vector<Cave::Entity::Base> coveredGate;
+            std::vector<char> waterUnder;
+            std::vector<Cave::Entity::Base> cosmicUnder;
+            std::vector<Cave::Entity::Base> cosmicOver;
+            std::vector<InventorySlot> inventoryOrder;
+            int inventorySelected = 0;
+            int hollowCarried = 0;
+            int timeBombsCarried = 0;
+            int landminesCarried = 0;
+            int keysCarried = 0;
+            int macowEggsCarried = 0;
+            int macowCookedEggsCarried = 0;
+            int emptyTrapsCarried = 0;
+            std::vector<FullTrapPayload> fullTrapsCarried;
+            int jimInvincibleFrames = 0;
+            int jimPyrobeFrames = 0;
+            int jimLapisFrames = 0;
+            int jimParasiteFrames = 0;
+            int jimMagmaHeat = 0;
+            BreathMeter jimBreath{};
+            bool magicWallStarted = false;
+            int magicWallTimer = 0;
+            int amoebaGrowthCount = 0;
+            bool detonatorTriggered = false;
+            bool quotaReached = false;
+            int collected = 0;
+            int score = 0;
+            int timeTicks = 0;
+            Cave::Entity::Facing jimFacing = Cave::Entity::Facing::RIGHT;
+        };
+        EmeraldCheckpoint m_emeraldCheckpoint;
+        /// @brief Nested explosion depth — player death is notified only when it returns to 0.
+        int m_explosionDepth = 0;
+        bool m_playerKillPending = false;
+        /// @brief Spinel cells already collected this cave (survive Fail retries; reset on cave change).
+        int m_spinelPersistKey = -1;
+        std::unordered_set<int> m_spinelsTaken;
+
         /// @brief Hollow diamonds currently carried by Jim.
         int m_hollowCarried = 0;
 
@@ -2389,6 +2460,8 @@ namespace Cave {
         /// @brief Remaining frames of ruby invincibility.
         int m_jimInvincibleFrames = 0;
         int m_jimPyrobeFrames = 0;
+        /// @brief Remaining frames of Lapis water-breathing (no breath loss).
+        int m_jimLapisFrames = 0;
         /// @brief Remaining frames of parasite infestation (inverted controls + overlay).
         /// Player-only: drives the screen infection filter via isLocalJimParasiteInfested().
         int m_jimParasiteFrames = 0;
@@ -2439,6 +2512,8 @@ namespace Cave {
         std::vector<WaterDraw> m_trapCageDraws;
         /// @brief Gravel break overlays (progress > 0), drawn above the gravel tile.
         std::vector<WaterDraw> m_gravelBreakDraws;
+        /// @brief World-pixel centres of Agents currently emitting wave FX.
+        std::vector<sf::Vector2f> m_agentWaveCenters;
         /// @brief Gravel cells that finished digging last tick — cleared next frame so overlay shows.
         std::vector<int> m_gravelClearPending;
 
@@ -2635,6 +2710,7 @@ namespace Cave {
         std::array<bool, Net::MaxPlayers> m_playerExited{};
         std::array<int, Net::MaxPlayers> m_playerInvincible{};
         std::array<int, Net::MaxPlayers> m_playerPyrobe{};
+        std::array<int, Net::MaxPlayers> m_playerLapis{};
         std::array<int, Net::MaxPlayers> m_playerPyrobeShootWait{};
         std::array<int, Net::MaxPlayers> m_playerParasite{};
         std::array<int, Net::MaxPlayers> m_playerHollow{};

@@ -80,10 +80,7 @@ bool Cave::Map::handleEntityFalling(const int& index, const int& ahead, const Ca
 		if (moveEntity(index, gravity)) {
 			if (!wasFalling) {
 				const bool gem = hasTrait(Cave::Entity::Trait::Collectable, ahead)
-					|| getEntityType(ahead) == Cave::Entity::Type::HollowDiamond
-					|| getEntityType(ahead) == Cave::Entity::Type::Ruby
-					|| getEntityType(ahead) == Cave::Entity::Type::Pyrobe
-					|| getEntityType(ahead) == Cave::Entity::Type::Key;
+					|| Cave::Entity::usesDiamondImpactSound(getEntityType(ahead));
 				gem ?
 					m_game->soundManager.play(Sound::Effect::DiamondDrop) :
 					m_game->soundManager.play(Sound::Effect::Drop);
@@ -280,10 +277,7 @@ bool Cave::Map::handleEntityLanding(const int& index, const int& ahead) {
 		const bool aheadIsJim = getEntityType(ahead) == Cave::Entity::Type::Jim;
 		if (aheadIsJim && (isJimInvincible(ahead) || jimSteppedIntoCellThisTick(ahead))) {
 			hasTrait(Cave::Entity::Trait::Collectable, index)
-				|| type == Cave::Entity::Type::HollowDiamond
-				|| type == Cave::Entity::Type::Ruby
-				|| type == Cave::Entity::Type::Pyrobe
-				|| type == Cave::Entity::Type::Key ?
+				|| Cave::Entity::usesDiamondImpactSound(type) ?
 				m_game->soundManager.play(Sound::Effect::DiamondLand) :
 				m_game->soundManager.play(Sound::Effect::Land);
 			notifyFusion5Stimulus(index);
@@ -292,10 +286,7 @@ bool Cave::Map::handleEntityLanding(const int& index, const int& ahead) {
 		if (Cave::Entity::isJimlin(getEntityType(ahead))
 			&& (getEntityTransitioning(ahead) || jimlinSteppedIntoCellThisTick(ahead))) {
 			hasTrait(Cave::Entity::Trait::Collectable, index)
-				|| type == Cave::Entity::Type::HollowDiamond
-				|| type == Cave::Entity::Type::Ruby
-				|| type == Cave::Entity::Type::Pyrobe
-				|| type == Cave::Entity::Type::Key ?
+				|| Cave::Entity::usesDiamondImpactSound(type) ?
 				m_game->soundManager.play(Sound::Effect::DiamondLand) :
 				m_game->soundManager.play(Sound::Effect::Land);
 			notifyFusion5Stimulus(index);
@@ -355,10 +346,7 @@ bool Cave::Map::handleEntityLanding(const int& index, const int& ahead) {
 
 	if (!landedOnFragileDiamond) {
 		hasTrait(Cave::Entity::Trait::Collectable, index)
-			|| type == Cave::Entity::Type::HollowDiamond
-			|| type == Cave::Entity::Type::Ruby
-			|| type == Cave::Entity::Type::Pyrobe
-			|| type == Cave::Entity::Type::Key ?
+			|| Cave::Entity::usesDiamondImpactSound(type) ?
 			m_game->soundManager.play(Sound::Effect::DiamondLand) :
 			m_game->soundManager.play(Sound::Effect::Land);
 	}

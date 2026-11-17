@@ -262,6 +262,11 @@ int HUD::Editor::Panel::miniTileIndex(Cave::Entity::Type type)
     case T::Lock:             return 135;
     case T::Key:              return 136;
     case T::Gravel:           return 137;
+    case T::Spinel:           return 138;
+    case T::Hourglass:        return 139;
+    case T::Emerald:          return 140;
+    case T::Lapis:            return 141;
+    case T::Agent:            return 142;
     case T::Jimlin1:         return 67;
     case T::Jimlin2:         return 68;
     case T::Jimlin3:         return 69;
@@ -1079,7 +1084,7 @@ bool HUD::Editor::Panel::handleRightClick(sf::Vector2f vp, float panelX, float t
     if (px >= 0 && px < 3 && py >= 0 && py < VISIBLE_PALETTE_ROWS && lx < SB_X)
     {
         const int row = py + m_scrollRow;
-        if (isSpaceSlot(px, row) || isDirtSlot(px, row) || isPegulSlot(px, row) || isFusionSlot(px, row) || isPyrozoSlot(px, row)
+        if (isSpaceSlot(px, row) || isPegulSlot(px, row) || isFusionSlot(px, row) || isPyrozoSlot(px, row)
             || isGodSlot(px, row)
             || isJimlinSlot(px, row) || isGateSlot(px, row) || isJimlinBlockSlot(px, row)
             || isJimlinShipSlot(px, row)
@@ -1136,7 +1141,7 @@ Cave::Entity::Type HUD::Editor::Panel::getType(const int& x, const int& y) const
     int num = std::clamp(y, 0, TOTAL_PALETTE_ROWS - 1) * 3 + std::clamp(x, 0, 2);
     switch (num) {
     case 0:  return m_spaceSlotType;
-    case 1:  return m_dirtType;
+    case 1:  return Cave::Entity::Type::Dirt;
     case 2:  return Cave::Entity::Type::Boulder;
     case 3:  return Cave::Entity::Type::Diamond;
     case 4:  return Cave::Entity::Type::FragileDiamond;
@@ -1165,69 +1170,75 @@ Cave::Entity::Type HUD::Editor::Panel::getType(const int& x, const int& y) const
     case 27: return Cave::Entity::Type::TubeDown;
     case 28: return Cave::Entity::Type::StartDoor;
     case 29: return Cave::Entity::Type::ExitDoor;
-    case 30: return Cave::Entity::Type::HollowDiamond;
-    case 31: return Cave::Entity::Type::Ruby;
-    case 32: return Cave::Entity::Type::MagicBoulder;
-    case 33: return Cave::Entity::Type::Chum;
-    case 34: return m_gateType;
-    case 35: return Cave::Entity::Type::Fan;
-    case 36: return Cave::Entity::Type::TimeBomb;
-    case 37: return Cave::Entity::Type::Well;
-    case 38: return Cave::Entity::Type::Portal;
-    case 39: return m_jimlinShipType;
-    case 40: return m_jimlinBlockType;
-    case 41: return Cave::Entity::Type::Mole;
-    case 42: return Cave::Entity::Type::Spinner;
-    case 43: return Cave::Entity::Type::Blob;
-    case 44: return Cave::Entity::Type::Sludg;
-    case 45: return m_pegulType;
-    case 46: return Cave::Entity::Type::BoulderEater;
-    case 47: return Cave::Entity::Type::Pyram;
-    case 48: return Cave::Entity::Type::GallopEgg;
-    case 49: return Cave::Entity::Type::Gallop;
-    case 50: return Cave::Entity::Type::GallopQueen;
-    case 51: return Cave::Entity::Type::Creep;
-    case 52: return Cave::Entity::Type::Tetrapus;
-    case 53: return Cave::Entity::Type::Glutton;
-    case 54: return Cave::Entity::Type::Binocule;
-    case 55: return m_fusionType;
-    case 56: return m_godType;
-    case 57: return Cave::Entity::Type::Puffer;
-    case 58: return Cave::Entity::Type::Charger;
-    case 59: return m_jimlinType;
-    case 60: return Cave::Entity::Type::Magma;
-    case 61: return Cave::Entity::Type::HotBoulder;
-    case 62: return Cave::Entity::Type::Lava;
-    case 63: return m_pyrozoType;
-    case 64: return Cave::Entity::Type::Hellgull;
-    case 65: return Cave::Entity::Type::Charia;
-    case 66: return Cave::Entity::Type::ObsidianWall;
-    case 67: return Cave::Entity::Type::Worm;
-    case 68: return Cave::Entity::Type::Pyrobe;
-    case 69: return Cave::Entity::Type::Predator;
-    case 70: return Cave::Entity::Type::Plankton;
-    case 71: return Cave::Entity::Type::Macow;
-    case 72: return Cave::Entity::Type::MacowEgg;
-    case 73: return Cave::Entity::Type::Moss;
-    case 74: return Cave::Entity::Type::Caterpillar;
-    case 75: return Cave::Entity::Type::Butterfly;
-    case 76: return Cave::Entity::Type::Jelly;
-    case 77: return Cave::Entity::Type::MossyBoulder;
-    case 78: return Cave::Entity::Type::TrapEmpty;
-    case 79: return Cave::Entity::Type::Mimic;
-    case 80: return Cave::Entity::Type::Shade;
-    case 81: return Cave::Entity::Type::Grouper;
-    case 82: return Cave::Entity::Type::Genom;
-    case 83: return Cave::Entity::Type::Landmine;
-    case 84: return Cave::Entity::Type::Compressor;
-    case 85: return m_hiveMatriarchType;
-    case 86: return m_hiveWallType;
-    case 87: return Cave::Entity::Type::Water;
-    case 88: return Cave::Entity::Type::Fish;
-    case 89: return Cave::Entity::Type::Coral;
-    case 90: return Cave::Entity::Type::Parasite;
-    case 91: return Cave::Entity::Type::Lock;
-    case 92: return Cave::Entity::Type::Key;
+    case 30: return Cave::Entity::Type::Gravel;
+    case 31: return Cave::Entity::Type::Chum;
+    case 32: return Cave::Entity::Type::Magma;
+    case 33: return Cave::Entity::Type::Moss;
+    case 34: return Cave::Entity::Type::Water;
+    case 35: return Cave::Entity::Type::MagicBoulder;
+    case 36: return Cave::Entity::Type::HotBoulder;
+    case 37: return Cave::Entity::Type::MossyBoulder;
+    case 38: return Cave::Entity::Type::HollowDiamond;
+    case 39: return Cave::Entity::Type::Ruby;
+    case 40: return Cave::Entity::Type::Pyrobe;
+    case 41: return Cave::Entity::Type::Spinel;
+    case 42: return Cave::Entity::Type::Hourglass;
+    case 43: return Cave::Entity::Type::Emerald;
+    case 44: return Cave::Entity::Type::Lapis;
+    case 45: return Cave::Entity::Type::TimeBomb;
+    case 46: return Cave::Entity::Type::TrapEmpty;
+    case 47: return Cave::Entity::Type::Landmine;
+    case 48: return Cave::Entity::Type::Lock;
+    case 49: return Cave::Entity::Type::Key;
+    case 50: return Cave::Entity::Type::Fan;
+    case 51: return m_gateType;
+    case 52: return m_jimlinBlockType;
+    case 53: return m_jimlinShipType;
+    case 54: return Cave::Entity::Type::Well;
+    case 55: return Cave::Entity::Type::Portal;
+    case 56: return Cave::Entity::Type::ObsidianWall;
+    case 57: return Cave::Entity::Type::Lava;
+    case 58: return Cave::Entity::Type::Mole;
+    case 59: return Cave::Entity::Type::Spinner;
+    case 60: return Cave::Entity::Type::Blob;
+    case 61: return Cave::Entity::Type::Sludg;
+    case 62: return m_pegulType;
+    case 63: return Cave::Entity::Type::BoulderEater;
+    case 64: return Cave::Entity::Type::Pyram;
+    case 65: return Cave::Entity::Type::Creep;
+    case 66: return Cave::Entity::Type::GallopEgg;
+    case 67: return Cave::Entity::Type::Gallop;
+    case 68: return Cave::Entity::Type::GallopQueen;
+    case 69: return Cave::Entity::Type::Tetrapus;
+    case 70: return Cave::Entity::Type::Glutton;
+    case 71: return Cave::Entity::Type::Binocule;
+    case 72: return m_fusionType;
+    case 73: return Cave::Entity::Type::Puffer;
+    case 74: return Cave::Entity::Type::Charger;
+    case 75: return m_pyrozoType;
+    case 76: return Cave::Entity::Type::Hellgull;
+    case 77: return Cave::Entity::Type::Charia;
+    case 78: return Cave::Entity::Type::Worm;
+    case 79: return Cave::Entity::Type::Plankton;
+    case 80: return Cave::Entity::Type::Predator;
+    case 81: return Cave::Entity::Type::MacowEgg;
+    case 82: return Cave::Entity::Type::Macow;
+    case 83: return Cave::Entity::Type::Jelly;
+    case 84: return Cave::Entity::Type::Caterpillar;
+    case 85: return Cave::Entity::Type::Butterfly;
+    case 86: return Cave::Entity::Type::Mimic;
+    case 87: return Cave::Entity::Type::Shade;
+    case 88: return Cave::Entity::Type::Grouper;
+    case 89: return Cave::Entity::Type::Genom;
+    case 90: return Cave::Entity::Type::Compressor;
+    case 91: return m_hiveMatriarchType;
+    case 92: return m_hiveWallType;
+    case 93: return Cave::Entity::Type::Fish;
+    case 94: return Cave::Entity::Type::Coral;
+    case 95: return Cave::Entity::Type::Parasite;
+    case 96: return Cave::Entity::Type::Agent;
+    case 97: return m_godType;
+    case 98: return m_jimlinType;
     default: return Cave::Entity::Type::NoType;
     }
 }
@@ -1396,8 +1407,13 @@ std::string HUD::Editor::Panel::getPaletteSlotName(const int& x, const int& y) c
     case Cave::Entity::Type::Fish: return "Fish";
     case Cave::Entity::Type::Coral: return "Coral";
     case Cave::Entity::Type::Parasite: return "Parasite";
+    case Cave::Entity::Type::Agent: return "Agent";
     case Cave::Entity::Type::Lock: return "Lock";
     case Cave::Entity::Type::Key: return "Key";
+    case Cave::Entity::Type::Spinel: return "Spinel";
+    case Cave::Entity::Type::Hourglass: return "Hourglass";
+    case Cave::Entity::Type::Emerald: return "Emerald";
+    case Cave::Entity::Type::Lapis: return "Lapis";
     default: break;
     }
     return {};
@@ -1556,8 +1572,13 @@ Cave::Entity::Base HUD::Editor::Panel::getNewEntity(Cave::Entity::Type type) {
     case Cave::Entity::Type::Coral:           return Cave::Entity::Coral();
     case Cave::Entity::Type::CoralBud:        return Cave::Entity::CoralBud();
     case Cave::Entity::Type::Parasite:        return Cave::Entity::Parasite();
+    case Cave::Entity::Type::Agent:           return Cave::Entity::Agent();
     case Cave::Entity::Type::Lock:            return Cave::Entity::Lock();
     case Cave::Entity::Type::Key:             return Cave::Entity::Key();
+    case Cave::Entity::Type::Spinel:          return Cave::Entity::Spinel();
+    case Cave::Entity::Type::Hourglass:       return Cave::Entity::Hourglass();
+    case Cave::Entity::Type::Emerald:         return Cave::Entity::Emerald();
+    case Cave::Entity::Type::Lapis:           return Cave::Entity::Lapis();
     case Cave::Entity::Type::Fish: {
         Cave::Entity::Fish fish;
         if (!m_fishRandomize && (m_fishLook & Cave::Entity::Fish::LOOK_VALID) != 0)

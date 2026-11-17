@@ -41,6 +41,9 @@ enum class GameSignal {
     /// @brief Player collected a ruby (flat 100 points, no quota).
     CollectRuby,
 
+    /// @brief Resume play after an emerald soft-respawn (no life loss / load cover).
+    CaveCheckpointResume,
+
     /// @brief Player has paused the game.
     CavePause,
 

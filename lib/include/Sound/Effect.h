@@ -81,7 +81,10 @@ namespace Sound {
         Yippee,
 
         /// @brief Looping Grouper alarm ambience.
-        Wawa
+        Wawa,
+
+        /// @brief Agent starts emitting its aggro wave field.
+        Agent
     };
 
 }

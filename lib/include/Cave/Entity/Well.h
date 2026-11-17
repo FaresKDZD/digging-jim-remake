@@ -102,6 +102,7 @@ namespace Cave::Entity {
             case Type::Fish:
             case Type::Coral:
             case Type::Parasite:
+            case Type::Agent:
                 return true;
             default:
                 return false;
@@ -169,6 +170,7 @@ namespace Cave::Entity {
             { "Fish", Type::Fish },
             { "Coral", Type::Coral },
             { "Parasite", Type::Parasite },
+            { "Agent", Type::Agent },
         };
 
     private:

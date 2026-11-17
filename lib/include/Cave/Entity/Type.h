@@ -191,6 +191,11 @@ namespace Cave::Entity {
         Key,
         Gravel,
         PyrozoExplosion,
+        Spinel,
+        Hourglass,
+        Emerald,
+        Lapis,
+        Agent,
     };
 
     inline bool isLandmine(Type type) {
@@ -298,7 +303,7 @@ namespace Cave::Entity {
     }
 
     inline bool isDirtVariant(Type type) {
-        return type == Type::Dirt || type == Type::Gravel;
+        return type == Type::Dirt;
     }
 
     inline bool isCosmic(Type type) {
@@ -398,6 +403,7 @@ namespace Cave::Entity {
         case Type::Coral:
         case Type::CoralBud:
         case Type::Parasite:
+        case Type::Agent:
             return true;
         default:
             return false;
@@ -526,6 +532,25 @@ namespace Cave::Entity {
         return type == Type::Diamond
             || type == Type::FragileDiamond
             || type == Type::HollowDiamond;
+    }
+
+    /// @brief Spinel / Hourglass / Emerald / Lapis — fallable, collectible, not inventory or score gems.
+    inline bool isBonusCollectible(Type type) {
+        return type == Type::Spinel
+            || type == Type::Hourglass
+            || type == Type::Emerald
+            || type == Type::Lapis;
+    }
+
+    /// @brief Fall / land SFX shared with diamonds (not boulder Drop/Land).
+    inline bool usesDiamondImpactSound(Type type) {
+        return type == Type::Diamond
+            || type == Type::FragileDiamond
+            || type == Type::HollowDiamond
+            || type == Type::Ruby
+            || type == Type::Pyrobe
+            || type == Type::Key
+            || isBonusCollectible(type);
     }
 
     inline bool isPlayer(Type type) {

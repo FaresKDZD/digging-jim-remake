@@ -123,6 +123,10 @@ class RestampCustomAssets {
             StampGateOntoCurrent();
             return;
         }
+        if (args.Length > 0 && args[0] == "--private-gate") {
+            StampPrivateGateOntoCurrent();
+            return;
+        }
         if (args.Length > 0 && args[0] == "--coral") {
             StampCoralOntoCurrent();
             return;
@@ -145,6 +149,18 @@ class RestampCustomAssets {
         }
         if (args.Length > 0 && args[0] == "--gravel") {
             StampGravelOntoCurrent();
+            return;
+        }
+        if (args.Length > 0 && args[0] == "--bonus-gems") {
+            StampBonusGemsOntoCurrent();
+            return;
+        }
+        if (args.Length > 0 && args[0] == "--lapis") {
+            StampLapisOntoCurrent();
+            return;
+        }
+        if (args.Length > 0 && args[0] == "--agent") {
+            StampAgentOntoCurrent();
             return;
         }
 
@@ -1132,6 +1148,53 @@ class RestampCustomAssets {
         Console.WriteLine("DONE");
     }
 
+    static void StampPrivateGateOntoCurrent() {
+        if (!File.Exists(TilesPath)) throw new Exception("Missing " + TilesPath);
+        // PrivateGate owns 1154–1157 only. Do not touch Gate 872–875 or neighbors.
+        const int privateBase = 1154;
+        const int lastFrame = privateBase + 3;
+        int dirtBefore;
+        int gateProbeBefore;
+        using (Bitmap tiles = LoadPngExact(TilesPath)) {
+            dirtBefore = tiles.GetPixel(0, 0).ToArgb();
+            // Probe regular Gate frame 0 so we can prove it stayed untouched.
+            int gx = (872 % COLS) * TILE;
+            int gy = (872 / COLS) * TILE;
+            gateProbeBefore = tiles.GetPixel(gx, gy).ToArgb();
+            int needH = FrameBottom(lastFrame);
+            if (tiles.Height < needH)
+                throw new Exception("tiles too short for private gate; refuse expand. height="
+                    + tiles.Height + " need=" + needH);
+
+            StampStrip(tiles, "private_gate.png", privateBase, 4);
+
+            string outPath = TilesPath + ".restamped.png";
+            tiles.Save(outPath, ImageFormat.Png);
+            Console.WriteLine("Wrote " + outPath);
+        }
+
+        File.Copy(TilesPath + ".restamped.png", TilesPath, true);
+        File.Delete(TilesPath + ".restamped.png");
+        Console.WriteLine("Replaced " + TilesPath);
+
+        StampMiniIconFromCustom("private_gate.png", 73);
+
+        Console.WriteLine("Stamped=" + stamped + " skipped=" + skipped);
+        foreach (var line in log) Console.WriteLine(line);
+
+        VerifyExact("private_gate.png", privateBase);
+        using (var tiles = LoadPngExact(TilesPath)) {
+            if (tiles.GetPixel(0, 0).ToArgb() != dirtBefore)
+                throw new Exception("DIRT PIXEL CHANGED - abort, sheet was re-encoded badly");
+            int gx = (872 % COLS) * TILE;
+            int gy = (872 / COLS) * TILE;
+            if (tiles.GetPixel(gx, gy).ToArgb() != gateProbeBefore)
+                throw new Exception("GATE FRAME 872 CHANGED - abort, wrong stamp region");
+        }
+        Console.WriteLine("VERIFY OK dirt + gate 872 untouched");
+        Console.WriteLine("DONE");
+    }
+
     static void StampGateOntoCurrent() {
         if (!File.Exists(TilesPath)) throw new Exception("Missing " + TilesPath);
         const int gateBase = 872;
@@ -1285,6 +1348,146 @@ class RestampCustomAssets {
         foreach (var line in log) Console.WriteLine(line);
 
         VerifyExact("pyrozo_form.png", formBase);
+        using (var tiles = LoadPngExact(TilesPath)) {
+            if (tiles.GetPixel(0, 0).ToArgb() != dirtBefore)
+                throw new Exception("DIRT PIXEL CHANGED - abort, sheet was re-encoded badly");
+        }
+        Console.WriteLine("VERIFY OK dirt untouched");
+        Console.WriteLine("DONE");
+    }
+
+    static void StampAgentOntoCurrent() {
+        if (!File.Exists(TilesPath)) throw new Exception("Missing " + TilesPath);
+        // After lapis (2080–2087).
+        const int agentBase = 2088;
+        const int watchBase = 2096;
+        const int lastFrame = watchBase + 3;
+        int dirtBefore;
+        using (Bitmap tiles = LoadPngExact(TilesPath)) {
+            dirtBefore = tiles.GetPixel(0, 0).ToArgb();
+            int needH = FrameBottom(lastFrame);
+            Bitmap work = tiles;
+            Bitmap expanded = null;
+            if (tiles.Height < needH) {
+                expanded = ExpandExact(tiles, SHEET_W_CONST(), needH);
+                work = expanded;
+                Console.WriteLine("Expanded tiles to " + work.Width + "x" + work.Height);
+            }
+
+            StampStrip(work, "agent.png", agentBase, 8);
+            StampStrip(work, "agent_watch.png", watchBase, 4);
+
+            string outPath = TilesPath + ".restamped.png";
+            work.Save(outPath, ImageFormat.Png);
+            Console.WriteLine("Wrote " + outPath);
+            if (expanded != null) expanded.Dispose();
+        }
+
+        File.Copy(TilesPath + ".restamped.png", TilesPath, true);
+        File.Delete(TilesPath + ".restamped.png");
+        Console.WriteLine("Replaced " + TilesPath);
+
+        StampMiniIconFromCustom("agent.png", 142);
+
+        Console.WriteLine("Stamped=" + stamped + " skipped=" + skipped);
+        foreach (var line in log) Console.WriteLine(line);
+
+        VerifyExact("agent.png", agentBase);
+        VerifyExact("agent_watch.png", watchBase);
+        using (var tiles = LoadPngExact(TilesPath)) {
+            if (tiles.GetPixel(0, 0).ToArgb() != dirtBefore)
+                throw new Exception("DIRT PIXEL CHANGED - abort, sheet was re-encoded badly");
+        }
+        Console.WriteLine("VERIFY OK dirt untouched");
+        Console.WriteLine("DONE");
+    }
+
+    static void StampLapisOntoCurrent() {
+        if (!File.Exists(TilesPath)) throw new Exception("Missing " + TilesPath);
+        // After emerald (2072–2079).
+        const int lapisBase = 2080;
+        const int lastFrame = lapisBase + 7;
+        int dirtBefore;
+        using (Bitmap tiles = LoadPngExact(TilesPath)) {
+            dirtBefore = tiles.GetPixel(0, 0).ToArgb();
+            int needH = FrameBottom(lastFrame);
+            Bitmap work = tiles;
+            Bitmap expanded = null;
+            if (tiles.Height < needH) {
+                expanded = ExpandExact(tiles, SHEET_W_CONST(), needH);
+                work = expanded;
+                Console.WriteLine("Expanded tiles to " + work.Width + "x" + work.Height);
+            }
+
+            StampStrip(work, "lapis.png", lapisBase, 8);
+
+            string outPath = TilesPath + ".restamped.png";
+            work.Save(outPath, ImageFormat.Png);
+            Console.WriteLine("Wrote " + outPath);
+            if (expanded != null) expanded.Dispose();
+        }
+
+        File.Copy(TilesPath + ".restamped.png", TilesPath, true);
+        File.Delete(TilesPath + ".restamped.png");
+        Console.WriteLine("Replaced " + TilesPath);
+
+        StampMiniIconFromCustom("lapis.png", 141);
+
+        Console.WriteLine("Stamped=" + stamped + " skipped=" + skipped);
+        foreach (var line in log) Console.WriteLine(line);
+
+        VerifyExact("lapis.png", lapisBase);
+        using (var tiles = LoadPngExact(TilesPath)) {
+            if (tiles.GetPixel(0, 0).ToArgb() != dirtBefore)
+                throw new Exception("DIRT PIXEL CHANGED - abort, sheet was re-encoded badly");
+        }
+        Console.WriteLine("VERIFY OK dirt untouched");
+        Console.WriteLine("DONE");
+    }
+
+    static void StampBonusGemsOntoCurrent() {
+        if (!File.Exists(TilesPath)) throw new Exception("Missing " + TilesPath);
+        // After gravel (2040–2055).
+        const int spinelBase = 2056;
+        const int hourglassBase = 2064;
+        const int emeraldBase = 2072;
+        const int lastFrame = emeraldBase + 7;
+        int dirtBefore;
+        using (Bitmap tiles = LoadPngExact(TilesPath)) {
+            dirtBefore = tiles.GetPixel(0, 0).ToArgb();
+            int needH = FrameBottom(lastFrame);
+            Bitmap work = tiles;
+            Bitmap expanded = null;
+            if (tiles.Height < needH) {
+                expanded = ExpandExact(tiles, SHEET_W_CONST(), needH);
+                work = expanded;
+                Console.WriteLine("Expanded tiles to " + work.Width + "x" + work.Height);
+            }
+
+            StampStrip(work, "life.png", spinelBase, 8);
+            StampStrip(work, "time.png", hourglassBase, 8);
+            StampStrip(work, "check_point.png", emeraldBase, 8);
+
+            string outPath = TilesPath + ".restamped.png";
+            work.Save(outPath, ImageFormat.Png);
+            Console.WriteLine("Wrote " + outPath);
+            if (expanded != null) expanded.Dispose();
+        }
+
+        File.Copy(TilesPath + ".restamped.png", TilesPath, true);
+        File.Delete(TilesPath + ".restamped.png");
+        Console.WriteLine("Replaced " + TilesPath);
+
+        StampMiniIconFromCustom("life.png", 138);
+        StampMiniIconFromCustom("time.png", 139);
+        StampMiniIconFromCustom("check_point.png", 140);
+
+        Console.WriteLine("Stamped=" + stamped + " skipped=" + skipped);
+        foreach (var line in log) Console.WriteLine(line);
+
+        VerifyExact("life.png", spinelBase);
+        VerifyExact("time.png", hourglassBase);
+        VerifyExact("check_point.png", emeraldBase);
         using (var tiles = LoadPngExact(TilesPath)) {
             if (tiles.GetPixel(0, 0).ToArgb() != dirtBefore)
                 throw new Exception("DIRT PIXEL CHANGED - abort, sheet was re-encoded badly");

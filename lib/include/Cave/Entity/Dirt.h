@@ -9,7 +9,6 @@ namespace Cave::Entity {
      * @class Dirt
      * @brief The most common formation.
      * Jim can dig through it, but it stops everything else except amoeba.
-     * Shares a palette slot with Gravel (right-click variant picker).
      */
     class Dirt : public Base {
     public:
@@ -27,7 +26,6 @@ namespace Cave::Entity {
 
         static constexpr VariantOption VARIANTS[] = {
             { "Dirt", Type::Dirt },
-            { "Gravel", Type::Gravel },
         };
     };
 }

@@ -13,13 +13,14 @@
 #include "Utils/Random.h"
 
 Cave::Map::Map(Game* game)
-	: m_game(game), m_tileRenderer(&game->imageManager), m_cosmicRenderer(&game->imageManager), m_loadingTileRenderer(&game->imageManager), m_invincibleText(game, 2), m_pyrobeText(game, 2)
+	: m_game(game), m_tileRenderer(&game->imageManager), m_cosmicRenderer(&game->imageManager), m_loadingTileRenderer(&game->imageManager), m_invincibleText(game, 2), m_pyrobeText(game, 2), m_lapisText(game, 2)
 {
 	m_playerJimIndex.fill(OUT_OF_BOUNDS_INDEX);
 	m_playerJimIndexAtTickStart.fill(OUT_OF_BOUNDS_INDEX);
 	m_playerExited.fill(false);
 	m_playerInvincible.fill(0);
 	m_playerPyrobe.fill(0);
+	m_playerLapis.fill(0);
 	m_playerPyrobeShootWait.fill(0);
 	m_playerHollow.fill(0);
 	m_playerBombs.fill(0);
@@ -45,6 +46,9 @@ void Cave::Map::load() {
 	}
 	if (!m_pyrobeText.load(Image::Texture::GameFont, { 16, 32 })) {
 		throw std::runtime_error("Error: Unable to load pyrobe font.\n");
+	}
+	if (!m_lapisText.load(Image::Texture::GameFont, { 16, 32 })) {
+		throw std::runtime_error("Error: Unable to load lapis font.\n");
 	}
 	for (auto& nameText : m_playerNameText) {
 		if (!nameText.load(Image::Texture::GameFont, { 16, 32 }))
@@ -259,6 +263,7 @@ void Cave::Map::generateMap(const Cave::Properties* properties, const std::vecto
 	m_trapSlideUnder.clear();
 	m_jimInvincibleFrames = 0;
 	m_jimPyrobeFrames = 0;
+	m_jimLapisFrames = 0;
 	m_jimParasiteFrames = 0;
 	m_jimParasiteOverlayFrame = -1;
 	m_jimlinParasiteFrames.clear();
@@ -271,9 +276,13 @@ void Cave::Map::generateMap(const Cave::Properties* properties, const std::vecto
 	m_breathDraws.clear();
 	m_playerInvincible.fill(0);
 	m_playerPyrobe.fill(0);
+	m_playerLapis.fill(0);
 	m_playerPyrobeShootWait.fill(0);
 	m_playerParasite.fill(0);
 	m_jimGateComboHeld = false;
+	m_emeraldCheckpoint = {};
+	m_explosionDepth = 0;
+	m_playerKillPending = false;
 
 	// Reset magic wall variables
 	m_magicWallStarted = false;
