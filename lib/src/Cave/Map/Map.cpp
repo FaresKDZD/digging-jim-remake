@@ -65,6 +65,9 @@ void Cave::Map::generateMap(const Cave::Properties* properties, const std::vecto
 	width = properties->width;
 	height = properties->height;
 
+	// Moss rose-capable rolls happen during tile construction.
+	Cave::Entity::Moss::setRoseFrequency(static_cast<int>(properties->roseFrequency));
+
 	// Offset helpers based on width and height
 	m_horizontalOffsets = { -1, 1 };
 	m_verticalOffsets = { -width, width };
@@ -424,6 +427,9 @@ void Cave::Map::applyRuntimeProperties(const Cave::Properties& properties) {
 	m_amoebaGrowthSpeed = static_cast<int>(properties.amoebaGrowthSpeed);
 	m_amoebaGrowthMax = static_cast<int>(properties.amoebaGrowthMax);
 	m_planktonGrowthMax = static_cast<int>(properties.planktonGrowthMax);
+	m_roseFrequency = static_cast<int>(properties.roseFrequency);
+	m_genomMutations = static_cast<int>(properties.genomMutations);
+	Cave::Entity::Moss::setRoseFrequency(m_roseFrequency);
 }
 
 void Cave::Map::prepareForPlay() {
@@ -828,6 +834,24 @@ void Cave::Map::placeEntity(const int& index, Cave::Entity::Base& entity) {
 	if (getEntityType(index) == Cave::Entity::Type::GallopQueen) {
 		caveEntities[index].targetIndex = index;
 		caveEntities[index].spawnCredit = Cave::Entity::GallopQueen::MODE_NEST;
+	}
+	if (getEntityType(index) == Cave::Entity::Type::Rose) {
+		// Point tip away from the nearest valid support so editor-placed roses
+		// attach to walls/moss/dirt. Prefer support below for upright facing.
+		static const Cave::Entity::Direction kAttachPrefer[] = {
+			Cave::Entity::Direction::DOWN,
+			Cave::Entity::Direction::LEFT,
+			Cave::Entity::Direction::RIGHT,
+			Cave::Entity::Direction::UP,
+		};
+		Cave::Entity::Direction growDir = Cave::Entity::Direction::UP;
+		for (Cave::Entity::Direction toward : kAttachPrefer) {
+			const int support = getIndex(index, toward);
+			if (!isRoseAttachSupport(support)) continue;
+			growDir = Cave::Entity::oppositeDirection(toward);
+			break;
+		}
+		caveEntities[index] = Cave::Entity::Rose(growDir, false);
 	}
 
 	// Update tube animation

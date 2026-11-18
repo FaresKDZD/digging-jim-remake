@@ -48,6 +48,8 @@ HUD::Editor::Panel::Panel(::Editor* editor) : m_editor(editor), m_tileRenderer(&
         m_entities[variant.type] = getNewEntity(variant.type);
     for (const auto& variant : Cave::Entity::Dirt::VARIANTS)
         m_entities[variant.type] = getNewEntity(variant.type);
+    for (const auto& variant : Cave::Entity::Moss::VARIANTS)
+        m_entities[variant.type] = getNewEntity(variant.type);
     for (const auto& variant : Cave::Entity::Jimlin::VARIANTS)
         m_entities[variant.type] = getNewEntity(variant.type);
     for (const auto& variant : Cave::Entity::Gate::VARIANTS)
@@ -224,6 +226,8 @@ int HUD::Editor::Panel::miniTileIndex(Cave::Entity::Type type)
     case T::MacowEgg:
     case T::MacowEggHatch:    return 102;
     case T::Moss:             return 103;
+    case T::Rose:             return 143;
+    case T::RoseFly:          return 144;
     case T::MacowEggCook:
     case T::MacowEggCooked:   return 104;
     case T::Caterpillar:
@@ -373,6 +377,8 @@ void HUD::Editor::Panel::update(const Camera& panelCamera, const Camera* caveCam
                     m_entities[type].setAnimationFrame(0);
                 else if (type == Cave::Entity::Type::Charger)
                     m_entities[type].setAnimationFrame(0);
+                else if (type == Cave::Entity::Type::Rose)
+                    ; // Hold last grow frame — never loop the sprout strip in the palette.
                 else if (type == Cave::Entity::Type::Mole) {
                     if (m_entities[type].direction == Cave::Entity::Direction::NO_DIRECTION)
                         m_entities[type].direction = Cave::Entity::Direction::UP;
@@ -384,7 +390,8 @@ void HUD::Editor::Panel::update(const Camera& panelCamera, const Camera* caveCam
             entities.push_back(m_entities[type]);
         }
 
-    m_tileRenderer.updateTexture(entities, position, sf::IntRect({ 0, 0 }, { 3, 10 }), 2);
+    m_tileRenderer.updateTexture(entities, position, sf::IntRect({ 0, 0 }, { 3, 10 }), 2,
+        sf::Color::White, true, false, true);
 
     auto digitRect = [](int n) { return sf::IntRect({n * 6, 0}, {6, 10}); };
 
@@ -776,6 +783,7 @@ void HUD::Editor::Panel::pickEntityType(Cave::Entity::Type type) {
     if (Cave::Entity::isPyrozoVariant(type)) { setPyrozoType(type); return; }
     if (Cave::Entity::isGodVariant(type)) { setGodType(type); return; }
     if (Cave::Entity::isDirtVariant(type)) { setDirtType(type); return; }
+    if (Cave::Entity::isMossVariant(type)) { setMossType(type); return; }
     if (Cave::Entity::isJimlin(type)) { setJimlinType(type); return; }
     if (Cave::Entity::isGateVariant(type)) { setGateType(type); return; }
     if (Cave::Entity::isJimlinBlockVariant(type)) { setJimlinBlockType(type); return; }
@@ -842,6 +850,16 @@ void HUD::Editor::Panel::setDirtType(Cave::Entity::Type type) {
     if (!Cave::Entity::isDirtVariant(type)) return;
     m_dirtType = type;
     selectType(DirtSlotX, DirtSlotY);
+}
+
+bool HUD::Editor::Panel::isMossSlot(const int& x, const int& y) const {
+    return x == MossSlotX && y == MossSlotY;
+}
+
+void HUD::Editor::Panel::setMossType(Cave::Entity::Type type) {
+    if (!Cave::Entity::isMossVariant(type)) return;
+    m_mossType = type;
+    selectType(MossSlotX, MossSlotY);
 }
 
 bool HUD::Editor::Panel::isJimlinSlot(const int& x, const int& y) const {
@@ -1090,6 +1108,7 @@ bool HUD::Editor::Panel::handleRightClick(sf::Vector2f vp, float panelX, float t
             || isJimlinShipSlot(px, row)
             || isGenomSlot(px, row)
             || isFishSlot(px, row)
+            || isMossSlot(px, row)
             || isHiveMatriarchSlot(px, row)
             || isHiveWallSlot(px, row))
         {
@@ -1173,7 +1192,7 @@ Cave::Entity::Type HUD::Editor::Panel::getType(const int& x, const int& y) const
     case 30: return Cave::Entity::Type::Gravel;
     case 31: return Cave::Entity::Type::Chum;
     case 32: return Cave::Entity::Type::Magma;
-    case 33: return Cave::Entity::Type::Moss;
+    case 33: return m_mossType;
     case 34: return Cave::Entity::Type::Water;
     case 35: return Cave::Entity::Type::MagicBoulder;
     case 36: return Cave::Entity::Type::HotBoulder;
@@ -1294,6 +1313,10 @@ std::string HUD::Editor::Panel::getPaletteSlotName(const int& x, const int& y) c
         if (const char* label = labelOf(Cave::Entity::Dirt::VARIANTS, type))
             return label;
     }
+    else if (isMossSlot(x, y)) {
+        if (const char* label = labelOf(Cave::Entity::Moss::VARIANTS, type))
+            return label;
+    }
     else if (isJimlinSlot(x, y)) {
         if (const char* label = labelOf(Cave::Entity::Jimlin::VARIANTS, type))
             return std::string("Jimlin ") + label;
@@ -1392,6 +1415,8 @@ std::string HUD::Editor::Panel::getPaletteSlotName(const int& x, const int& y) c
     case Cave::Entity::Type::Macow: return "Macow";
     case Cave::Entity::Type::MacowEgg: return "Macow Egg";
     case Cave::Entity::Type::Moss: return "Moss";
+    case Cave::Entity::Type::Rose: return "Rose";
+    case Cave::Entity::Type::RoseFly: return "Rose Fly";
     case Cave::Entity::Type::Caterpillar: return "Caterpillar";
     case Cave::Entity::Type::Butterfly: return "Butterfly";
     case Cave::Entity::Type::Jelly: return "Jelly";
@@ -1526,6 +1551,8 @@ Cave::Entity::Base HUD::Editor::Panel::getNewEntity(Cave::Entity::Type type) {
     case Cave::Entity::Type::MacowEggCook:       return Cave::Entity::MacowEggCook();
     case Cave::Entity::Type::MacowEggCooked:     return Cave::Entity::MacowEggCooked();
     case Cave::Entity::Type::Moss:               return Cave::Entity::Moss();
+    case Cave::Entity::Type::Rose:               return Cave::Entity::Rose();
+    case Cave::Entity::Type::RoseFly:            return Cave::Entity::RoseFly();
     case Cave::Entity::Type::Caterpillar:        return Cave::Entity::Caterpillar();
     case Cave::Entity::Type::CaterpillarChrysalize: return Cave::Entity::CaterpillarChrysalize();
     case Cave::Entity::Type::Chrysalis:          return Cave::Entity::Chrysalis();

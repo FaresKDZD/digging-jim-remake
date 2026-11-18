@@ -150,6 +150,11 @@ Cave::Entity::Base Cave::Data::getTileEntity(const char& tile) {
 	case 148: return Cave::Entity::Emerald();
 	case 149: return Cave::Entity::Lapis();
 	case 150: return Cave::Entity::Agent();
+	case 151: return Cave::Entity::Rose(Cave::Entity::Direction::UP);
+	case 152: return Cave::Entity::RoseFly();
+	case 153: return Cave::Entity::Rose(Cave::Entity::Direction::RIGHT);
+	case 154: return Cave::Entity::Rose(Cave::Entity::Direction::LEFT);
+	case 155: return Cave::Entity::Rose(Cave::Entity::Direction::DOWN);
 	default:
 		return Cave::Entity::Space();
 	}

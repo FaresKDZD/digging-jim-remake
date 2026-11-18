@@ -69,6 +69,7 @@ namespace HUD::Editor {
         static constexpr int JimlinShipSlotX = 2, JimlinShipSlotY = 17;
         static constexpr int SpaceSlotX = 0, SpaceSlotY = 0;
         static constexpr int DirtSlotX = 1, DirtSlotY = 0;
+        static constexpr int MossSlotX = 0, MossSlotY = 11;
         static constexpr int PyrozoSlotX = 0, PyrozoSlotY = 25;
         static constexpr int GenomSlotX = 2, GenomSlotY = 29;
         static constexpr int HiveMatriarchSlotX = 1, HiveMatriarchSlotY = 30;
@@ -119,6 +120,15 @@ namespace HUD::Editor {
 
         /// @brief Select the Dirt palette slot.
         void setDirtType(Cave::Entity::Type type);
+
+        /// @brief True if this palette cell is the shared Moss/Rose slot.
+        bool isMossSlot(const int& x, const int& y) const;
+
+        /// @brief Current Moss-slot tile painted by the shared palette cell.
+        Cave::Entity::Type getMossType() const { return m_mossType; }
+
+        /// @brief Switch the Moss palette slot to Moss or Rose and select it.
+        void setMossType(Cave::Entity::Type type);
 
         /// @brief True if this palette cell is the shared Jimlin slot.
         bool isJimlinSlot(const int& x, const int& y) const;
@@ -374,6 +384,7 @@ namespace HUD::Editor {
         Cave::Entity::Type        m_pyrozoType   = Cave::Entity::Type::Pyrozo;
         Cave::Entity::Type        m_godType      = Cave::Entity::Type::God;
         Cave::Entity::Type        m_dirtType     = Cave::Entity::Type::Dirt;
+        Cave::Entity::Type        m_mossType     = Cave::Entity::Type::Moss;
         Cave::Entity::Type        m_jimlinType   = Cave::Entity::Type::Jimlin1;
         Cave::Entity::Type        m_gateType     = Cave::Entity::Type::Gate;
         Cave::Entity::Type        m_jimlinBlockType = Cave::Entity::Type::JimlinBlock;

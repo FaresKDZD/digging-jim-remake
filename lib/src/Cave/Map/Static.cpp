@@ -1,4 +1,5 @@
 #include "Cave/Map/Map.h"
+#include <cstdlib>
 
 void Cave::Map::updateAmoeba(const int& index) {
 	updateEntityAnimation(index);
@@ -109,17 +110,195 @@ void Cave::Map::updateLava(const int& index) {
 
 void Cave::Map::updateMoss(const int& index) {
 	if (editorIdle()) return;
-	if (m_mossGrowthSpeed <= 0) return;
+	if (m_mossGrowthSpeed > 0) {
+		for (auto& direction : Cave::Entity::ALL_DIRECTIONS) {
+			int dest = getIndex(index, direction);
+			if (dest == OUT_OF_BOUNDS_INDEX) continue;
+			if (getEntityTransitioning(dest)) continue;
+			if (Utils::randomInteger(0, 1000) > m_mossGrowthSpeed) continue;
+			if (getEntityType(dest) == Cave::Entity::Type::Boulder)
+				setEntity(dest, Cave::Entity::MossyBoulder());
+			else if (getEntityType(dest) == Cave::Entity::Type::Dirt)
+				setEntity(dest, Cave::Entity::Moss());
+		}
+	}
+
+	// Only rose-capable moss (flagged at creation via cave roseFrequency) may sprout a Rose.
+	if (!Cave::Entity::Moss::canGrowRose(caveEntities[index])) return;
+	Cave::Entity::Direction candidates[4];
+	int count = 0;
 	for (auto& direction : Cave::Entity::ALL_DIRECTIONS) {
-		int dest = getIndex(index, direction);
+		const int dest = getIndex(index, direction);
 		if (dest == OUT_OF_BOUNDS_INDEX) continue;
 		if (getEntityTransitioning(dest)) continue;
-		if (Utils::randomInteger(0, 1000) > m_mossGrowthSpeed) continue;
-		if (getEntityType(dest) == Cave::Entity::Type::Boulder)
-			setEntity(dest, Cave::Entity::MossyBoulder());
-		else if (getEntityType(dest) == Cave::Entity::Type::Dirt)
-			setEntity(dest, Cave::Entity::Moss());
+		if (!hasTrait(Cave::Entity::Trait::Empty, dest)) continue;
+		candidates[count++] = direction;
 	}
+	if (count <= 0) return;
+	const Cave::Entity::Direction growDir =
+		candidates[Utils::randomInteger(0, count - 1)];
+	const int dest = getIndex(index, growDir);
+	caveEntities[index].extra = 0; // spent — one rose per capable moss
+	setEntity(dest, Cave::Entity::Rose(growDir, true));
+	m_game->soundManager.play(Sound::Effect::Plant);
+}
+
+void Cave::Map::updateRose(const int& index) {
+	if (!inBounds(index) || getEntityType(index) != Cave::Entity::Type::Rose) return;
+	using R = Cave::Entity::Rose;
+	auto& rose = caveEntities[index];
+	const Cave::Entity::Direction growDir = R::normalizeDir(getEntityDirection(index));
+
+	if (editorIdle()) {
+		if (rose.spawnCredit == R::MODE_GROWING) {
+			int frame = rose.getAnimation().currentFrame;
+			if (frame < R::FRAME_COUNT - 1)
+				rose.setAnimationFrame(frame + 1);
+			else {
+				rose.spawnCredit = R::MODE_GROWN;
+				rose.setAnimation(R::grownAnimation(growDir));
+			}
+		}
+		return;
+	}
+
+	// Die if the support tile the rose hangs from is no longer a valid attach surface.
+	const Cave::Entity::Direction supportDir = Cave::Entity::oppositeDirection(growDir);
+	const int support = getIndex(index, supportDir);
+	if (!isRoseAttachSupport(support)) {
+		setEntity(index, Cave::Entity::PlantExplosion());
+		m_game->soundManager.play(Sound::Effect::Plant);
+		return;
+	}
+
+	if (rose.spawnCredit == R::MODE_GROWING) {
+		int frame = rose.getAnimation().currentFrame;
+		if (frame < R::FRAME_COUNT - 1) {
+			rose.setAnimationFrame(frame + 1);
+			return;
+		}
+		rose.spawnCredit = R::MODE_GROWN;
+		rose.setAnimation(R::grownAnimation(growDir));
+		rose.extra = 0; // first fly as soon as Jim is accessible
+		return;
+	}
+
+	if (getEntityTransitioning(index)) return;
+	if (m_state != Cave::State::Play && m_state != Cave::State::Pass) return;
+
+	// Cooldown only between successful spawns — do not burn the full interval on
+	// failed attempts (no LoS / blocked tip), or it feels like a long hang.
+	if (rose.extra > 0) {
+		--rose.extra;
+		return;
+	}
+
+	if (!roseHasJimAccess(index)) return;
+	const int tip = getIndex(index, growDir);
+	if (!inBounds(tip) || getEntityTransitioning(tip)) return;
+	if (!hasTrait(Cave::Entity::Trait::Empty, tip)) return;
+
+	Cave::Entity::RoseFly fly(growDir);
+	Cave::Entity::Animation flyAnim = fly.getAnimation();
+	Cave::Entity::Animation spaceAnim = Cave::Entity::Space().getAnimation();
+	setEntity(tip, std::move(fly));
+	caveEntities[tip].applyIntoTransition(growDir, spaceAnim);
+	caveEntities[index].applyAwayTransition(growDir, flyAnim);
+	rose.extra = R::SPAWN_TICKS;
+}
+
+bool Cave::Map::isRoseAttachSupport(const int& index) const {
+	if (!inBounds(index)) return false;
+	const Cave::Entity::Type t = getEntityType(index);
+	if (t == Cave::Entity::Type::Space || t == Cave::Entity::Type::Water
+		|| t == Cave::Entity::Type::NoType
+		|| t == Cave::Entity::Type::Rose || t == Cave::Entity::Type::RoseFly
+		|| t == Cave::Entity::Type::PlantExplosion)
+		return false;
+	if (Cave::Entity::isMonster(t)) return false;
+	if (hasTrait(Cave::Entity::Trait::Collectable, index)) return false;
+	if (isFallableEntity(index)) return false;
+	return true;
+}
+
+bool Cave::Map::roseHasJimAccess(const int& index) const {
+	using R = Cave::Entity::Rose;
+	const int prey = nearestJimIndex(index);
+	if (!inBounds(index) || !inBounds(prey) || index == prey)
+		return false;
+	if (!Cave::Entity::isHuntTarget(getEntityType(prey)))
+		return false;
+
+	int x0 = index % width;
+	int y0 = index / width;
+	const int x1 = prey % width;
+	const int y1 = prey / width;
+	if (std::abs(x1 - x0) > R::SENSE_HALF || std::abs(y1 - y0) > R::SENSE_HALF)
+		return false;
+
+	const int dx = std::abs(x1 - x0);
+	const int dy = -std::abs(y1 - y0);
+	const int sx = x0 < x1 ? 1 : -1;
+	const int sy = y0 < y1 ? 1 : -1;
+	int err = dx + dy;
+
+	while (true) {
+		if (x0 == x1 && y0 == y1)
+			return true;
+		const int e2 = 2 * err;
+		if (e2 >= dy) {
+			err += dy;
+			x0 += sx;
+		}
+		if (e2 <= dx) {
+			err += dx;
+			y0 += sy;
+		}
+		if (x0 == x1 && y0 == y1)
+			return true;
+		if (x0 < 0 || y0 < 0 || x0 >= width || y0 >= height)
+			return false;
+		const int cell = y0 * width + x0;
+		if (!hasTrait(Cave::Entity::Trait::Empty, cell))
+			return false;
+	}
+}
+
+void Cave::Map::updateRoseFly(const int& index) {
+	// handleEnemyBasicUpdate runs Reactive contact death (explode next to Jim).
+	if (handleEnemyBasicUpdate(index)) return;
+	if (getEntityType(index) != Cave::Entity::Type::RoseFly) return;
+
+	using F = Cave::Entity::RoseFly;
+	if (caveEntities[index].extra > 0)
+		--caveEntities[index].extra;
+	if (caveEntities[index].extra <= 0) {
+		if (isWaterCell(index)) {
+			setEntity(index, Cave::Entity::Explosion(true));
+			m_game->soundManager.play(Sound::Effect::Bubbles);
+		}
+		else {
+			setEntity(index, Cave::Entity::PlantExplosion());
+			m_game->soundManager.play(Sound::Effect::Plant);
+		}
+		return;
+	}
+
+	const int prey = nearestJimIndex(index);
+	if (prey == OUT_OF_BOUNDS_INDEX) return;
+
+	const Cave::Entity::Direction path = findPathToJim(index);
+	if (path != Cave::Entity::Direction::NO_DIRECTION) {
+		tryMoveEnemy(index, Cave::Entity::Trait::Empty, path);
+		return;
+	}
+
+	int ex = index % width, ey = index / width;
+	int jx = prey % width, jy = prey / width;
+	if (ex > jx && tryMoveEnemy(index, Cave::Entity::Trait::Empty, Cave::Entity::Direction::LEFT)) return;
+	if (ex < jx && tryMoveEnemy(index, Cave::Entity::Trait::Empty, Cave::Entity::Direction::RIGHT)) return;
+	if (ey > jy && tryMoveEnemy(index, Cave::Entity::Trait::Empty, Cave::Entity::Direction::UP)) return;
+	if (ey < jy && tryMoveEnemy(index, Cave::Entity::Trait::Empty, Cave::Entity::Direction::DOWN)) return;
 }
 
 bool Cave::Map::tryCaptureMonsterInTrap(const int& trapIndex) {
@@ -450,8 +629,20 @@ void Cave::Map::updateFire(const int& index) {
 void Cave::Map::updateLandmine(const int& index) {
 	if (editorIdle()) return;
 	if (!isLandmineCell(index)) return;
-	if (landmineHasAdjacentMonster(index))
-		createExplosion(index);
+	// Kill the contacting monster (diamond-aware 3x3 from the monster cell).
+	// Centering on the mine used a fire blast and wiped diamond-droppers' loot.
+	for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
+		const int neighbour = getIndex(index, dir);
+		if (neighbour == OUT_OF_BOUNDS_INDEX) continue;
+		if (neighbour < static_cast<int>(m_cosmicOver.size())
+			&& m_cosmicOver[static_cast<size_t>(neighbour)].getType()
+				== Cave::Entity::Type::TrapOpen)
+			continue;
+		if (isHiveBubbled(neighbour)) continue;
+		if (!Cave::Entity::isMonster(cosmicType(neighbour))) continue;
+		createExplosion(neighbour);
+		return;
+	}
 }
 
 void Cave::Map::beginCompressorEat(const int& compressor, const int& trapCell) {
@@ -995,6 +1186,7 @@ bool Cave::Map::isWaterLoggable(const Cave::Entity::Base& entity) const {
 	case T::Fish:
 	case T::Coral:
 	case T::CoralBud:
+	case T::Rose:
 	case T::Landmine:
 	case T::Fireball:
 	case T::StartDoor:
@@ -1003,6 +1195,7 @@ bool Cave::Map::isWaterLoggable(const Cave::Entity::Base& entity) const {
 	case T::CaveGullExplosion:
 	case T::ChaosExplosion:
 	case T::PyrozoExplosion:
+	case T::PlantExplosion:
 	case T::SingularityExplosion:
 	case T::Detonator:
 	case T::DetonatorTriggered:

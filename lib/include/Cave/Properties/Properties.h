@@ -16,6 +16,10 @@ static constexpr uint32_t AMOEBA_GRWOTH_MAX_MIN = 0u;
 static constexpr uint32_t AMOEBA_GRWOTH_MAX_MAX = 9999u;
 static constexpr uint32_t PLANKTON_GROWTH_MAX_MIN = 0u;
 static constexpr uint32_t PLANKTON_GROWTH_MAX_MAX = 9999u;
+static constexpr uint32_t ROSE_FREQUENCY_MIN = 0u;
+static constexpr uint32_t ROSE_FREQUENCY_MAX = 1000u;
+static constexpr uint32_t GENOM_MUTATIONS_MIN = 0u;
+static constexpr uint32_t GENOM_MUTATIONS_MAX = 1000u;
 static constexpr uint32_t TIME_MIN = 0u;
 static constexpr uint32_t TIME_MAX = 999u;
 static constexpr uint32_t MAGIC_WALL_TIME_MIN = 0u;
@@ -79,6 +83,10 @@ namespace Cave {
         uint32_t planktonGrowthMax = 0;
         /// @brief Extra field (not in the 11×uint32 .cav properties blob). Persisted via MOSS chunk.
         uint32_t mossGrowthSpeed = 0;
+        /// @brief Chance per 1000 that a new Moss tile is rose-capable. Default 10 (~1%). Persisted via ROSE chunk.
+        uint32_t roseFrequency = 10;
+        /// @brief Chance per 1000 that a Genom offspring mutates. Default 50 (~5% / 1-in-20). Persisted via GMUT chunk.
+        uint32_t genomMutations = 50;
     };
 
     /**

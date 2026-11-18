@@ -242,17 +242,18 @@ public:
      * @param map              The live cave map (synced before saving).
      * @param loadedFile       The file to save.
      * @param currentCaveIndex Index of the currently active cave.
-     * @param window           Owner window for any error dialogs.
+     * @param showDoorWarnings If true, show missing-door warnings after a successful save.
      */
-    void saveFile(Cave::Map& map, Cave::File& loadedFile, int currentCaveIndex);
+    void saveFile(Cave::Map& map, Cave::File& loadedFile, int currentCaveIndex, bool showDoorWarnings = true);
 
     /**
      * @brief Prompt the user for a save path and write the file.
      * @param map              The live cave map (synced before saving).
      * @param loadedFile       The file to save.
      * @param currentCaveIndex Index of the currently active cave.
+     * @param showDoorWarnings If true, show missing-door warnings after a successful save.
      */
-    void saveFileAs(Cave::Map& map, Cave::File& loadedFile, int currentCaveIndex);
+    void saveFileAs(Cave::Map& map, Cave::File& loadedFile, int currentCaveIndex, bool showDoorWarnings = true);
 
     // ----------------------------------------------------------------------------------
     // Public members
@@ -448,10 +449,9 @@ private:
     void suppressEditorMouseAfterNativeDialog();
 
     /**
-     * @brief Check all caves for missing start/exit doors and show one combined warning.
+     * @brief Check all caves for missing/mismatched start/exit doors and show warnings.
      *
-     * Called after a successful save so the user is informed of any problems
-     * without blocking the save itself.
+     * Used after save, when saving on editor exit, and before Test.
      *
      * @param loadedFile The file whose caves will be checked.
      */

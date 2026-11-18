@@ -71,7 +71,7 @@ bool Renderer::TileRenderer::load(const Image::Texture& texture, const sf::Vecto
     return true;
 }
 
-void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>& entities, const sf::Vector2i& position, const sf::IntRect& gridRange, int gap, sf::Color jimTint, bool underlaySpaceForAlpha, bool jimEmptyFullSlide) {
+void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>& entities, const sf::Vector2i& position, const sf::IntRect& gridRange, int gap, sf::Color jimTint, bool underlaySpaceForAlpha, bool jimEmptyFullSlide, bool roseBlackUnderlay) {
     struct WormSlide {
         float px = 0.f;
         float py = 0.f;
@@ -456,6 +456,49 @@ void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>
                 continue;
             }
 
+            // Rose: black underlay in editor palette / preview; Space floor in play.
+            // Skip while roseSummonAway (handled later with fly underlay).
+            if (entity.getType() == Cave::Entity::Type::Rose
+                && !entity.isAwayTransition()) {
+                const bool useBlack = roseBlackUnderlay || gap > 0;
+                if (useBlack) {
+                    writeTileQuad(tri,
+                        baseX, baseY, baseX + (float)m_tilesize.x, baseY + (float)m_tilesize.y,
+                        0.f, 0.f, 0.f, 0.f,
+                        sf::Color::Black);
+                }
+                else {
+                    const int floorIndex = Cave::Entity::Space::TEXTURE_INDEX;
+                    const sf::Vector2i floorCoords = { floorIndex % m_tilesetCols, floorIndex / m_tilesetCols };
+                    writeTileQuad(tri,
+                        baseX, baseY, baseX + (float)m_tilesize.x, baseY + (float)m_tilesize.y,
+                        (float)(floorCoords.x * (int)m_tilesize.x), (float)(floorCoords.y * (int)m_tilesize.y),
+                        (float)((floorCoords.x + 1) * (int)m_tilesize.x), (float)((floorCoords.y + 1) * (int)m_tilesize.y),
+                        sf::Color::White);
+                }
+                clearTileVerts(&m_vertices[index * 12 + 6], 6);
+                const int roseTex = entity.getCurrentTextureIndex();
+                if (roseTex != Cave::Entity::NO_TEXTURE_INDEX) {
+                    const sf::Vector2i textureCoords = { roseTex % m_tilesetCols, roseTex / m_tilesetCols };
+                    const sf::IntRect ep = entity.getCurrentPosition();
+                    const sf::IntRect tp = entity.getCurrentTextureCoords();
+                    OverlayQuad q;
+                    q.px1 = baseX + (float)ep.position.x;
+                    q.py1 = baseY + (float)ep.position.y;
+                    q.px2 = baseX + (float)ep.position.x + (float)ep.size.x;
+                    q.py2 = baseY + (float)ep.position.y + (float)ep.size.y;
+                    q.tx1 = (float)(textureCoords.x * (int)m_tilesize.x + tp.position.x);
+                    q.ty1 = (float)(textureCoords.y * (int)m_tilesize.y + tp.position.y);
+                    q.tx2 = (float)(textureCoords.x * (int)m_tilesize.x + tp.position.x + tp.size.x);
+                    q.ty2 = (float)(textureCoords.y * (int)m_tilesize.y + tp.position.y + tp.size.y);
+                    q.tint = sf::Color::White;
+                    q.cellIndex = index;
+                    overlays.push_back(q);
+                }
+                index++;
+                continue;
+            }
+
             // Transparent parasite body on the tile layer: Space floor so editor grey RT
             // does not read through. Cosmic pass skips the floor so Jim shows through.
             if (entity.getType() == Cave::Entity::Type::Parasite) {
@@ -528,6 +571,13 @@ void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>
             const bool eggPushGhost = entity.isPushTransition()
                 && Cave::Entity::GenomEgg::isEggTexture(prevTex)
                 && gateGhostLook != 0;
+            // Charger/Jim push cell: layered Genom previous (look rides in homeIndex).
+            const bool genomPushGhost = entity.isPushTransition()
+                && Cave::Entity::Genom::isGenomTexture(prevTex)
+                && !Cave::Entity::GenomEgg::isEggTexture(prevTex)
+                && gateGhostLook != 0
+                && entity.getType() != Cave::Entity::Type::Genom
+                && entity.getType() != Cave::Entity::Type::GenomEgg;
 
             if (genomPreyRide) {
                 int tileIndex = entity.getCurrentTextureIndex();
@@ -579,6 +629,33 @@ void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>
                     Cave::Entity::GenomEgg::frameFromTexture(prevTex),
                     Cave::Entity::Genom::FRAME_COUNT - 1);
                 pushGenomEggStack(entity, gateGhostLook, prevTex, babyFrame, baseX, baseY,
+                    entity.getPreviousPosition(), entity.getPreviousTextureCoords(), index);
+                index++;
+                continue;
+            }
+
+            if (genomPushGhost) {
+                // Pusher current + layered Genom previous (suppress raw untinted BG previous).
+                int tileIndex = entity.getCurrentTextureIndex();
+                if (tileIndex == Cave::Entity::NO_TEXTURE_INDEX) {
+                    clearTileVerts(tri, 6);
+                }
+                else {
+                    const sf::Vector2i textureCoords = { tileIndex % m_tilesetCols, tileIndex / m_tilesetCols };
+                    const sf::IntRect ep = entity.getCurrentPosition();
+                    const sf::IntRect tp = entity.getCurrentTextureCoords();
+                    writeTileQuad(tri,
+                        baseX + ep.position.x, baseY + ep.position.y,
+                        baseX + ep.position.x + ep.size.x, baseY + ep.position.y + ep.size.y,
+                        (float)(textureCoords.x * (int)m_tilesize.x + tp.position.x),
+                        (float)(textureCoords.y * (int)m_tilesize.y + tp.position.y),
+                        (float)(textureCoords.x * (int)m_tilesize.x + tp.position.x + tp.size.x),
+                        (float)(textureCoords.y * (int)m_tilesize.y + tp.position.y + tp.size.y),
+                        tint);
+                }
+                clearTileVerts(&m_vertices[index * 12 + 6], 6);
+                const int frame = Cave::Entity::Genom::frameFromBgTexture(prevTex);
+                pushGenomLayers(entity, gateGhostLook, frame, baseX, baseY,
                     entity.getPreviousPosition(), entity.getPreviousTextureCoords(), index);
                 index++;
                 continue;
@@ -680,7 +757,10 @@ void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>
             if (isGenom || genomGhost) {
                 const int floorIndex = Cave::Entity::Space::TEXTURE_INDEX;
                 const sf::Vector2i floorCoords = { floorIndex % m_tilesetCols, floorIndex / m_tilesetCols };
-                const bool genomInto = isGenom && entity.isIntoTransition();
+                // Push (charger chain / Jim shove) must crop like into — stationary full-tile
+                // stack under a push previous leaves sliding seams.
+                const bool genomInto = isGenom
+                    && (entity.isIntoTransition() || entity.isPushTransition());
                 const int ghostLook = Cave::Entity::Genom::hasLook(entity)
                     ? entity.spawnCredit : gateGhostLook;
                 // Egg slides out under a full Genom (same underlay pattern as matriarch/macow).
@@ -888,6 +968,11 @@ void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>
                 && entity.isAwayTransition()
                 && prevTex != Cave::Entity::NO_TEXTURE_INDEX;
 
+            // Rose summon: RoseFly slides out under a full rose (any cardinal).
+            const bool roseSummonAway = entity.getType() == Cave::Entity::Type::Rose
+                && entity.isAwayTransition()
+                && prevTex != Cave::Entity::NO_TEXTURE_INDEX;
+
             // Magic wall: boulder/diamond (etc.) slides through under a full wall.
             const bool magicWallAway = Cave::Entity::isMagicWall(entity.getType())
                 && entity.isAwayTransition()
@@ -955,6 +1040,10 @@ void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>
             int wellSummonNeighbor = -1;
             float wellSummonOx = 0.f;
             float wellSummonOy = 0.f;
+            // Rose summon may slide any cardinal out of the rose.
+            int roseSummonNeighbor = -1;
+            float roseSummonOx = 0.f;
+            float roseSummonOy = 0.f;
             // Magic wall / Jimlin block exit into-slides (vertical primarily).
             int magicWallNeighbor = -1;
             float magicWallOx = 0.f;
@@ -975,6 +1064,13 @@ void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>
                     if (ni < 0 || ni >= cellCount) return false;
                     const auto& c = entities[static_cast<size_t>(ni)];
                     return c.getType() == Cave::Entity::Type::Well
+                        && c.isAwayTransition()
+                        && c.getTransitionDirection() == awayDir;
+                };
+                auto roseAwayAt = [&](int ni, Cave::Entity::Direction awayDir) -> bool {
+                    if (ni < 0 || ni >= cellCount) return false;
+                    const auto& c = entities[static_cast<size_t>(ni)];
+                    return c.getType() == Cave::Entity::Type::Rose
                         && c.isAwayTransition()
                         && c.getTransitionDirection() == awayDir;
                 };
@@ -1030,6 +1126,25 @@ void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>
                     wellSummonNeighbor = index - 1;
                     wellSummonOx = -(float)m_tilesize.x;
                 }
+                if (td == Cave::Entity::Direction::DOWN && roseAwayAt(aboveIndex, td)) {
+                    roseSummonNeighbor = aboveIndex;
+                    roseSummonOy = -(float)m_tilesize.y;
+                }
+                else if (td == Cave::Entity::Direction::UP
+                    && roseAwayAt(index + viewW, td)) {
+                    roseSummonNeighbor = index + viewW;
+                    roseSummonOy = (float)m_tilesize.y;
+                }
+                else if (td == Cave::Entity::Direction::LEFT
+                    && roseAwayAt(index + 1, td)) {
+                    roseSummonNeighbor = index + 1;
+                    roseSummonOx = (float)m_tilesize.x;
+                }
+                else if (td == Cave::Entity::Direction::RIGHT
+                    && roseAwayAt(index - 1, td)) {
+                    roseSummonNeighbor = index - 1;
+                    roseSummonOx = -(float)m_tilesize.x;
+                }
                 if (td == Cave::Entity::Direction::DOWN && magicWallAwayAt(aboveIndex, td)) {
                     magicWallNeighbor = aboveIndex;
                     magicWallOy = -(float)m_tilesize.y;
@@ -1046,6 +1161,7 @@ void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>
             }
             const bool collectorDropInto = collectorDropNeighbor >= 0;
             const bool wellSummonInto = wellSummonNeighbor >= 0;
+            const bool roseSummonInto = roseSummonNeighbor >= 0;
             const bool magicWallInto = magicWallNeighbor >= 0;
             const bool jimlinBlockInto = jimlinBlockNeighbor >= 0;
 
@@ -1087,7 +1203,7 @@ void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>
 
             sf::Vertex* tri2 = &m_vertices[index * 12 + 6];
             if (hiveBirthAway || macowLayAway || gallopLayAway || collectorDropAway
-                || wellSummonAway || magicWallAway || jimlinBlockAway) {
+                || wellSummonAway || roseSummonAway || magicWallAway || jimlinBlockAway) {
                 // Cargo/larva/egg/well-summon/magic-wall/jimlin-block away crop underneath;
                 // solid host stamped over it.
                 const sf::IntRect pep = entity.getPreviousPosition();
@@ -1313,6 +1429,11 @@ void Renderer::TileRenderer::updateTexture(const std::vector<Cave::Entity::Base>
                     // Keep the opaque well over the overlapping into-wedge.
                     pushSpriteOverlay(baseX + wellSummonOx, baseY + wellSummonOy,
                         well.getCurrentTextureIndex(), index);
+                }
+                if (roseSummonInto) {
+                    const auto& rose = entities[static_cast<size_t>(roseSummonNeighbor)];
+                    pushSpriteOverlay(baseX + roseSummonOx, baseY + roseSummonOy,
+                        rose.getCurrentTextureIndex(), index);
                 }
                 if (magicWallInto) {
                     const auto& wall = entities[static_cast<size_t>(magicWallNeighbor)];

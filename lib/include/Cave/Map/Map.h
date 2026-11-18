@@ -2012,14 +2012,12 @@ namespace Cave {
          * @return true if the movement succeeded, false otherwise.
          */
         bool tryMoveEnemy(const int& index, const Cave::Entity::Trait& trait, const Cave::Entity::Direction& direction, int slideInc = 4);
-        /// @brief True if cell holds a Landmine (monster proximity explosive).
+        /// @brief True if cell holds a Landmine (monster-contact fuse).
         bool isLandmineCell(const int& cell) const;
-        /// @brief Detonate a landmine at cell if present. Returns true if one exploded.
+        /// @brief Detonate a landmine at cell if present (puffer inflate). Returns true if one exploded.
         bool detonateLandmineAt(const int& cell);
         /// @brief Detonate the first landmine found in the 3x3 around center (puffer contact).
         bool detonateLandmineIn3x3(const int& center);
-        /// @brief True if a fully settled monster occupies a 4-neighbour (not mid-slide).
-        bool landmineHasAdjacentMonster(const int& cell) const;
 
         /**
          * @brief Attempts to move an enemy onto a destination of a specific entity type.
@@ -2086,6 +2084,11 @@ namespace Cave {
         void updateChum(const int& index);
         void updateLava(const int& index);
         void updateMoss(const int& index);
+        void updateRose(const int& index);
+        void updateRoseFly(const int& index);
+        bool roseHasJimAccess(const int& index) const;
+        /// @brief Solid attach surface for a Rose (not rose/monster/fallable/collectable/water/space).
+        bool isRoseAttachSupport(const int& index) const;
         void updateMossyBoulder(const int& index);
         void updateTrapEmpty(const int& index);
         void updateTrapFilling(const int& index);
@@ -2514,6 +2517,8 @@ namespace Cave {
         std::vector<WaterDraw> m_gravelBreakDraws;
         /// @brief World-pixel centres of Agents currently emitting wave FX.
         std::vector<sf::Vector2f> m_agentWaveCenters;
+        /// @brief Agent cells that were in MODE_AGGRO last tick (detect mid-aggro death).
+        std::vector<int> m_agentAggroIndices;
         /// @brief Gravel cells that finished digging last tick — cleared next frame so overlay shows.
         std::vector<int> m_gravelClearPending;
 
@@ -2542,6 +2547,12 @@ namespace Cave {
 
         /// @brief Max live Plankton before splitting stops. 0 means unlimited.
         int m_planktonGrowthMax = 0;
+
+        /// @brief Chance per 1000 that a new Moss is rose-capable.
+        int m_roseFrequency = 10;
+
+        /// @brief Chance per 1000 that a Genom offspring mutates a trait.
+        int m_genomMutations = 50;
 
         /// @brief Live Plankton count, rebuilt each logic tick.
         int m_planktonCount = 0;

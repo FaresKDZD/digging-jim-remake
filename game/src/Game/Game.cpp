@@ -212,6 +212,7 @@ void Game::sendSignal(const GameSignal& signal) {
         m_exitedFromCave = true;
         soundManager.stop(Sound::Effect::Amoeba);
         soundManager.stop(Sound::Effect::MagicWall);
+        soundManager.fadeOut(Sound::Effect::Agent);
         if (previousState == GameState::GameDone || previousState == GameState::GameOver)
             setCaveNumber(m_chosenCaveNumber);
     }
@@ -321,6 +322,7 @@ void Game::handleCavePlay(const GameSignal& signal) {
         m_gameState = GameState::CavePlay;
         m_gameIsPaused = false;
         m_quitConfirmOpen = false;
+        soundManager.fadeOut(Sound::Effect::Agent);
         break;
 
     case GameSignal::CavePause:
@@ -345,6 +347,7 @@ void Game::handleCavePlay(const GameSignal& signal) {
         m_exitedFromCave = true;
         soundManager.stop(Sound::Effect::Amoeba);
         soundManager.stop(Sound::Effect::MagicWall);
+        soundManager.fadeOut(Sound::Effect::Agent);
         break;
 
     default:
@@ -372,6 +375,7 @@ void Game::handleCavePass(const GameSignal& signal) {
         m_makeHUDDisappear = true;
         soundManager.stop(Sound::Effect::Amoeba);
         soundManager.stop(Sound::Effect::MagicWall);
+        soundManager.fadeOut(Sound::Effect::Agent);
         break;
 
     default:
@@ -396,6 +400,7 @@ void Game::handleCaveFail(const GameSignal& signal) {
         m_gameState = GameState::CavePlay;
         m_gameIsPaused = false;
         m_quitConfirmOpen = false;
+        soundManager.fadeOut(Sound::Effect::Agent);
         break;
 
     case GameSignal::GotoMainMenu:
@@ -407,6 +412,7 @@ void Game::handleCaveFail(const GameSignal& signal) {
         m_exitedFromCave = true;
         soundManager.stop(Sound::Effect::Amoeba);
         soundManager.stop(Sound::Effect::MagicWall);
+        soundManager.fadeOut(Sound::Effect::Agent);
         break;
 
     default:
@@ -704,13 +710,14 @@ void Game::mainGameLoop() {
         }
     }
 
-    auto bindAgentWaveCenters = [&](sf::Shader& shader, const Cave::Map& m) {
+    auto bindAgentWaveCenters = [&](sf::Shader& shader, const Cave::Map& m, int offset) {
         const auto& centers = m.agentWaveCenters();
-        const int n = std::min(static_cast<int>(centers.size()),
-            Cave::Entity::Agent::WAVE_CENTER_CAP);
+        const int total = static_cast<int>(centers.size());
+        const int n = std::clamp(total - offset, 0, Cave::Entity::Agent::WAVE_CENTER_CAP);
         shader.setUniform("centerCount", n);
         for (int i = 0; i < Cave::Entity::Agent::WAVE_CENTER_CAP; ++i) {
-            const sf::Vector2f c = (i < n) ? centers[static_cast<size_t>(i)]
+            const sf::Vector2f c = (i < n)
+                ? centers[static_cast<size_t>(offset + i)]
                 : sf::Vector2f{ 0.f, 0.f };
             shader.setUniform(
                 ("center" + std::to_string(i)).c_str(),
@@ -1010,7 +1017,7 @@ void Game::mainGameLoop() {
                 rt.draw(sf::Sprite(parasiteColorRt.getTexture()));
             }
 
-            // Aggro Agent expanding square distort (centre-out Chebyshev front).
+            // Aggro Agent expanding square distort — batch centres (shader holds 8/pass).
             if (wantAgentWave) {
                 {
                     const sf::Vector2f c = camera.getCenter();
@@ -1019,17 +1026,33 @@ void Game::mainGameLoop() {
                     agentWaveShader.setUniform("viewSize", sf::Glsl::Vec2{ s.x, s.y });
                 }
                 agentWaveShader.setUniform("time", fxTime);
-                bindAgentWaveCenters(agentWaveShader, map);
 
-                rt.display();
-                parasiteColorRt.setView(screenView);
-                parasiteColorRt.clear(sf::Color::Black);
-                parasiteColorRt.draw(sf::Sprite(rt.getTexture()), &agentWaveShader);
-                parasiteColorRt.display();
-
-                rt.setView(screenView);
-                rt.clear(sf::Color::Black);
-                rt.draw(sf::Sprite(parasiteColorRt.getTexture()));
+                const int centerTotal = static_cast<int>(map.agentWaveCenters().size());
+                bool resultInRt = true;
+                for (int offset = 0; offset < centerTotal;
+                    offset += Cave::Entity::Agent::WAVE_CENTER_CAP) {
+                    bindAgentWaveCenters(agentWaveShader, map, offset);
+                    if (resultInRt) {
+                        rt.display();
+                        parasiteColorRt.setView(screenView);
+                        parasiteColorRt.clear(sf::Color::Black);
+                        parasiteColorRt.draw(sf::Sprite(rt.getTexture()), &agentWaveShader);
+                        parasiteColorRt.display();
+                        resultInRt = false;
+                    }
+                    else {
+                        rt.setView(screenView);
+                        rt.clear(sf::Color::Black);
+                        rt.draw(sf::Sprite(parasiteColorRt.getTexture()), &agentWaveShader);
+                        rt.display();
+                        resultInRt = true;
+                    }
+                }
+                if (!resultInRt) {
+                    rt.setView(screenView);
+                    rt.clear(sf::Color::Black);
+                    rt.draw(sf::Sprite(parasiteColorRt.getTexture()));
+                }
             }
 
             // Color blend + wave wobble only on the cave preview (not HUD / pause / menus).

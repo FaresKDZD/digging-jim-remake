@@ -52,6 +52,12 @@ namespace Sound {
         void stop(const Sound::Effect& effect);
 
         /**
+         * @brief Soft-stop: ramp volume to silence then stop (for cutting one-shots short).
+         * @param durationSeconds Length of the volume ramp.
+         */
+        void fadeOut(const Sound::Effect& effect, float durationSeconds = 0.45f);
+
+        /**
          * @brief Check whether a sound effect is currently playing.
          * 
          * @param effect Enum identifier of the sound effect.
@@ -119,6 +125,17 @@ namespace Sound {
 
         /// @brief Pointer to the currently playing music track, if any.
         sf::Music* m_currentMusic = nullptr;
+
+        struct FadeOutState {
+            float duration = 0.45f;
+            float elapsed = 0.f;
+            float startVolume = 50.f;
+        };
+        std::unordered_map<Sound::Effect, FadeOutState> m_fadeOuts;
+        sf::Clock m_fadeClock;
+        bool m_fadeClockStarted = false;
+
+        void applyVolumeToEffect(const Sound::Effect& effect, float volume);
     };
 
 }

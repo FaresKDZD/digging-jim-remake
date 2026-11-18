@@ -196,6 +196,9 @@ namespace Cave::Entity {
         Emerald,
         Lapis,
         Agent,
+        Rose,
+        RoseFly,
+        PlantExplosion,
     };
 
     inline bool isLandmine(Type type) {
@@ -306,6 +309,10 @@ namespace Cave::Entity {
         return type == Type::Dirt;
     }
 
+    inline bool isMossVariant(Type type) {
+        return type == Type::Moss || type == Type::Rose;
+    }
+
     inline bool isCosmic(Type type) {
         switch (type) {
         case Type::Singularity:
@@ -404,6 +411,7 @@ namespace Cave::Entity {
         case Type::CoralBud:
         case Type::Parasite:
         case Type::Agent:
+        case Type::RoseFly:
             return true;
         default:
             return false;

@@ -98,13 +98,20 @@ public:
             {
                 auto* box  = new wxStaticBoxSizer(wxVERTICAL, this, "");
                 wxWindow* p = box->GetStaticBox();
-                auto* grid = new wxFlexGridSizer(2, 2, 6, 10);
+                // 4 columns: growth maxes on the left, rose/genom on the right.
+                auto* grid = new wxFlexGridSizer(0, 4, 6, 10);
                 grid->Add(lbl(p, "Amoeba growth max:"), 0, wxALIGN_CENTER_VERTICAL | wxALIGN_RIGHT);
                 m_amoebaMax = spin(p, AMOEBA_GRWOTH_MAX_MIN, AMOEBA_GRWOTH_MAX_MAX, props.amoebaGrowthMax);
                 grid->Add(m_amoebaMax, 0, wxALIGN_CENTER_VERTICAL);
+                grid->Add(lbl(p, "Rose frequency:"), 0, wxALIGN_CENTER_VERTICAL | wxALIGN_RIGHT);
+                m_roseFreq = spin(p, ROSE_FREQUENCY_MIN, ROSE_FREQUENCY_MAX, props.roseFrequency);
+                grid->Add(m_roseFreq, 0, wxALIGN_CENTER_VERTICAL);
                 grid->Add(lbl(p, "Plankton growth max:"), 0, wxALIGN_CENTER_VERTICAL | wxALIGN_RIGHT);
                 m_planktonMax = spin(p, PLANKTON_GROWTH_MAX_MIN, PLANKTON_GROWTH_MAX_MAX, props.planktonGrowthMax);
                 grid->Add(m_planktonMax, 0, wxALIGN_CENTER_VERTICAL);
+                grid->Add(lbl(p, "Genom mutations:"), 0, wxALIGN_CENTER_VERTICAL | wxALIGN_RIGHT);
+                m_genomMut = spin(p, GENOM_MUTATIONS_MIN, GENOM_MUTATIONS_MAX, props.genomMutations);
+                grid->Add(m_genomMut, 0, wxALIGN_CENTER_VERTICAL);
                 box->Add(grid, 0, wxALL, 10);
                 rightCol->Add(box, 0, wxEXPAND | wxBOTTOM, 8);
             }
@@ -279,6 +286,8 @@ public:
         m_props.extraDiamondValue = clampGet(m_extraDiamVal, EXTRA_DIAMOND_VALUE_MIN,  EXTRA_DIAMOND_VALUE_MAX);
         m_props.amoebaGrowthMax   = clampGet(m_amoebaMax,    AMOEBA_GRWOTH_MAX_MIN,    AMOEBA_GRWOTH_MAX_MAX);
         m_props.planktonGrowthMax = clampGet(m_planktonMax,  PLANKTON_GROWTH_MAX_MIN,  PLANKTON_GROWTH_MAX_MAX);
+        m_props.roseFrequency     = clampGet(m_roseFreq,     ROSE_FREQUENCY_MIN,       ROSE_FREQUENCY_MAX);
+        m_props.genomMutations    = clampGet(m_genomMut,     GENOM_MUTATIONS_MIN,      GENOM_MUTATIONS_MAX);
         m_props.unlimitedTime     = m_unlimitedTime && m_unlimitedTime->GetValue();
         m_props.time              = m_props.unlimitedTime
             ? TIME_MAX
@@ -339,6 +348,8 @@ private:
     wxSpinCtrl* m_extraDiamVal = nullptr;
     wxSpinCtrl* m_amoebaMax    = nullptr;
     wxSpinCtrl* m_planktonMax  = nullptr;
+    wxSpinCtrl* m_roseFreq     = nullptr;
+    wxSpinCtrl* m_genomMut     = nullptr;
     wxSpinCtrl* m_time         = nullptr;
     wxCheckBox* m_unlimitedTime = nullptr;
     wxSpinCtrl* m_magicTime    = nullptr;

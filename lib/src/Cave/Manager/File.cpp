@@ -145,6 +145,8 @@ Cave::File Cave::File::loadFromFile(const std::string& directory, const std::str
         const bool isLava = magic[0] == 'L' && magic[1] == 'A' && magic[2] == 'V' && magic[3] == 'A';
         const bool isPlan = magic[0] == 'P' && magic[1] == 'L' && magic[2] == 'A' && magic[3] == 'N';
         const bool isMoss = magic[0] == 'M' && magic[1] == 'O' && magic[2] == 'S' && magic[3] == 'S';
+        const bool isRose = magic[0] == 'R' && magic[1] == 'O' && magic[2] == 'S' && magic[3] == 'E';
+        const bool isGmut = magic[0] == 'G' && magic[1] == 'M' && magic[2] == 'U' && magic[3] == 'T';
         const bool isCosm = magic[0] == 'C' && magic[1] == 'O' && magic[2] == 'S' && magic[3] == 'M';
         const bool isName = magic[0] == 'N' && magic[1] == 'A' && magic[2] == 'M' && magic[3] == 'E';
         if (isName) {
@@ -256,8 +258,14 @@ Cave::File Cave::File::loadFromFile(const std::string& directory, const std::str
             else if (isMoss) {
                 caveFile.caves[caveIndex].properties.mossGrowthSpeed = readReversedUint32(&rec[4]);
             }
+            else if (isRose) {
+                caveFile.caves[caveIndex].properties.roseFrequency = readReversedUint32(&rec[4]);
+            }
+            else if (isGmut) {
+                caveFile.caves[caveIndex].properties.genomMutations = readReversedUint32(&rec[4]);
+            }
         }
-        if (!isWell && !isPort && !isGenm && !isBubl && !isWatr && !isChum && !isLava && !isPlan && !isMoss) break;
+        if (!isWell && !isPort && !isGenm && !isBubl && !isWatr && !isChum && !isLava && !isPlan && !isMoss && !isRose && !isGmut) break;
     }
 
     return caveFile;
@@ -503,6 +511,42 @@ void Cave::File::saveToFile(const Cave::File& caveFile, const std::string& fullP
             bytes[5] = static_cast<char>((speed >> 8) & 0xFF);
             bytes[6] = static_cast<char>((speed >> 16) & 0xFF);
             bytes[7] = static_cast<char>((speed >> 24) & 0xFF);
+            file.write(bytes, 8);
+        }
+    }
+
+    if (chumCount > 0) {
+        const char roseMagic[4] = { 'R', 'O', 'S', 'E' };
+        file.write(roseMagic, 4);
+        writeUint32LE(file, 1);
+        writeUint32LE(file, chumCount);
+        for (uint16_t caveIndex = 0; caveIndex < static_cast<uint16_t>(chumCount); ++caveIndex) {
+            char bytes[8] = {};
+            bytes[0] = static_cast<char>(caveIndex & 0xFF);
+            bytes[1] = static_cast<char>((caveIndex >> 8) & 0xFF);
+            const uint32_t freq = caveFile.caves[caveIndex].properties.roseFrequency;
+            bytes[4] = static_cast<char>(freq & 0xFF);
+            bytes[5] = static_cast<char>((freq >> 8) & 0xFF);
+            bytes[6] = static_cast<char>((freq >> 16) & 0xFF);
+            bytes[7] = static_cast<char>((freq >> 24) & 0xFF);
+            file.write(bytes, 8);
+        }
+    }
+
+    if (chumCount > 0) {
+        const char gmutMagic[4] = { 'G', 'M', 'U', 'T' };
+        file.write(gmutMagic, 4);
+        writeUint32LE(file, 1);
+        writeUint32LE(file, chumCount);
+        for (uint16_t caveIndex = 0; caveIndex < static_cast<uint16_t>(chumCount); ++caveIndex) {
+            char bytes[8] = {};
+            bytes[0] = static_cast<char>(caveIndex & 0xFF);
+            bytes[1] = static_cast<char>((caveIndex >> 8) & 0xFF);
+            const uint32_t chance = caveFile.caves[caveIndex].properties.genomMutations;
+            bytes[4] = static_cast<char>(chance & 0xFF);
+            bytes[5] = static_cast<char>((chance >> 8) & 0xFF);
+            bytes[6] = static_cast<char>((chance >> 16) & 0xFF);
+            bytes[7] = static_cast<char>((chance >> 24) & 0xFF);
             file.write(bytes, 8);
         }
     }

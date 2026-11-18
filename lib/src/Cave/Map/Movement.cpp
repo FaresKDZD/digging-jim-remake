@@ -248,10 +248,15 @@ bool Cave::Map::pushEntityTo(const int& sourceIndex, const int& pushedIndex, con
 		: caveEntities[destinationIndex].getAnimation();
 	if (getEntityType(pushedIndex) == Cave::Entity::Type::Water)
 		pushedAmination = Cave::Entity::Space().getAnimation();
-	// Layered egg tint must ghost on the push cell; raw previous shell alone leaves the tint behind.
-	const int eggLook = (getEntityType(pushedIndex) == Cave::Entity::Type::GenomEgg
+	// Layered Genom / egg / Fish tint must ghost on the push cell; raw previous alone leaves color behind.
+	const Cave::Entity::Type pushedLookType = getEntityType(pushedIndex);
+	const int eggLook = ((pushedLookType == Cave::Entity::Type::GenomEgg
+			|| pushedLookType == Cave::Entity::Type::Genom)
 		&& Cave::Entity::Genom::hasLook(caveEntities[pushedIndex]))
-		? caveEntities[pushedIndex].spawnCredit : 0;
+		? caveEntities[pushedIndex].spawnCredit
+		: ((pushedLookType == Cave::Entity::Type::Fish
+			&& Cave::Entity::Fish::hasLook(caveEntities[pushedIndex]))
+			? caveEntities[pushedIndex].spawnCredit : 0);
 
 	const bool pushBubble = isHiveBubbled(pushedIndex);
 	const Cave::Entity::Type sourceType = getEntityType(sourceIndex);

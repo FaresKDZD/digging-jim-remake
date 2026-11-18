@@ -27,7 +27,7 @@ namespace Cave::Entity {
         static constexpr int GRACE_TICKS = 4;
         /// @brief Half-open 10x10 box around the agent: dx,dy in [-HALF, HALF).
         static constexpr int AREA_HALF = 5;
-        /// @brief Max Agent centres uploaded to the wave shader per frame.
+        /// @brief Centres bound per shader pass (all Agents are covered via batches).
         static constexpr int WAVE_CENTER_CAP = 8;
 
         static constexpr int MODE_CALM = 0;
@@ -50,6 +50,12 @@ namespace Cave::Entity {
             return entity.getType() == Type::Agent
                 && entity.spawnCredit == MODE_AGGRO
                 && entity.extra >= GRACE_TICKS;
+        }
+
+        /// @brief True for the whole aggro hold (including the pre-wave grace).
+        static bool isAggroPhase(const Base& entity) {
+            return entity.getType() == Type::Agent
+                && entity.spawnCredit == MODE_AGGRO;
         }
 
         static bool waveImmune(Type type) {

@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <iostream>
 #include <unordered_set>
+#include <vector>
 
 Sound::Manager::Manager() {}
 
@@ -35,6 +36,8 @@ void Sound::Manager::loadAllSounds(bool includeMusic) {
     loadSound(Sound::Effect::Yippee, "./assets/sounds/Effect/yippee.wav");
     loadSound(Sound::Effect::Wawa, "./assets/sounds/Effect/wawa.wav");
     loadSound(Sound::Effect::Agent, "./assets/sounds/Effect/agent.wav");
+    loadSound(Sound::Effect::Plant, "./assets/sounds/Effect/plant.wav");
+    loadSound(Sound::Effect::Bubbles, "./assets/sounds/Effect/bubbles.wav");
 
     if (includeMusic)
         loadMusic(Sound::Music::MainMenu, "./assets/sounds/Music/main_menu.wav");
@@ -66,6 +69,7 @@ void Sound::Manager::loadMusic(const Sound::Music& music, const std::string& fil
 void Sound::Manager::play(const Sound::Effect& effect, float pitch) {
     if (m_playedThisFrame.count(effect)) return;
     m_playedThisFrame.insert(effect);
+    m_fadeOuts.erase(effect);
 
     auto bufIt = m_buffers.find(effect);
     if (bufIt == m_buffers.end()) return;
@@ -88,11 +92,67 @@ void Sound::Manager::loop(const Sound::Effect& effect) {
     }
 }
 
+void Sound::Manager::applyVolumeToEffect(const Sound::Effect& effect, float volume) {
+    auto it = m_sounds.find(effect);
+    if (it != m_sounds.end())
+        it->second->setVolume(volume);
+    auto bufIt = m_buffers.find(effect);
+    if (bufIt == m_buffers.end()) return;
+    const sf::SoundBuffer* buf = &bufIt->second;
+    for (auto& s : m_activeSounds) {
+        if (s && &s->getBuffer() == buf)
+            s->setVolume(volume);
+    }
+}
+
 void Sound::Manager::stop(const Sound::Effect& effect) {
+    m_fadeOuts.erase(effect);
     auto it = m_sounds.find(effect);
     if (it != m_sounds.end()) {
         it->second->stop();
     }
+    // One-shots from play() live in m_activeSounds — stop those too.
+    auto bufIt = m_buffers.find(effect);
+    if (bufIt == m_buffers.end()) return;
+    const sf::SoundBuffer* buf = &bufIt->second;
+    for (auto& s : m_activeSounds) {
+        if (s && &s->getBuffer() == buf)
+            s->stop();
+    }
+}
+
+void Sound::Manager::fadeOut(const Sound::Effect& effect, float durationSeconds) {
+    if (!isPlaying(effect)) {
+        m_fadeOuts.erase(effect);
+        return;
+    }
+    if (m_fadeOuts.count(effect))
+        return; // already fading
+
+    float startVol = m_volume / 2.f;
+    auto it = m_sounds.find(effect);
+    if (it != m_sounds.end()
+        && it->second->getStatus() == sf::Sound::Status::Playing)
+        startVol = it->second->getVolume();
+    else {
+        auto bufIt = m_buffers.find(effect);
+        if (bufIt != m_buffers.end()) {
+            const sf::SoundBuffer* buf = &bufIt->second;
+            for (const auto& s : m_activeSounds) {
+                if (s && &s->getBuffer() == buf
+                    && s->getStatus() == sf::Sound::Status::Playing) {
+                    startVol = s->getVolume();
+                    break;
+                }
+            }
+        }
+    }
+
+    FadeOutState fade;
+    fade.duration = std::max(0.05f, durationSeconds);
+    fade.elapsed = 0.f;
+    fade.startVolume = startVol;
+    m_fadeOuts[effect] = fade;
 }
 
 bool Sound::Manager::isPlaying(const Sound::Effect& effect) const {
@@ -100,6 +160,15 @@ bool Sound::Manager::isPlaying(const Sound::Effect& effect) const {
     if (it != m_sounds.end()) {
         if (it->second->getStatus() == sf::Sound::Status::Playing)
             return true;
+    }
+    auto bufIt = m_buffers.find(effect);
+    if (bufIt != m_buffers.end()) {
+        const sf::SoundBuffer* buf = &bufIt->second;
+        for (const auto& s : m_activeSounds) {
+            if (s && &s->getBuffer() == buf
+                && s->getStatus() == sf::Sound::Status::Playing)
+                return true;
+        }
     }
     return false;
 }
@@ -132,6 +201,25 @@ void Sound::Manager::setVolume(const float& volume) {
 
 void Sound::Manager::update() {
     m_playedThisFrame.clear();
+
+    if (!m_fadeClockStarted) {
+        m_fadeClock.restart();
+        m_fadeClockStarted = true;
+    }
+    const float dt = m_fadeClock.restart().asSeconds();
+
+    std::vector<Sound::Effect> finishedFades;
+    for (auto& [effect, fade] : m_fadeOuts) {
+        fade.elapsed += dt;
+        const float t = std::clamp(fade.elapsed / fade.duration, 0.f, 1.f);
+        applyVolumeToEffect(effect, fade.startVolume * (1.f - t));
+        if (t >= 1.f)
+            finishedFades.push_back(effect);
+    }
+    for (Sound::Effect effect : finishedFades) {
+        stop(effect); // also erases m_fadeOuts
+    }
+
     m_activeSounds.erase(
         std::remove_if(
             m_activeSounds.begin(),

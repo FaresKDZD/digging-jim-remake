@@ -26,7 +26,9 @@ namespace Renderer {
          *        (no Space into-wedge). Needed while the transparent parasite overlay is up so
          *        the wedge does not read as a black square through the overlay alpha.
          */
-        void updateTexture(const std::vector<Cave::Entity::Base>& entities, const sf::Vector2i& position, const sf::IntRect& gridRange, int gap = 0, sf::Color jimTint = sf::Color::White, bool underlaySpaceForAlpha = true, bool jimEmptyFullSlide = false);
+        /// @param roseBlackUnderlay When true (editor palette / editor cave preview), Rose
+        ///        gets a solid black underlay so transparent petals do not show grey RT.
+        void updateTexture(const std::vector<Cave::Entity::Base>& entities, const sf::Vector2i& position, const sf::IntRect& gridRange, int gap = 0, sf::Color jimTint = sf::Color::White, bool underlaySpaceForAlpha = true, bool jimEmptyFullSlide = false, bool roseBlackUnderlay = false);
         
         /**
          * @brief Prepare the locations of the loading tiles to be drawn,

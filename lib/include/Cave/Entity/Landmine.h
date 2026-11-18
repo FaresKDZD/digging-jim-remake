@@ -6,8 +6,9 @@ namespace Cave::Entity {
 
     /**
      * @class Landmine
-     * @brief Carried like a time bomb. Does not fall. Detonates when a monster
-     * is on or in a 4-neighbour tile (Jim only collects / places it).
+     * @brief Carried like a time bomb. Does not fall. When a monster is on or
+     * adjacent, that monster dies (explosion centered on the monster so
+     * diamond-droppers leave diamonds). Jim only collects / places it.
      * Four visual variants from landmine.png.
      */
     class Landmine : public Base {

@@ -361,6 +361,8 @@ static Cave::Properties defaultCaveProperties(uint32_t width = 50, uint32_t heig
     p.chumGrowthSpeed   = 128;
     p.lavaGrowthSpeed   = 128;
     p.mossGrowthSpeed   = 128;
+    p.roseFrequency     = 10;
+    p.genomMutations    = 50;
     p.hue               = 100;
     p.sat               = 100;
     p.lum               = 100;
@@ -534,6 +536,8 @@ static char entityTypeToTile(Cave::Entity::Type type)
     case Cave::Entity::Type::Emerald:             return 148;
     case Cave::Entity::Type::Lapis:               return 149;
     case Cave::Entity::Type::Agent:               return 150;
+    case Cave::Entity::Type::Rose:                return 151;
+    case Cave::Entity::Type::RoseFly:             return 152;
     default:                                      return 0;
     }
 }
@@ -543,6 +547,16 @@ static char entityToTile(const Cave::Entity::Base& entity)
     if (entity.getType() == Cave::Entity::Type::Gate
         && entity.spawnCredit == Cave::Entity::Gate::MODE_OPEN)
         return 69;
+    // Rose facing is stored in the tile id so sim exit / save keeps rotation.
+    if (entity.getType() == Cave::Entity::Type::Rose) {
+        switch (Cave::Entity::Rose::normalizeDir(entity.direction)) {
+        case Cave::Entity::Direction::RIGHT: return 153;
+        case Cave::Entity::Direction::LEFT:  return 154;
+        case Cave::Entity::Direction::DOWN:  return 155;
+        case Cave::Entity::Direction::UP:
+        default:                             return 151;
+        }
+    }
     return entityTypeToTile(entity.getType());
 }
 
@@ -873,14 +887,17 @@ bool Editor::checkUnsavedChanges(Cave::Map& map, Cave::File& loadedFile, int cur
     if (result == 0) return false;
     if (result == 1)
     {
-        saveFile(map, loadedFile, currentCaveIndex);
-        // If still dirty, the user cancelled the save dialog — don't proceed
+        // Same missing-door warnings as File?Save, shown when exiting/new/open wants to save.
+        syncCurrentCave(map, loadedFile, currentCaveIndex);
+        checkSaveWarnings(loadedFile);
+        saveFile(map, loadedFile, currentCaveIndex, false);
+        // If still dirty, the user cancelled the save dialog ? don't proceed
         if (m_isDirty) return false;
     }
     return true;
 }
 
-void Editor::saveFileAs(Cave::Map& map, Cave::File& loadedFile, int currentCaveIndex)
+void Editor::saveFileAs(Cave::Map& map, Cave::File& loadedFile, int currentCaveIndex, bool showDoorWarnings)
 {
     syncCurrentCave(map, loadedFile, currentCaveIndex);
 
@@ -907,7 +924,8 @@ void Editor::saveFileAs(Cave::Map& map, Cave::File& loadedFile, int currentCaveI
             ? m_savedFilePath.substr(sep + 1)
             : m_savedFilePath;
 
-        checkSaveWarnings(loadedFile);
+        if (showDoorWarnings)
+            checkSaveWarnings(loadedFile);
     }
     catch (const std::exception& e)
     {
@@ -915,11 +933,11 @@ void Editor::saveFileAs(Cave::Map& map, Cave::File& loadedFile, int currentCaveI
     }
 }
 
-void Editor::saveFile(Cave::Map& map, Cave::File& loadedFile, int currentCaveIndex)
+void Editor::saveFile(Cave::Map& map, Cave::File& loadedFile, int currentCaveIndex, bool showDoorWarnings)
 {
     if (m_savedFilePath.empty())
     {
-        saveFileAs(map, loadedFile, currentCaveIndex);
+        saveFileAs(map, loadedFile, currentCaveIndex, showDoorWarnings);
         return;
     }
 
@@ -928,7 +946,8 @@ void Editor::saveFile(Cave::Map& map, Cave::File& loadedFile, int currentCaveInd
     {
         Cave::File::saveToFile(loadedFile, m_savedFilePath);
         m_isDirty = false;
-        checkSaveWarnings(loadedFile);
+        if (showDoorWarnings)
+            checkSaveWarnings(loadedFile);
     }
     catch (const std::exception& e)
     {
@@ -1633,13 +1652,14 @@ bool Editor::run()
         }
     }
 
-    auto bindAgentWaveCenters = [&](sf::Shader& shader) {
+    auto bindAgentWaveCenters = [&](sf::Shader& shader, int offset) {
         const auto& centers = map.agentWaveCenters();
-        const int n = std::min(static_cast<int>(centers.size()),
-            Cave::Entity::Agent::WAVE_CENTER_CAP);
+        const int total = static_cast<int>(centers.size());
+        const int n = std::clamp(total - offset, 0, Cave::Entity::Agent::WAVE_CENTER_CAP);
         shader.setUniform("centerCount", n);
         for (int i = 0; i < Cave::Entity::Agent::WAVE_CENTER_CAP; ++i) {
-            const sf::Vector2f c = (i < n) ? centers[static_cast<size_t>(i)]
+            const sf::Vector2f c = (i < n)
+                ? centers[static_cast<size_t>(offset + i)]
                 : sf::Vector2f{ 0.f, 0.f };
             shader.setUniform(
                 ("center" + std::to_string(i)).c_str(),
@@ -1700,16 +1720,20 @@ bool Editor::run()
             agentWaveShader.setUniform("viewCenter", sf::Glsl::Vec2{ c.x, c.y });
             agentWaveShader.setUniform("viewSize", sf::Glsl::Vec2{ s.x, s.y });
             agentWaveShader.setUniform("time", static_cast<float>(globalCounter) * 0.14f);
-            bindAgentWaveCenters(agentWaveShader);
 
-            // Always draw into the other RT ? sampling caveSceneRt into itself was black.
-            sf::RenderTexture& destRt = fromScene ? waterFxRt : caveSceneRt;
-            destRt.setView(screenView);
-            destRt.clear(sf::Color::Black);
-            destRt.draw(sf::Sprite(*caveTex), &agentWaveShader);
-            destRt.display();
-            caveTex = &destRt.getTexture();
-            fromScene = !fromScene;
+            const int centerTotal = static_cast<int>(map.agentWaveCenters().size());
+            for (int offset = 0; offset < centerTotal;
+                offset += Cave::Entity::Agent::WAVE_CENTER_CAP) {
+                bindAgentWaveCenters(agentWaveShader, offset);
+                // Always draw into the other RT ? never sample a RT into itself.
+                sf::RenderTexture& destRt = fromScene ? waterFxRt : caveSceneRt;
+                destRt.setView(screenView);
+                destRt.clear(sf::Color::Black);
+                destRt.draw(sf::Sprite(*caveTex), &agentWaveShader);
+                destRt.display();
+                caveTex = &destRt.getTexture();
+                fromScene = !fromScene;
+            }
         }
 
         sf::Sprite caveSpr(*caveTex);
@@ -1872,6 +1896,7 @@ bool Editor::run()
     bool         openFishProps    = false;
     bool         openHiveMatriarchPicker = false;
     bool         openHiveWallPicker = false;
+    bool         openMossPicker = false;
     bool         probeUndoSaved = false;
     int          wellPropsIndex   = -1;
     int          paletteTipSlotX  = -1;
@@ -2011,6 +2036,8 @@ bool Editor::run()
                                     openHiveMatriarchPicker = true;
                                 else if (Cave::Entity::isHiveBuilding(editorPanel.getSelectedType()))
                                     openHiveWallPicker = true;
+                                else if (Cave::Entity::isMossVariant(editorPanel.getSelectedType()))
+                                    openMossPicker = true;
                                 else
                                     openPegulPicker = true;
                             }
@@ -2597,6 +2624,25 @@ bool Editor::run()
                     const bool selected = editorPanel.getGateType() == variant.type;
                     if (ImGui::MenuItem(variant.label, nullptr, selected))
                         editorPanel.setGateType(variant.type);
+                }
+                ImGui::EndPopup();
+            }
+        }
+
+        {
+            if (openMossPicker)
+            {
+                ImGui::SetNextWindowPos(tilePickerPos, ImGuiCond_Always, ImVec2(0.f, 0.f));
+                ImGui::OpenPopup("##moss_variant");
+                openMossPicker = false;
+            }
+            if (ImGui::BeginPopup("##moss_variant"))
+            {
+                for (const auto& variant : Cave::Entity::Moss::VARIANTS)
+                {
+                    const bool selected = editorPanel.getMossType() == variant.type;
+                    if (ImGui::MenuItem(variant.label, nullptr, selected))
+                        editorPanel.setMossType(variant.type);
                 }
                 ImGui::EndPopup();
             }
@@ -3344,8 +3390,9 @@ bool Editor::run()
             updateTitle();
         };
 
+        // Exit handles Simulate stop itself (yes/no/cancel) so Cancel can abort quitting.
         if (m_simulating && (m_doNewFile || m_doOpenFile || m_doSaveFile || m_doSaveFileAs
-            || m_doExit || m_doNextLevel || m_doPrevLevel || m_doInsertLevel || m_doDeleteLevel
+            || m_doNextLevel || m_doPrevLevel || m_doInsertLevel || m_doDeleteLevel
             || m_doClearLevel || m_doCopyLevel || m_doPasteLevel || m_doCopySelection
             || m_doPasteSelection || m_doRandomDist || m_doShowSettings || m_doShowCaveProps
             || m_doShowCosmicSettings || m_doTest
@@ -3628,6 +3675,8 @@ bool Editor::run()
                     || p.chumGrowthSpeed != oldP.chumGrowthSpeed
                     || p.lavaGrowthSpeed != oldP.lavaGrowthSpeed
                     || p.mossGrowthSpeed != oldP.mossGrowthSpeed
+                    || p.roseFrequency != oldP.roseFrequency
+                    || p.genomMutations != oldP.genomMutations
                     || p.unlimitedTime != oldP.unlimitedTime)
                 {
                     m_undoStack.push_back(std::move(preProps));
@@ -3904,30 +3953,11 @@ bool Editor::run()
         if (m_doTest)
         {
             m_doTest = false;
-            saveFile(map, loadedFile, currentCaveIndex);
+            syncCurrentCave(map, loadedFile, currentCaveIndex);
+            // Same missing-door warnings as File?Save (all caves in the file).
+            checkSaveWarnings(loadedFile);
+            saveFile(map, loadedFile, currentCaveIndex, false);
             updateTitle();
-
-            if (currentCaveIndex >= 0 && currentCaveIndex < (int)loadedFile.caves.size())
-            {
-                const auto& tileData = loadedFile.caves[currentCaveIndex].tileData;
-                int startCount = (int)std::count(tileData.begin(), tileData.end(), 13);
-                int exitCount  = (int)std::count(tileData.begin(), tileData.end(), 14);
-                if (!caveHasSingularity(tileData)) {
-                char buf[96];
-                if (startCount == 0) {
-                    std::snprintf(buf, sizeof(buf), "Missing start door in level %03d!", currentCaveIndex + 1);
-                    tinyfd_messageBox("Test Warning", buf, "ok", "warning", 1);
-                }
-                if (exitCount == 0) {
-                    std::snprintf(buf, sizeof(buf), "Missing exit door in level %03d!", currentCaveIndex + 1);
-                    tinyfd_messageBox("Test Warning", buf, "ok", "warning", 1);
-                }
-                if (startCount != exitCount) {
-                    std::snprintf(buf, sizeof(buf), "Multiplayer needs the same number of start and exit doors in level %03d!", currentCaveIndex + 1);
-                    tinyfd_messageBox("Test Warning", buf, "ok", "warning", 1);
-                }
-                }
-            }
 
             if (!m_savedFilePath.empty())
             {
@@ -4031,7 +4061,20 @@ bool Editor::run()
 #endif
             }
         }
-        if (m_doExit)         { m_doExit = false; if (checkUnsavedChanges(map, loadedFile, currentCaveIndex)) window.close(); }
+        if (m_doExit)
+        {
+            m_doExit = false;
+            // Same Keep-Simulate-changes dialog as stopping Simulate (Cancel aborts exit).
+            if (m_simulating)
+            {
+                stopSimulate(map, loadedFile, currentCaveIndex, true);
+                if (m_simulating)
+                    goto endFrame;
+            }
+            if (!checkUnsavedChanges(map, loadedFile, currentCaveIndex))
+                goto endFrame;
+            window.close();
+        }
         if (m_doRandomDist)
         {
             m_doRandomDist = false;

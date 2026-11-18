@@ -163,6 +163,14 @@ class RestampCustomAssets {
             StampAgentOntoCurrent();
             return;
         }
+        if (args.Length > 0 && args[0] == "--rose") {
+            StampRoseOntoCurrent();
+            return;
+        }
+        if (args.Length > 0 && args[0] == "--plant-explosion") {
+            StampPlantExplosionOntoCurrent();
+            return;
+        }
 
         string clean = Path.Combine(Root, "tools", "_restore", "tiles_github_oct3.png");
         if (!File.Exists(clean))
@@ -1356,6 +1364,100 @@ class RestampCustomAssets {
         Console.WriteLine("DONE");
     }
 
+    static void StampPlantExplosionOntoCurrent() {
+        if (!File.Exists(TilesPath)) throw new Exception("Missing " + TilesPath);
+        // After rose_fly (2132–2139).
+        const int plantBase = 2140;
+        const int lastFrame = plantBase + 3;
+        int dirtBefore;
+        using (Bitmap tiles = LoadPngExact(TilesPath)) {
+            dirtBefore = tiles.GetPixel(0, 0).ToArgb();
+            int needH = FrameBottom(lastFrame);
+            Bitmap work = tiles;
+            Bitmap expanded = null;
+            if (tiles.Height < needH) {
+                expanded = ExpandExact(tiles, SHEET_W_CONST(), needH);
+                work = expanded;
+                Console.WriteLine("Expanded tiles to " + work.Width + "x" + work.Height);
+            }
+
+            StampStrip(work, "plant_explosion.png", plantBase, 4);
+
+            string outPath = TilesPath + ".restamped.png";
+            work.Save(outPath, ImageFormat.Png);
+            Console.WriteLine("Wrote " + outPath);
+            if (expanded != null) expanded.Dispose();
+        }
+
+        File.Copy(TilesPath + ".restamped.png", TilesPath, true);
+        File.Delete(TilesPath + ".restamped.png");
+        Console.WriteLine("Replaced " + TilesPath);
+
+        Console.WriteLine("Stamped=" + stamped + " skipped=" + skipped);
+        foreach (var line in log) Console.WriteLine(line);
+
+        VerifyExact("plant_explosion.png", plantBase);
+        using (var tiles = LoadPngExact(TilesPath)) {
+            if (tiles.GetPixel(0, 0).ToArgb() != dirtBefore)
+                throw new Exception("DIRT PIXEL CHANGED - abort, sheet was re-encoded badly");
+        }
+        Console.WriteLine("VERIFY OK dirt untouched");
+        Console.WriteLine("DONE");
+    }
+
+    static void StampRoseOntoCurrent() {
+        if (!File.Exists(TilesPath)) throw new Exception("Missing " + TilesPath);
+        // After Agent (2088–2099).
+        const int growUp = 2100;
+        const int growRight = 2108;
+        const int growLeft = 2116;
+        const int growDown = 2124;
+        const int flyBase = 2132;
+        const int lastFrame = flyBase + 7;
+        int dirtBefore;
+        using (Bitmap tiles = LoadPngExact(TilesPath)) {
+            dirtBefore = tiles.GetPixel(0, 0).ToArgb();
+            int needH = FrameBottom(lastFrame);
+            Bitmap work = tiles;
+            Bitmap expanded = null;
+            if (tiles.Height < needH) {
+                expanded = ExpandExact(tiles, SHEET_W_CONST(), needH);
+                work = expanded;
+                Console.WriteLine("Expanded tiles to " + work.Width + "x" + work.Height);
+            }
+
+            StampStrip(work, "rose_grow.png", growUp, 8);
+            StampStripRotated(work, "rose_grow.png", growRight, 8, RotateFlipType.Rotate90FlipNone);
+            StampStripRotated(work, "rose_grow.png", growLeft, 8, RotateFlipType.Rotate270FlipNone);
+            StampStripRotated(work, "rose_grow.png", growDown, 8, RotateFlipType.Rotate180FlipNone);
+            StampStrip(work, "rose_fly.png", flyBase, 8);
+
+            string outPath = TilesPath + ".restamped.png";
+            work.Save(outPath, ImageFormat.Png);
+            Console.WriteLine("Wrote " + outPath);
+            if (expanded != null) expanded.Dispose();
+        }
+
+        File.Copy(TilesPath + ".restamped.png", TilesPath, true);
+        File.Delete(TilesPath + ".restamped.png");
+        Console.WriteLine("Replaced " + TilesPath);
+
+        StampMiniIconFromCustom("rose_grow.png", 143);
+        StampMiniIconFromCustom("rose_fly.png", 144);
+
+        Console.WriteLine("Stamped=" + stamped + " skipped=" + skipped);
+        foreach (var line in log) Console.WriteLine(line);
+
+        VerifyExact("rose_grow.png", growUp);
+        VerifyExact("rose_fly.png", flyBase);
+        using (var tiles = LoadPngExact(TilesPath)) {
+            if (tiles.GetPixel(0, 0).ToArgb() != dirtBefore)
+                throw new Exception("DIRT PIXEL CHANGED - abort, sheet was re-encoded badly");
+        }
+        Console.WriteLine("VERIFY OK dirt untouched");
+        Console.WriteLine("DONE");
+    }
+
     static void StampAgentOntoCurrent() {
         if (!File.Exists(TilesPath)) throw new Exception("Missing " + TilesPath);
         // After lapis (2080–2087).
@@ -1958,6 +2060,31 @@ class RestampCustomAssets {
             for (int i = 0; i < frames; i++)
                 Blit(tiles, src, 0, i * TILE, TILE, TILE, FrameX(frameBase + i), FrameY(frameBase + i), false);
             Ok(file, frameBase, frames);
+        }
+    }
+
+    static void StampStripRotated(Bitmap tiles, string file, int frameBase, int maxFrames, RotateFlipType rot) {
+        string path = Path.Combine(Custom, file);
+        if (!File.Exists(path)) { Skip(file, "missing-rot"); return; }
+        using (var src = Load(path)) {
+            if (src.Width < TILE) { Skip(file, "width-rot"); return; }
+            int frames = Math.Min(maxFrames, src.Height / TILE);
+            for (int i = 0; i < frames; i++) {
+                using (var frame = new Bitmap(TILE, TILE, PixelFormat.Format32bppArgb)) {
+                    using (var g = Graphics.FromImage(frame)) {
+                        g.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceCopy;
+                        g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
+                        g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Half;
+                        g.DrawImage(src,
+                            new Rectangle(0, 0, TILE, TILE),
+                            new Rectangle(0, i * TILE, TILE, TILE),
+                            GraphicsUnit.Pixel);
+                    }
+                    frame.RotateFlip(rot);
+                    Blit(tiles, frame, 0, 0, TILE, TILE, FrameX(frameBase + i), FrameY(frameBase + i), false);
+                }
+            }
+            Ok(file + " [" + rot + "]", frameBase, frames);
         }
     }
 

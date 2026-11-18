@@ -1101,6 +1101,8 @@ bool Cave::Map::tryEmeraldCheckpointRespawn() {
 	m_game->setTimeTicks(snap.timeTicks);
 	// Spinels taken after the emerald (or earlier) must stay gone — lives already granted.
 	purgeCollectedSpinels();
+	m_agentAggroIndices.clear();
+	m_game->soundManager.fadeOut(Sound::Effect::Agent);
 	m_game->sendSignal(GameSignal::CaveCheckpointResume);
 	m_state = Cave::State::Play;
 	m_snapCameraToJim = true;

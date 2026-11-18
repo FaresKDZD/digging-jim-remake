@@ -271,7 +271,10 @@ void Cave::Map::detonateCells(const int& origin, const std::vector<int>& cells, 
 			killedPlayer = true;
 	}
 
-	caveGullExplosion ? m_game->soundManager.play(Sound::Effect::CaveGullExplosion) : m_game->soundManager.play(Sound::Effect::Explosion);
+	if (caveGullExplosion)
+		m_game->soundManager.play(Sound::Effect::CaveGullExplosion);
+	else
+		m_game->soundManager.play(Sound::Effect::Explosion);
 	notifyFusion5Stimulus(origin);
 
 	for (int bombIndex : bombIndices) {

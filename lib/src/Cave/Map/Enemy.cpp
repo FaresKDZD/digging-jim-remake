@@ -2604,6 +2604,7 @@ void Cave::Map::popCoralBudAt(const int& index) {
 	if (!inBounds(index)) return;
 	setEntity(index, Cave::Entity::Explosion(true));
 	caveEntities[index].extra = 0;
+	m_game->soundManager.play(Sound::Effect::Bubbles);
 }
 
 bool Cave::Map::tryProduceCoralBud(const int& coralIndex) {
@@ -9735,7 +9736,8 @@ void Cave::Map::updateGenom(const int& index) {
 		// Lower index becomes pregnant and seeks a nest; partner returns to idle.
 		if (index < partner) {
 			const int babyLook = G::mixLooks(
-				caveEntities[index].spawnCredit, caveEntities[partner].spawnCredit);
+				caveEntities[index].spawnCredit, caveEntities[partner].spawnCredit,
+				m_genomMutations);
 			const int babyMove = G::mixMovements(
 				G::movement(caveEntities[index]), G::movement(caveEntities[partner]));
 			const bool babyBreed = G::mixCanBreed(
@@ -11572,6 +11574,7 @@ Cave::Entity::Base Cave::Map::monsterFromType(Cave::Entity::Type type) const {
 	case Cave::Entity::Type::CoralBud: return Cave::Entity::CoralBud();
 	case Cave::Entity::Type::Parasite: return Cave::Entity::Parasite();
 	case Cave::Entity::Type::Agent: return Cave::Entity::Agent();
+	case Cave::Entity::Type::RoseFly: return Cave::Entity::RoseFly();
 	case Cave::Entity::Type::Compressor: return Cave::Entity::Compressor();
 	case Cave::Entity::Type::HiveMatriarch: return Cave::Entity::HiveMatriarch();
 	case Cave::Entity::Type::HiveLarva: return Cave::Entity::HiveLarva();
@@ -12057,7 +12060,8 @@ bool Cave::Map::tryMoveChaos(const int& index, const Cave::Entity::Direction& di
 	}
 	if (Cave::Entity::isJimlinShip(destType)) return false;
 	if (destType == Cave::Entity::Type::Landmine) {
-		createExplosion(destination);
+		// Die on contact: explode Chaos (not the mine) so loot rules match other kills.
+		createExplosion(index);
 		return true;
 	}
 	chaosClearOccupant(destination);
@@ -14387,7 +14391,7 @@ bool Cave::Map::handleEnemyDeath(const int& index) {
 			|| type == Cave::Entity::Type::Charia)
 		&& isWaterCell(index)) {
 		setEntity(index, Cave::Entity::Explosion(true));
-		m_game->soundManager.play(Sound::Effect::Explosion);
+		m_game->soundManager.play(Sound::Effect::Bubbles);
 		return true;
 	}
 	int pufferCenter = OUT_OF_BOUNDS_INDEX;
@@ -14531,26 +14535,6 @@ void Cave::Map::tryWallFollowEmpty(const int& index, bool clockwise, int slideIn
 
 bool Cave::Map::isLandmineCell(const int& cell) const {
 	return inBounds(cell) && Cave::Entity::isLandmine(getEntityType(cell));
-}
-
-bool Cave::Map::landmineHasAdjacentMonster(const int& cell) const {
-	if (!inBounds(cell)) return false;
-	for (Cave::Entity::Direction dir : Cave::Entity::ALL_DIRECTIONS) {
-		const int neighbour = getIndex(cell, dir);
-		if (neighbour == OUT_OF_BOUNDS_INDEX) continue;
-		// Full-trap release: monster is under TrapOpen until the open strip ends.
-		if (neighbour < static_cast<int>(m_cosmicOver.size())
-			&& m_cosmicOver[static_cast<size_t>(neighbour)].getType()
-				== Cave::Entity::Type::TrapOpen)
-			continue;
-		// Hive bubbles seal the prey — landmines ignore them.
-		if (isHiveBubbled(neighbour)) continue;
-		// Count mid-slide neighbours too. Skipping transitions made detonation
-		// depend on update order (e.g. only below / right of the mine).
-		if (Cave::Entity::isMonster(cosmicType(neighbour)))
-			return true;
-	}
-	return false;
 }
 
 bool Cave::Map::detonateLandmineAt(const int& cell) {
@@ -15215,14 +15199,34 @@ Cave::Entity::Animation Cave::Map::chargerMoveOne(const int& src, const Cave::En
 	const int dest = getIndex(src, dir);
 	Cave::Entity::Animation sourceAnimation = caveEntities[src].getAnimation();
 	if (src == OUT_OF_BOUNDS_INDEX || dest == OUT_OF_BOUNDS_INDEX) return sourceAnimation;
-	const bool jim = getEntityType(src) == Cave::Entity::Type::Jim
-		|| (Cave::Entity::isActiveJimlinShip(getEntityType(src)) && !isJimlinPilotShip(src));
+	const Cave::Entity::Type srcType = getEntityType(src);
+	const bool jim = srcType == Cave::Entity::Type::Jim
+		|| (Cave::Entity::isActiveJimlinShip(srcType) && !isJimlinPilotShip(src));
+	// Layered / tinted looks must ghost on the vacated cell and ride onto the charger
+	// push cell — same stash as moveEntityTo (Space spawnCredit / gate homeIndex).
+	const int genomLook = ((srcType == Cave::Entity::Type::Genom
+			|| srcType == Cave::Entity::Type::GenomEgg)
+		&& Cave::Entity::Genom::hasLook(caveEntities[src]))
+		? caveEntities[src].spawnCredit : 0;
+	const int fishLook = (srcType == Cave::Entity::Type::Fish
+		&& Cave::Entity::Fish::hasLook(caveEntities[src]))
+		? caveEntities[src].spawnCredit : 0;
+	const int ghostLook = genomLook != 0 ? genomLook : fishLook;
 	auto destAway = caveEntities[dest].copyAwayAnimation(dir);
 	Cave::Entity::Animation destinationAnimation = caveEntities[dest].getAnimation();
 	coverPassableGate(dest);
 	caveEntities[dest] = std::move(caveEntities[src]);
-	if (!restoreCoveredPassable(src))
+	if (!restoreCoveredPassable(src)) {
 		caveEntities[src] = Cave::Entity::Space();
+		if (ghostLook != 0)
+			caveEntities[src].spawnCredit = ghostLook;
+	}
+	else if (ghostLook != 0) {
+		if (getEntityType(src) == Cave::Entity::Type::Water)
+			caveEntities[src].spawnCredit = ghostLook;
+		else
+			caveEntities[src].homeIndex = ghostLook;
+	}
 	if (getEntityType(src) == Cave::Entity::Type::Water)
 		caveEntities[src].setAnimation(Cave::Entity::Space().getAnimation());
 	caveEntities[src].applyAwayTransition(dir, sourceAnimation);
@@ -15325,8 +15329,19 @@ bool Cave::Map::chargerSlideFormation(const int& center, const Cave::Entity::Dir
 			}
 		}
 		std::optional<Cave::Entity::Animation> destAway;
-		if (!destWasFormation)
+		int shoveLook = 0;
+		if (!destWasFormation) {
 			destAway = caveEntities[piece.dest].copyAwayAnimation(dir);
+			// Vacated Space/gate from chargerMoveOne still holds the look until we overwrite.
+			const auto& atDest = caveEntities[piece.dest];
+			if ((Cave::Entity::Genom::hasLook(atDest) || Cave::Entity::Fish::hasLook(atDest))
+				&& (atDest.getType() == Cave::Entity::Type::Space
+					|| atDest.getType() == Cave::Entity::Type::Water))
+				shoveLook = atDest.spawnCredit;
+			else if (atDest.homeIndex != -1
+				&& (atDest.homeIndex & Cave::Entity::Genom::LOOK_VALID) != 0)
+				shoveLook = atDest.homeIndex;
+		}
 		coverPassableGate(piece.dest);
 		caveEntities[piece.dest] = std::move(piece.entity);
 		if (getEntityType(piece.dest) == Cave::Entity::Type::ChargerBody)
@@ -15345,8 +15360,11 @@ bool Cave::Map::chargerSlideFormation(const int& center, const Cave::Entity::Dir
 					}
 				}
 			}
-			if (destWasShoved)
+			if (destWasShoved) {
 				caveEntities[piece.dest].applyPushTransition(dir, shovedAnim);
+				if (shoveLook != 0)
+					caveEntities[piece.dest].homeIndex = shoveLook;
+			}
 			else if (destAway)
 				caveEntities[piece.dest].applyPushTransition(dir, *destAway);
 			else {

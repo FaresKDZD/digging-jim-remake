@@ -84,7 +84,13 @@ namespace Sound {
         Wawa,
 
         /// @brief Agent starts emitting its aggro wave field.
-        Agent
+        Agent,
+
+        /// @brief Rose growth / plant burst death.
+        Plant,
+
+        /// @brief Underwater explosion / bubble burst.
+        Bubbles
     };
 
 }

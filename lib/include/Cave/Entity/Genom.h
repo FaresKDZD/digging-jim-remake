@@ -352,10 +352,11 @@ namespace Cave::Entity {
         }
 
         /// @brief Blended hue/sat from parent looks; other traits coin-flipped.
-        /// 1/20 chance of a single mutation neither parent has (hue, sat, or one part).
+        /// mutationChancePerThousand: chance per 1000 of a single mutation neither parent has
+        /// (hue, sat, or one part). Default 50 matches the historic 1/20 rate.
         /// Wings/legs mutations never leave the baby with neither; if a picked
         /// channel cannot produce a novel legal value, another channel is tried.
-        static int mixLooks(int a, int b) {
+        static int mixLooks(int a, int b, int mutationChancePerThousand = 50) {
             int hueV = mixHueBytes(hue(a), hue(b));
             int satV = (satByte(a) + satByte(b) + 1) / 2;
             int wingsV = Utils::randomInteger(0, 1) ? wings(a) : wings(b);
@@ -365,7 +366,9 @@ namespace Cave::Entity {
             int eyesV = Utils::randomInteger(0, 1) ? eyes(a) : eyes(b);
             int mouthV = Utils::randomInteger(0, 1) ? mouth(a) : mouth(b);
 
-            if (Utils::randomInteger(1, 20) == 1) {
+            const int chance = mutationChancePerThousand < 0 ? 0
+                : (mutationChancePerThousand > 1000 ? 1000 : mutationChancePerThousand);
+            if (chance > 0 && Utils::randomInteger(0, 1000) <= chance) {
                 // Shuffle feature order so every channel gets a fair shot; skip
                 // channels that have no legal non-parent value under constraints.
                 // 0=hue 1=sat 2=wings 3=legs 4=spikes 5=body 6=eyes 7=mouth

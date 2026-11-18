@@ -119,6 +119,7 @@ void Cave::Map::updateCaveEntities(const std::vector<int> indicies) {
 			m_game->soundManager.stop(Sound::Effect::Amoeba);
 		if (m_game->soundManager.isPlaying(Sound::Effect::Wawa))
 			m_game->soundManager.stop(Sound::Effect::Wawa);
+		m_game->soundManager.fadeOut(Sound::Effect::Agent);
 		return;
 	}
 
@@ -183,6 +184,39 @@ void Cave::Map::updateCaveEntities(const std::vector<int> indicies) {
 		m_game->soundManager.isPlaying(Sound::Effect::Amoeba)
 		) {
 		m_game->soundManager.stop(Sound::Effect::Amoeba);
+	}
+
+	// Agent emit SFX: let natural aggro end keep the clip's baked fade-out.
+	// Soft-cut when an aggro Agent dies, on pass / load / end — but NOT on Fail
+	// (keep playing through the death screen until Enter restarts → End/Load).
+	{
+		using A = Cave::Entity::Agent;
+		std::vector<int> currentAggro;
+		currentAggro.reserve(m_agentAggroIndices.size());
+		if (m_state == Cave::State::Play
+			|| m_state == Cave::State::Pause
+			|| m_state == Cave::State::Fail) {
+			for (int i = 0; i < width * height; ++i) {
+				if (A::isAggroPhase(caveEntities[static_cast<size_t>(i)]))
+					currentAggro.push_back(i);
+			}
+		}
+
+		bool aggroAgentDied = false;
+		for (int prev : m_agentAggroIndices) {
+			if (!inBounds(prev) || getEntityType(prev) != Cave::Entity::Type::Agent) {
+				aggroAgentDied = true;
+				break;
+			}
+		}
+
+		const bool forcedCut = m_state != Cave::State::Play
+			&& m_state != Cave::State::Pause
+			&& m_state != Cave::State::Fail;
+		if (forcedCut || (aggroAgentDied && currentAggro.empty()))
+			m_game->soundManager.fadeOut(Sound::Effect::Agent);
+
+		m_agentAggroIndices = std::move(currentAggro);
 	}
 
 	if (!editorIdle() && (m_state == Cave::State::Play || m_state == Cave::State::Pass)) {
@@ -305,6 +339,7 @@ void Cave::Map::updateInactiveEntity(const std::vector<int> indicies) {
 		switch (type) {
 		case Cave::Entity::Type::Jim: updateJimIdle(index); updateEntityAnimation(index); break;
 		case Cave::Entity::Type::Explosion: updateExplosion(index); break;
+		case Cave::Entity::Type::PlantExplosion: updateTransientEntity(index, Cave::Entity::Space()); break;
 		case Cave::Entity::Type::OreTransformation: updateTransientEntity(index, Cave::Entity::Diamond()); break;
 		case Cave::Entity::Type::CaveGullExplosion: updateTransientEntity(index, Cave::Entity::Diamond()); break;
 		case Cave::Entity::Type::ChaosExplosion: updateTransientEntity(index, Cave::Entity::Ruby()); break;
@@ -417,6 +452,8 @@ void Cave::Map::initEntityUpdateMaps() {
 	m_entityUpdateMap[Cave::Entity::Type::MacowEggCook] = [this](int i) { updateMacowEggCook(i); };
 	m_entityUpdateMap[Cave::Entity::Type::MacowEggCooked] = [this](int i) { updateMacowEgg(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Moss] = [this](int i) { updateMoss(i); };
+	m_entityUpdateMap[Cave::Entity::Type::Rose] = [this](int i) { updateRose(i); };
+	m_entityUpdateMap[Cave::Entity::Type::RoseFly] = [this](int i) { updateRoseFly(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Caterpillar] = [this](int i) { updateCaterpillar(i); };
 	m_entityUpdateMap[Cave::Entity::Type::CaterpillarChrysalize] = [this](int i) { updateCaterpillarChrysalize(i); };
 	m_entityUpdateMap[Cave::Entity::Type::Chrysalis] = [this](int i) { updateChrysalis(i); };
@@ -486,6 +523,7 @@ void Cave::Map::initEntityUpdateMaps() {
 	m_entityUpdateMap[Cave::Entity::Type::Well] = [this](int i) { updateWell(i); };
 
 	m_entityUpdateMap[Cave::Entity::Type::Explosion] = [this](int i) { updateExplosion(i); };
+	m_entityUpdateMap[Cave::Entity::Type::PlantExplosion] = [this](int i) { updateTransientEntity(i, Cave::Entity::Space()); };
 	m_entityUpdateMap[Cave::Entity::Type::OreTransformation] = [this](int i) { updateTransientEntity(i, Cave::Entity::Diamond()); };
 	m_entityUpdateMap[Cave::Entity::Type::CaveGullExplosion] = [this](int i) { updateTransientEntity(i, Cave::Entity::Diamond()); };
 	m_entityUpdateMap[Cave::Entity::Type::ChaosExplosion] = [this](int i) { updateTransientEntity(i, Cave::Entity::Ruby()); };
@@ -731,14 +769,12 @@ void Cave::Map::updateVisibleTiles(Camera camera) {
 	m_trapCageDraws.clear();
 	m_gravelBreakDraws.clear();
 	m_agentWaveCenters.clear();
-	// Aggro Agents (past grace) contribute tile centres for the expanding-square wave FX.
+	// Every aggro Agent (past grace) contributes a centre; Game/Editor batch them into the shader.
 	{
 		using A = Cave::Entity::Agent;
 		for (int i = 0; i < width * height; ++i) {
 			if (!A::isAggroWaving(caveEntities[static_cast<size_t>(i)]))
 				continue;
-			if (static_cast<int>(m_agentWaveCenters.size()) >= A::WAVE_CENTER_CAP)
-				break;
 			const int ax = i % width;
 			const int ay = i / width;
 			m_agentWaveCenters.push_back({
@@ -1133,7 +1169,8 @@ void Cave::Map::updateVisibleTiles(Camera camera) {
 	}
 	m_tileRenderer.updateTexture(entities, { 0, 0 },
 		sf::IntRect({ min_x, min_y }, { max_x - min_x, max_y - min_y }), 0, jimTint, true,
-		jimParasiteFullSlide);
+		jimParasiteFullSlide,
+		m_editorPreview && !m_editorSimulate);
 
 	std::vector<Cave::Entity::Base> cosmics;
 	ensureCosmicUnder();

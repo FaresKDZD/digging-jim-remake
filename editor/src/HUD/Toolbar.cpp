@@ -222,7 +222,8 @@ void HUD::Editor::Toolbar::drawToolItems(HUD::Editor::Panel* editorPanel)
             || (Cave::Entity::isJimlin(type) && Cave::Entity::isJimlin(selType))
             || (Cave::Entity::isGateVariant(type) && Cave::Entity::isGateVariant(selType))
             || (Cave::Entity::isJimlinBlockVariant(type) && Cave::Entity::isJimlinBlockVariant(selType))
-            || (Cave::Entity::isJimlinShipVariant(type) && Cave::Entity::isJimlinShipVariant(selType)))
+            || (Cave::Entity::isJimlinShipVariant(type) && Cave::Entity::isJimlinShipVariant(selType))
+            || (Cave::Entity::isMossVariant(type) && Cave::Entity::isMossVariant(selType)))
         {
             ImVec2 rmin = ImGui::GetItemRectMin();
             ImVec2 rmax = ImGui::GetItemRectMax();
@@ -266,7 +267,7 @@ void HUD::Editor::Toolbar::drawToolItems(HUD::Editor::Panel* editorPanel)
     tool("Gravel",                   "",  0, 10, Cave::Entity::Type::Gravel);
     tool("Chum",                     "",  1, 10, Cave::Entity::Type::Chum);
     tool("Magma",                    "",  2, 10, Cave::Entity::Type::Magma);
-    tool("Moss",                     "",  0, 11, Cave::Entity::Type::Moss);
+    tool("Moss",                     "",  HUD::Editor::Panel::MossSlotX, HUD::Editor::Panel::MossSlotY, Cave::Entity::Type::Moss);
     tool("Water",                    "",  1, 11, Cave::Entity::Type::Water);
     tool("Magic Boulder",            "",  2, 11, Cave::Entity::Type::MagicBoulder);
     tool("Hot Boulder",              "",  0, 12, Cave::Entity::Type::HotBoulder);
