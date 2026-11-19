@@ -76,7 +76,11 @@ void Sound::Manager::play(const Sound::Effect& effect, float pitch) {
 
     auto sound = std::make_unique<sf::Sound>(bufIt->second);
     sound->setLooping(false);
-    sound->setVolume(m_volume/2);
+    float vol = m_volume / 2.f;
+    // Bubbles sample peaks hot next to other FX.
+    if (effect == Sound::Effect::Bubbles)
+        vol *= 0.55f;
+    sound->setVolume(vol);
     sound->setPitch(pitch);
     sound->play();
 

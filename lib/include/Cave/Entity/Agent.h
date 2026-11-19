@@ -10,7 +10,7 @@ namespace Cave::Entity {
      * @class Agent
      * @brief Cave Gull wanderer that cycles calm / aggro every 5s. Aggro stops,
      * plays watch, then holds the last frame. After a 0.5s grace, an expanding
-     * square distortion sweeps a 10x10 around it and movers in that box explode
+     * square distortion sweeps an 11x11 around it and movers in that box explode
      * (except God / Chaos / Charger). Watch plays in reverse when returning to calm.
      *
      * spawnCredit = mode, extra = phase timer ticks.
@@ -25,7 +25,7 @@ namespace Cave::Entity {
         static constexpr int PHASE_TICKS = 8 * 5;
         /// @brief Delay after watch-in before waves / kills (~0.5s).
         static constexpr int GRACE_TICKS = 4;
-        /// @brief Half-open 10x10 box around the agent: dx,dy in [-HALF, HALF).
+        /// @brief Inclusive half-extent of the 11x11 box: dx,dy in [-HALF, HALF].
         static constexpr int AREA_HALF = 5;
         /// @brief Centres bound per shader pass (all Agents are covered via batches).
         static constexpr int WAVE_CENTER_CAP = 8;

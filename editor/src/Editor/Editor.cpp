@@ -1199,8 +1199,21 @@ void Editor::drawCavesListWindow(int currentCaveIndex, Cave::File& loadedFile)
     bool overCtx = false;
     if (ImGui::Begin("Caves List", &m_showCavesList, ImGuiWindowFlags_NoCollapse))
     {
+        // Include scrollbar + resize borders. IsWindowHovered alone misses those
+        // chrome hits, so click-outside dismiss was closing the list.
         overList = ImGui::IsWindowHovered(
-            ImGuiHoveredFlags_RootAndChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByPopup);
+            ImGuiHoveredFlags_RootAndChildWindows
+            | ImGuiHoveredFlags_AllowWhenBlockedByPopup
+            | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+        {
+            const ImVec2 wp = ImGui::GetWindowPos();
+            const ImVec2 ws = ImGui::GetWindowSize();
+            const ImVec2 mp = ImGui::GetIO().MousePos;
+            constexpr float kEdge = 8.f;
+            if (mp.x >= wp.x - kEdge && mp.y >= wp.y - kEdge
+                && mp.x <= wp.x + ws.x + kEdge && mp.y <= wp.y + ws.y + kEdge)
+                overList = true;
+        }
         ImGui::PushStyleColor(ImGuiCol_HeaderHovered, kEditorNavy);
         ImGui::PushStyleColor(ImGuiCol_HeaderActive, kEditorNavy);
         for (int i = 0; i < caveCount; ++i)

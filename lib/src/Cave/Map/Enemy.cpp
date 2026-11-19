@@ -2321,8 +2321,8 @@ void Cave::Map::agentDetonateMovers(const int& index) {
 	const int ay = index / width;
 	std::vector<int> boom;
 	boom.reserve(16);
-	for (int dy = -A::AREA_HALF; dy < A::AREA_HALF; ++dy) {
-		for (int dx = -A::AREA_HALF; dx < A::AREA_HALF; ++dx) {
+	for (int dy = -A::AREA_HALF; dy <= A::AREA_HALF; ++dy) {
+		for (int dx = -A::AREA_HALF; dx <= A::AREA_HALF; ++dx) {
 			const int nx = ax + dx;
 			const int ny = ay + dy;
 			if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
@@ -14384,6 +14384,14 @@ bool Cave::Map::handleEnemyDeath(const int& index) {
 	const Cave::Entity::Type type = getEntityType(index);
 	if (type == Cave::Entity::Type::Singularity)
 		return false;
+
+	// Same moment as amoeba contact: checked on the monster before it steps,
+	// so a mover leaving the side of a mine (e.g. up from the left) still dies.
+	// No amoeba exemptions — any caller of this dies on landmine adjacency.
+	if (isAdjacentTo(index, Cave::Entity::Type::Landmine)) {
+		createExplosion(index);
+		return true;
+	}
 
 	// Fire-aligned monsters extinguish in water (1x1 water burst, no pyrozo rebirth).
 	if ((Cave::Entity::isPyrozoVariant(type)

@@ -41,8 +41,9 @@ void main()
     vec2 viewUv = vec2(ndc.x, 1.0 - ndc.y);
     vec2 world = viewCenter + (viewUv - vec2(0.5)) * viewSize;
 
-    // Half-open 10x10 box in tile units (matches Agent::AREA_HALF).
-    const float halfTiles = 5.0;
+    // Inclusive 11x11 box in tile units (matches Agent::AREA_HALF = 5).
+    // Tile centres sit at integer offsets; 5.5 keeps the outer ±5 ring inside.
+    const float halfTiles = 5.5;
     float bestRing = 0.0;
     vec2 bestPush = vec2(0.0);
 

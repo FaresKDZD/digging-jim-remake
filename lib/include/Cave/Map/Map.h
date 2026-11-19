@@ -1298,7 +1298,7 @@ namespace Cave {
         void updateShade(const int& index);
         void updateAgent(const int& index);
         void agentDetonateMovers(const int& index);
-        /// @brief After all AI moves this tick: aggro Agents kill movers in their 10x10.
+        /// @brief After all AI moves this tick: aggro Agents kill movers in their 11x11.
         void updateAgentWaveKills();
         void updateGrouper(const int& index);
         bool grouperHasJimLineOfSight(const int& index) const;

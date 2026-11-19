@@ -956,6 +956,7 @@ void Cave::Map::collectBonusGem(Cave::Entity::Type type, const int& cell) {
 		if (inBounds(cell))
 			m_spinelsTaken.insert(cell);
 		m_game->addLives(1);
+		m_game->soundManager.play(Sound::Effect::Yahoo);
 		return;
 	}
 	if (type == Cave::Entity::Type::Hourglass) {

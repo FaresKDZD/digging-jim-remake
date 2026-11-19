@@ -321,7 +321,7 @@ void Cave::Map::updateActiveEntity(const std::vector<int> indicies) {
 		}
 	}
 	updateOverlayCosmics();
-	// After Jim / fallables / monsters have all stepped — full 10x10 coverage.
+	// After Jim / fallables / monsters have all stepped — full 11x11 coverage.
 	updateAgentWaveKills();
 	if (!m_quotaReached && m_game->caveQuotaReached()) {
 		// If Jim was ever in this cave, play the unlock sound when quota is reached
